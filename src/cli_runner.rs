@@ -1,6 +1,6 @@
 use pm::cli::*;
 use pm::store::sqlite::SqliteStore;
-use pm::store::{Store, PhaseStatus, ExperimentStatus, NodeType, EdgeType};
+use pm::store::{Store, PhaseStatus, ExperimentStatus, ResearchStatus, NodeType, EdgeType};
 use pm::dag::DagEngine;
 use pm::kg::KgEngine;
 
@@ -167,6 +167,41 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     for d in store.list_decisions(proj.id)? {
                         println!("  #{}: {} (exp: {:?})", d.id, d.what, d.experiment_id);
                     }
+                }
+            }
+        }
+
+        Commands::Research { project, action } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                ResearchAction::Add { name, phase, report } => {
+                    let r = store.create_research(phase, &name)?;
+                    if let Some(rep) = report {
+                        store.update_research(r.id, ResearchStatus::Pending, Some(&rep))?;
+                    }
+                    println!("Research #{} added: {}", r.id, r.name);
+                }
+                ResearchAction::List { phase } => {
+                    let items = store.list_research(phase)?;
+                    for r in items {
+                        println!("  #{} [{:?}] {} (phase: {:?})", r.id, r.status, r.name, r.phase_id);
+                    }
+                }
+                ResearchAction::Update { id, status, report } => {
+                    let current = store.get_research(id)?;
+                    let rs = if let Some(s) = &status {
+                        match s.as_str() {
+                            "pending" => ResearchStatus::Pending,
+                            "in_progress" => ResearchStatus::InProgress,
+                            "complete" => ResearchStatus::Complete,
+                            _ => return Err(format!("Invalid status: {}", s).into()),
+                        }
+                    } else {
+                        current.status
+                    };
+                    let rep = report.as_deref().or(current.report.as_deref());
+                    store.update_research(id, rs, rep)?;
+                    println!("Research #{} updated", id);
                 }
             }
         }

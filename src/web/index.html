@@ -57,6 +57,7 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
   <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div>Experiment</div>
   <div class="legend-item"><div class="legend-dot" style="background:#d29922;border-radius:0;transform:rotate(45deg);width:8px;height:8px"></div>Decision</div>
   <div class="legend-item"><div class="legend-dot" style="background:#8b949e;border-radius:2px"></div>Phase</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#2dd4bf;clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%)"></div>Research</div>
   <div style="font-weight:bold;margin:8px 0 4px;color:#8b949e">EDGES</div>
   <div class="legend-item"><div class="legend-line" style="background:#f85149;width:20px"></div>Contradicts</div>
   <div class="legend-item"><div class="legend-line" style="background:#3fb950;width:20px"></div>Supports</div>
@@ -125,12 +126,13 @@ function setView(view) {
 }
 
 async function loadKG(projectId) {
-  const [findings, edges, experiments, phases, decisions] = await Promise.all([
+  const [findings, edges, experiments, phases, decisions, researchItems] = await Promise.all([
     fetch(`/api/projects/${projectId}/findings`).then(r => r.json()),
     fetch(`/api/projects/${projectId}/edges`).then(r => r.json()),
     fetch(`/api/projects/${projectId}/experiments`).then(r => r.json()),
     fetch(`/api/projects/${projectId}/phases`).then(r => r.json()),
     fetch(`/api/projects/${projectId}/decisions`).then(r => r.json()).catch(() => []),
+    fetch(`/api/projects/${projectId}/research`).then(r => r.json()).catch(() => []),
   ]);
 
   const nodes = [];
@@ -158,6 +160,19 @@ async function loadKG(projectId) {
     }
   }
 
+  // Research nodes
+  for (const r of researchItems) {
+    const id = `r-${r.id}`;
+    const statusLabel = r.status === 'Complete' ? 'DONE' : r.status === 'InProgress' ? 'WIP' : 'TODO';
+    const n = { id, numId: r.id, label: `R${r.id}`, text: r.name + (r.report ? ' — ' + r.report : '') + ` [${statusLabel}]`, type: 'research', color: '#2dd4bf', phaseId: r.phase_id };
+    nodes.push(n);
+    nodeMap[id] = n;
+    if (r.phase_id) {
+      const phaseId = `p-${r.phase_id}`;
+      if (nodeMap[phaseId]) links.push({ source: phaseId, target: id, relation: 'produces', color: '#2dd4bf44' });
+    }
+  }
+
   // Finding nodes
   for (const f of findings) {
     const id = `f-${f.id}`;
@@ -181,8 +196,8 @@ async function loadKG(projectId) {
 
   // KG edges
   for (const edge of edges) {
-    const srcPrefix = edge.source_type === 'Finding' ? 'f' : edge.source_type === 'Experiment' ? 'e' : edge.source_type === 'Phase' ? 'p' : edge.source_type === 'Decision' ? 'd' : 'x';
-    const tgtPrefix = edge.target_type === 'Finding' ? 'f' : edge.target_type === 'Experiment' ? 'e' : edge.target_type === 'Phase' ? 'p' : edge.target_type === 'Decision' ? 'd' : 'x';
+    const srcPrefix = edge.source_type === 'Finding' ? 'f' : edge.source_type === 'Experiment' ? 'e' : edge.source_type === 'Phase' ? 'p' : edge.source_type === 'Decision' ? 'd' : edge.source_type === 'Research' ? 'r' : 'x';
+    const tgtPrefix = edge.target_type === 'Finding' ? 'f' : edge.target_type === 'Experiment' ? 'e' : edge.target_type === 'Phase' ? 'p' : edge.target_type === 'Decision' ? 'd' : edge.target_type === 'Research' ? 'r' : 'x';
     const src = `${srcPrefix}-${edge.source_id}`;
     const tgt = `${tgtPrefix}-${edge.target_id}`;
     if (nodeMap[src] && nodeMap[tgt]) {
@@ -256,6 +271,24 @@ function renderKG(nodes, links, nodeMap) {
       f.y = centerY + side * (28 + row * rowH * 0.5);
     });
   }
+
+  // Research nodes — above backbone, near decisions
+  const researchNodes = nodes.filter(n => n.type === 'research');
+  researchNodes.forEach((r, i) => {
+    if (r.phaseId) {
+      const phaseNode = nodes.find(n => n.type === 'phase' && n.numId === r.phaseId);
+      if (phaseNode && phaseNode.x !== undefined) {
+        r.x = phaseNode.x + 30 + (i % 3) * 25;
+        r.y = centerY - 80 - (i % 2) * 30;
+      } else {
+        r.x = XPAD + i * 60;
+        r.y = centerY - 85;
+      }
+    } else {
+      r.x = XPAD + (totalW - XPAD * 2) * 0.8 + i * 40;
+      r.y = centerY - 85;
+    }
+  });
 
   // Phase nodes — top row, evenly spread
   phas.sort((a, b) => a.numId - b.numId).forEach((p, i) => {
@@ -436,6 +469,20 @@ function renderKG(nodes, links, nodeMap) {
         .attr('r', 4)
         .attr('fill', n.color)
         .attr('fill-opacity', 0.6);
+    } else if (n.type === 'research') {
+      // Hexagon — research/reflection
+      const s = 8;
+      const hex = `${0},-${s} ${s*0.866},-${s*0.5} ${s*0.866},${s*0.5} ${0},${s} ${-s*0.866},${s*0.5} ${-s*0.866},-${s*0.5}`;
+      ng.append('polygon')
+        .attr('class', 'node-shape')
+        .attr('points', hex)
+        .attr('fill', n.color)
+        .attr('fill-opacity', 0.85);
+      ng.append('text')
+        .attr('x', 12).attr('y', 3)
+        .attr('fill', '#2dd4bf')
+        .attr('font-size', '8px')
+        .text(n.label);
     } else if (n.type === 'phase') {
       // Rounded rect — structural
       ng.append('rect')

@@ -80,6 +80,14 @@ impl SqliteStore {
                 what TEXT NOT NULL,
                 why TEXT,
                 created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS research (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phase_id INTEGER REFERENCES phases(id),
+                name TEXT NOT NULL,
+                report TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
             );"
         )?;
         Ok(())
@@ -142,6 +150,23 @@ impl SqliteStore {
         }
     }
 
+    fn parse_research_status(s: &str) -> ResearchStatus {
+        match s {
+            "pending" => ResearchStatus::Pending,
+            "in_progress" => ResearchStatus::InProgress,
+            "complete" => ResearchStatus::Complete,
+            _ => ResearchStatus::Pending,
+        }
+    }
+
+    fn research_status_str(s: &ResearchStatus) -> &'static str {
+        match s {
+            ResearchStatus::Pending => "pending",
+            ResearchStatus::InProgress => "in_progress",
+            ResearchStatus::Complete => "complete",
+        }
+    }
+
     fn parse_node_type(s: &str) -> NodeType {
         match s {
             "Finding" => NodeType::Finding,
@@ -149,6 +174,7 @@ impl SqliteStore {
             "Decision" => NodeType::Decision,
             "Literature" => NodeType::Literature,
             "Phase" => NodeType::Phase,
+            "Research" => NodeType::Research,
             _ => NodeType::Finding,
         }
     }
@@ -413,5 +439,49 @@ impl Store for SqliteStore {
             created_at: SqliteStore::parse_dt(&row.get::<_, String>(4)?),
         }))?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
+    }
+
+    fn create_research(&self, phase_id: Option<i64>, name: &str) -> Result<Research> {
+        let now = Self::now();
+        self.conn.execute(
+            "INSERT INTO research (phase_id, name, status, created_at) VALUES (?1, ?2, 'pending', ?3)",
+            params![phase_id, name, now],
+        )?;
+        self.get_research(self.conn.last_insert_rowid())
+    }
+
+    fn get_research(&self, id: i64) -> Result<Research> {
+        self.conn.query_row(
+            "SELECT id, phase_id, name, report, status, created_at FROM research WHERE id = ?1",
+            params![id],
+            |row| Ok(Research {
+                id: row.get(0)?,
+                phase_id: row.get(1)?,
+                name: row.get(2)?,
+                report: row.get(3)?,
+                status: SqliteStore::parse_research_status(&row.get::<_, String>(4)?),
+                created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?),
+            }),
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "research".into(), id },
+            o => StoreError::Db(o),
+        })
+    }
+
+    fn list_research(&self, phase_id: Option<i64>) -> Result<Vec<Research>> {
+        let ids: Vec<i64> = if let Some(pid) = phase_id {
+            let mut s = self.conn.prepare("SELECT id FROM research WHERE phase_id = ?1 ORDER BY id")?;
+            s.query_map(params![pid], |r| r.get(0))?.collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            let mut s = self.conn.prepare("SELECT id FROM research ORDER BY id")?;
+            s.query_map([], |r| r.get(0))?.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        ids.into_iter().map(|id| self.get_research(id)).collect()
+    }
+
+    fn update_research(&self, id: i64, status: ResearchStatus, report: Option<&str>) -> Result<()> {
+        self.conn.execute("UPDATE research SET status = ?1, report = ?2 WHERE id = ?3",
+            params![Self::research_status_str(&status), report, id])?;
+        Ok(())
     }
 }

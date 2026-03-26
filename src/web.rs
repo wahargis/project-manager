@@ -94,6 +94,25 @@ pub async fn serve(db_path: &str, port: u16) {
             warp::reply::json(&store.list_decisions(project_id).unwrap_or_default())
         });
 
+    let db_research = db.clone();
+    let research = warp::path!("api" / "projects" / i64 / "research")
+        .map(move |project_id: i64| {
+            let store = SqliteStore::new(&db_research).unwrap();
+            let mut project_research = Vec::new();
+            if let Ok(phases) = store.list_phases(project_id) {
+                for phase in &phases {
+                    if let Ok(items) = store.list_research(Some(phase.id)) {
+                        project_research.extend(items);
+                    }
+                }
+            }
+            // Also get research with no phase
+            if let Ok(items) = store.list_research(None) {
+                project_research.extend(items);
+            }
+            warp::reply::json(&project_research)
+        });
+
     let db6 = db.clone();
     let dashboard = warp::path!("api" / "dashboard")
         .map(move || {
@@ -116,7 +135,7 @@ pub async fn serve(db_path: &str, port: u16) {
     let index = warp::path::end()
         .map(|| warp::reply::html(include_str!("web/index.html")));
 
-    let routes = index.or(projects).or(phases).or(findings).or(edges).or(experiments).or(decisions).or(dashboard);
+    let routes = index.or(projects).or(phases).or(findings).or(edges).or(experiments).or(decisions).or(research).or(dashboard);
 
     println!("PM dashboard at http://localhost:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;

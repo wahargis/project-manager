@@ -43,6 +43,12 @@ pub enum Commands {
         #[command(subcommand)]
         action: DecAction,
     },
+    /// Research / reflection management
+    Research {
+        project: String,
+        #[command(subcommand)]
+        action: ResearchAction,
+    },
     /// Knowledge graph
     Kg {
         project: String,
@@ -127,4 +133,11 @@ pub enum KgAction {
     Map,
     Traverse { #[arg(long)] from: String },
     Cluster,
+}
+
+#[derive(Subcommand)]
+pub enum ResearchAction {
+    Add { name: String, #[arg(long)] phase: Option<i64>, #[arg(long)] report: Option<String> },
+    List { #[arg(long)] phase: Option<i64> },
+    Update { id: i64, #[arg(long)] status: Option<String>, #[arg(long)] report: Option<String> },
 }

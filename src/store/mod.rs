@@ -41,6 +41,13 @@ pub enum ExperimentStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ResearchStatus {
+    Pending,
+    InProgress,
+    Complete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EdgeType {
     ProducedBy,
     Informed,
@@ -59,6 +66,7 @@ pub enum NodeType {
     Decision,
     Literature,
     Phase,
+    Research,
 }
 
 // --- Entity Structs ---
@@ -122,6 +130,16 @@ pub struct Decision {
     pub created_at: NaiveDateTime,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Research {
+    pub id: i64,
+    pub phase_id: Option<i64>,
+    pub name: String,
+    pub report: Option<String>,
+    pub status: ResearchStatus,
+    pub created_at: NaiveDateTime,
+}
+
 // --- Store Trait ---
 
 pub trait Store {
@@ -156,6 +174,12 @@ pub trait Store {
     // Decisions
     fn create_decision(&self, experiment_id: Option<i64>, what: &str, why: Option<&str>) -> Result<Decision>;
     fn list_decisions(&self, project_id: i64) -> Result<Vec<Decision>>;
+
+    // Research
+    fn create_research(&self, phase_id: Option<i64>, name: &str) -> Result<Research>;
+    fn get_research(&self, id: i64) -> Result<Research>;
+    fn list_research(&self, phase_id: Option<i64>) -> Result<Vec<Research>>;
+    fn update_research(&self, id: i64, status: ResearchStatus, report: Option<&str>) -> Result<()>;
 }
 
 #[cfg(test)]
