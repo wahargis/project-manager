@@ -51,9 +51,12 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 <div class="legend" id="legend-kg">
   <div class="legend-item"><div class="legend-dot" style="background:#58a6ff"></div>Finding</div>
   <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div>Experiment</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#d29922"></div>Decision</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#8b949e"></div>Phase</div>
   <div class="legend-item"><div class="legend-dot" style="background:#f85149;width:20px;height:2px;border-radius:1px"></div>Contradicts</div>
   <div class="legend-item"><div class="legend-dot" style="background:#3fb950;width:20px;height:2px;border-radius:1px"></div>Supports</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#79c0ff;width:20px;height:2px;border-radius:1px"></div>DependsOn</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#d29922;width:20px;height:2px;border-radius:1px"></div>Informed</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#a371f7;width:20px;height:2px;border-radius:1px"></div>Supersedes</div>
 </div>
 <div class="legend" id="legend-dag" style="display:none">
   <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div>Complete</div>
@@ -62,6 +65,7 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
   <div class="legend-item"><div class="legend-dot" style="background:#f85149"></div>Paused</div>
 </div>
 
+<script src="https://unpkg.com/d3-force@3"></script>
 <script src="https://unpkg.com/force-graph@1.43.5/dist/force-graph.min.js"></script>
 <script>
 let currentProject = null;
@@ -97,6 +101,9 @@ async function selectProject(id, card) {
   currentProject = id;
   document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
   if (card) card.classList.add('selected');
+  // Loading indicator
+  const container = document.getElementById('graph-container');
+  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8b949e;font-size:14px">Loading graph...</div>';
   if (currentView === 'kg') await loadKG(id);
   else await loadDAG(id);
 }
@@ -114,36 +121,61 @@ function setView(view) {
 }
 
 async function loadKG(projectId) {
-  const [findings, edges, experiments, decisions] = await Promise.all([
+  const [findings, edges, experiments, phases] = await Promise.all([
     fetch(`/api/projects/${projectId}/findings`).then(r => r.json()),
     fetch(`/api/projects/${projectId}/edges`).then(r => r.json()),
     fetch(`/api/projects/${projectId}/experiments`).then(r => r.json()),
-    fetch(`/api/projects/${projectId}/phases`).then(r => r.json()), // placeholder
+    fetch(`/api/projects/${projectId}/phases`).then(r => r.json()),
   ]);
 
   const nodes = [];
   const links = [];
+  const nodeIds = new Set();
 
   // Finding nodes
   for (const f of findings) {
-    nodes.push({ id: `f-${f.id}`, label: `F#${f.id}`, text: f.text, type: 'finding', color: '#58a6ff', val: 3 });
+    const id = `f-${f.id}`;
+    nodes.push({ id, label: `F#${f.id}`, text: f.text, type: 'finding', color: '#58a6ff', val: 3 });
+    nodeIds.add(id);
   }
   // Experiment nodes
   for (const e of experiments) {
-    nodes.push({ id: `e-${e.id}`, label: `E#${e.id}`, text: e.name, type: 'experiment', color: '#3fb950', val: 2 });
+    const id = `e-${e.id}`;
+    nodes.push({ id, label: `E#${e.id}`, text: e.name, type: 'experiment', color: '#3fb950', val: 2 });
+    nodeIds.add(id);
   }
+  // Phase nodes (for Informed edges)
+  for (const p of phases) {
+    const id = `p-${p.id}`;
+    const statusColor = p.status === 'Complete' ? '#3fb950' : p.status === 'InProgress' ? '#58a6ff' : p.status === 'Paused' ? '#f85149' : '#8b949e';
+    nodes.push({ id, label: `Phase#${p.id}`, text: `${p.name} [impact:${p.impact}]`, type: 'phase', color: statusColor, val: Math.max(3, p.impact / 8) });
+    nodeIds.add(id);
+  }
+
   // Edges: finding→experiment (produced_by)
   for (const f of findings) {
     if (f.experiment_id) {
-      links.push({ source: `e-${f.experiment_id}`, target: `f-${f.id}`, color: '#30363d' });
+      const src = `e-${f.experiment_id}`;
+      const tgt = `f-${f.id}`;
+      if (nodeIds.has(src) && nodeIds.has(tgt)) {
+        links.push({ source: src, target: tgt, color: '#30363d' });
+      }
     }
   }
-  // KG edges
+  // All KG edges — only include if both endpoints exist
   for (const edge of edges) {
-    const src = `${edge.source_type.toLowerCase().charAt(0)}-${edge.source_id}`;
-    const tgt = `${edge.target_type.toLowerCase().charAt(0)}-${edge.target_id}`;
-    const color = edge.relation === 'Contradicts' ? '#f85149' : edge.relation === 'Supports' ? '#3fb950' : '#8b949e';
-    links.push({ source: src, target: tgt, color: color });
+    const srcPrefix = edge.source_type === 'Finding' ? 'f' : edge.source_type === 'Experiment' ? 'e' : edge.source_type === 'Phase' ? 'p' : edge.source_type === 'Decision' ? 'd' : 'x';
+    const tgtPrefix = edge.target_type === 'Finding' ? 'f' : edge.target_type === 'Experiment' ? 'e' : edge.target_type === 'Phase' ? 'p' : edge.target_type === 'Decision' ? 'd' : 'x';
+    const src = `${srcPrefix}-${edge.source_id}`;
+    const tgt = `${tgtPrefix}-${edge.target_id}`;
+    if (nodeIds.has(src) && nodeIds.has(tgt)) {
+      const color = edge.relation === 'Contradicts' ? '#f85149' :
+                    edge.relation === 'Supports' ? '#3fb950' :
+                    edge.relation === 'Informed' ? '#d29922' :
+                    edge.relation === 'Supersedes' ? '#a371f7' :
+                    edge.relation === 'DependsOn' ? '#79c0ff' : '#30363d';
+      links.push({ source: src, target: tgt, color });
+    }
   }
 
   renderGraph({ nodes, links });
@@ -168,18 +200,41 @@ function renderGraph(data) {
   const container = document.getElementById('graph-container');
   if (graph) graph._destructor();
 
+  // Count edges per node for sizing
+  const edgeCount = {};
+  for (const l of data.links) {
+    const sid = typeof l.source === 'object' ? l.source.id : l.source;
+    const tid = typeof l.target === 'object' ? l.target.id : l.target;
+    edgeCount[sid] = (edgeCount[sid] || 0) + 1;
+    edgeCount[tid] = (edgeCount[tid] || 0) + 1;
+  }
+  // Set node size by connectivity
+  for (const n of data.nodes) {
+    n.val = Math.max(2, (edgeCount[n.id] || 0) * 0.8);
+  }
+
   graph = ForceGraph()(container)
     .graphData(data)
-    .nodeLabel(n => `<b>${n.label}</b><br>${n.text ? n.text.substring(0, 120) : ''}`)
+    .nodeLabel(n => `<b>${n.label}</b> (${edgeCount[n.id] || 0} edges)<br>${n.text ? n.text.substring(0, 200) : ''}`)
     .nodeColor(n => n.color)
     .nodeVal(n => n.val || 2)
     .linkColor(l => l.color || '#30363d')
-    .linkWidth(1.5)
+    .linkWidth(l => l.color === '#f85149' ? 3 : l.color === '#3fb950' ? 2 : 1)
     .linkDirectionalArrowLength(4)
     .linkDirectionalArrowRelPos(1)
     .backgroundColor('#0d1117')
     .width(container.offsetWidth)
-    .height(container.offsetHeight);
+    .height(container.offsetHeight)
+    .d3Force('charge', d3.forceManyBody().strength(-120))
+    .d3Force('link', d3.forceLink().distance(l => {
+      // Contradicts/supports edges pull nodes closer
+      return l.color === '#f85149' || l.color === '#3fb950' ? 40 : 80;
+    }))
+    .warmupTicks(100)
+    .cooldownTicks(200);
+
+  // Force initial render
+  setTimeout(() => { if (graph) graph.zoomToFit(400, 50); }, 500);
 }
 
 window.addEventListener('resize', () => {
