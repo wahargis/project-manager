@@ -11,6 +11,11 @@ fn default_db_path() -> String {
     format!("{}/pm.db", dir)
 }
 
+fn resolve_project(store: &SqliteStore, name: &str) -> Option<pm::store::Project> {
+    store.list_projects().ok()?.into_iter()
+        .find(|p| p.name == name || p.alias.as_deref() == Some(name))
+}
+
 pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let db_path = cli.db.unwrap_or_else(default_db_path);
     let store = SqliteStore::new(&db_path)?;
@@ -22,14 +27,16 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             for proj in &projects {
                 if proj.status != pm::store::ProjectStatus::Active { continue; }
                 let dag = DagEngine::new(&store, proj.id);
-                let next = dag.next_phases()?;
-                if let Some(top) = next.first() {
-                    let status_str = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                    println!("  [{}] {} #{} [impact:{}] {}", proj.name, status_str, top.id, top.impact, top.name);
+                if let Ok(next) = dag.next_phases() {
+                    if let Some(top) = next.first() {
+                        let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
+                        println!("  [{}] {} #{} [impact:{}] {}", proj.name, s, top.id, top.impact, top.name);
+                    }
                 }
             }
             println!("\n## ACTION: Execute the highest-impact item above.");
         }
+
         Commands::Project { action } => match action {
             ProjectAction::List => {
                 for p in store.list_projects()? {
@@ -41,43 +48,254 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 println!("Activated: {} (id: {})", p.name, p.id);
             }
             ProjectAction::Pause { name } => {
-                let projects = store.list_projects()?;
-                if let Some(p) = projects.iter().find(|p| p.name == name || p.alias.as_deref() == Some(&name)) {
+                if let Some(p) = resolve_project(&store, &name) {
                     store.update_project_status(p.id, pm::store::ProjectStatus::Paused)?;
                     println!("Paused: {}", name);
-                }
+                } else { eprintln!("Not found: {}", name); }
             }
             ProjectAction::Archive { name } => {
-                let projects = store.list_projects()?;
-                if let Some(p) = projects.iter().find(|p| p.name == name || p.alias.as_deref() == Some(&name)) {
+                if let Some(p) = resolve_project(&store, &name) {
                     store.update_project_status(p.id, pm::store::ProjectStatus::Archived)?;
                     println!("Archived: {}", name);
-                }
+                } else { eprintln!("Not found: {}", name); }
             }
         },
+
+        Commands::Phase { project, action } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                PhaseAction::Add { name, impact, depends } => {
+                    let deps = depends.unwrap_or_default();
+                    let phase = store.create_phase(proj.id, &name, impact, &deps)?;
+                    println!("Phase #{} added: {} [impact:{}]", phase.id, phase.name, phase.impact);
+                }
+                PhaseAction::List => {
+                    for p in store.list_phases(proj.id)? {
+                        let deps = if p.depends_on.is_empty() { String::new() }
+                            else { format!(" (depends: {:?})", p.depends_on) };
+                        println!("  #{} [{:?}] [impact:{}] {}{}", p.id, p.status, p.impact, p.name, deps);
+                    }
+                }
+                PhaseAction::Update { id, status } => {
+                    let s = match status.as_str() {
+                        "pending" => PhaseStatus::Pending,
+                        "in_progress" => PhaseStatus::InProgress,
+                        "complete" => PhaseStatus::Complete,
+                        "deprioritized" => PhaseStatus::Deprioritized,
+                        "paused" => PhaseStatus::Paused,
+                        _ => return Err(format!("Invalid status: {}", status).into()),
+                    };
+                    store.update_phase_status(id, s)?;
+                    println!("Phase #{} updated: status={}", id, status);
+                }
+                PhaseAction::Get { id } => {
+                    let p = store.get_phase(id)?;
+                    println!("Phase #{}: {} [{:?}] impact:{} depends:{:?}", p.id, p.name, p.status, p.impact, p.depends_on);
+                }
+            }
+        }
+
+        Commands::Exp { project, action } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                ExpAction::Add { name, phase, status, result } => {
+                    let exp = store.create_experiment(phase, &name)?;
+                    if let Some(s) = status {
+                        let es = match s.as_str() {
+                            "pass" => ExperimentStatus::Pass,
+                            "fail" => ExperimentStatus::Fail,
+                            "inconclusive" => ExperimentStatus::Inconclusive,
+                            _ => ExperimentStatus::Pending,
+                        };
+                        store.update_experiment_status(exp.id, es, result.as_deref())?;
+                    }
+                    println!("Experiment #{} added: {}", exp.id, exp.name);
+                }
+                ExpAction::List { phase } => {
+                    let exps = store.list_experiments(phase)?;
+                    for e in exps {
+                        println!("  #{} [{:?}] {} (phase: {:?})", e.id, e.status, e.name, e.phase_id);
+                    }
+                }
+                ExpAction::Update { id, status, result } => {
+                    let es = match status.as_str() {
+                        "pass" => ExperimentStatus::Pass,
+                        "fail" => ExperimentStatus::Fail,
+                        "inconclusive" => ExperimentStatus::Inconclusive,
+                        _ => ExperimentStatus::Pending,
+                    };
+                    store.update_experiment_status(id, es, result.as_deref())?;
+                    println!("Experiment #{} updated: status={}", id, status);
+                }
+            }
+        }
+
+        Commands::Finding { project, action } => {
+            let _proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                FindingAction::Add { text, experiment } => {
+                    let f = store.create_finding(experiment, &text)?;
+                    println!("Finding #{} added", f.id);
+                }
+                FindingAction::List { experiment } => {
+                    let findings = store.list_findings(experiment)?;
+                    for f in findings {
+                        println!("  #{}: {} (exp: {:?})", f.id, &f.text[..f.text.len().min(80)], f.experiment_id);
+                    }
+                }
+                FindingAction::Traverse { id, depth } => {
+                    let kg = KgEngine::new(&store);
+                    let results = kg.traverse_deep(NodeType::Finding, id, depth)?;
+                    for r in results {
+                        println!("  {} #{}: {}", format!("{:?}", r.root.node_type), r.root.id, &r.root.label[..r.root.label.len().min(60)]);
+                        for (edge, target) in &r.edges {
+                            println!("    --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(50)]);
+                        }
+                    }
+                }
+            }
+        }
+
+        Commands::Dec { project, action } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                DecAction::Add { what, why, experiment } => {
+                    let d = store.create_decision(experiment, &what, why.as_deref())?;
+                    println!("Decision #{} added: {}", d.id, d.what);
+                }
+                DecAction::List => {
+                    for d in store.list_decisions(proj.id)? {
+                        println!("  #{}: {} (exp: {:?})", d.id, d.what, d.experiment_id);
+                    }
+                }
+            }
+        }
+
+        Commands::Kg { project, action } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            let kg = KgEngine::new(&store);
+            match action {
+                KgAction::Map => {
+                    let findings = store.list_findings(None)?;
+                    println!("=== Knowledge Graph ===\n");
+                    println!("Findings: {}", findings.len());
+                    let contradictions = kg.find_contradictions(&findings)?;
+                    if !contradictions.is_empty() {
+                        println!("\nContradictions:");
+                        for (a, b) in &contradictions {
+                            println!("  #{} vs #{}", a.id, b.id);
+                        }
+                    }
+                }
+                KgAction::Traverse { from } => {
+                    // Parse "finding:12" format
+                    let parts: Vec<&str> = from.split(':').collect();
+                    if parts.len() == 2 {
+                        let nt = match parts[0] {
+                            "finding" => NodeType::Finding,
+                            "experiment" => NodeType::Experiment,
+                            "decision" => NodeType::Decision,
+                            _ => return Err("Unknown node type".into()),
+                        };
+                        let id: i64 = parts[1].parse()?;
+                        let result = kg.traverse(nt, id)?;
+                        println!("ROOT: {:?} #{}: {}", result.root.node_type, result.root.id, &result.root.label[..result.root.label.len().min(80)]);
+                        for (edge, target) in &result.edges {
+                            println!("  --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                        }
+                    }
+                }
+                KgAction::Cluster => {
+                    println!("Cluster not yet implemented in v3");
+                }
+            }
+        }
+
         Commands::Next { project } => {
-            let projects = store.list_projects()?;
-            if let Some(proj) = projects.iter().find(|p| p.name == project || p.alias.as_deref() == Some(&project)) {
+            if let Some(proj) = resolve_project(&store, &project) {
                 let dag = DagEngine::new(&store, proj.id);
                 let next = dag.next_phases()?;
                 println!("=== Next Phases (by impact) ===\n");
-                for (i, phase) in next.iter().take(3).enumerate() {
-                    let status = if phase.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                    println!("  {} #{} [impact:{}] {}", status, phase.id, phase.impact, phase.name);
+                for phase in next.iter().take(3) {
+                    let s = if phase.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
+                    println!("  {} #{} [impact:{}] {}", s, phase.id, phase.impact, phase.name);
                 }
-                if let Some(stag) = dag.stagnation_check(3)? {
-                    println!("\n  WARNING: STAGNATION — {} consecutive failed experiments", stag);
+                if let Some(n) = dag.stagnation_check(3)? {
+                    println!("\n  WARNING: STAGNATION — {} consecutive failed experiments", n);
                 }
                 println!("\n## ACTION: Execute the top phase.");
-            } else {
-                eprintln!("Project not found: {}", project);
-            }
+            } else { eprintln!("Project not found: {}", project); }
         }
+
+        Commands::Review { project } => {
+            if let Some(proj) = resolve_project(&store, &project) {
+                let dag = DagEngine::new(&store, proj.id);
+                let kg = KgEngine::new(&store);
+                let phases = store.list_phases(proj.id)?;
+                
+                println!("=== Research Review: {} ===\n", proj.name);
+                
+                // Experiment velocity
+                let mut total = 0; let mut pass = 0; let mut fail = 0; let mut pending = 0;
+                for phase in &phases {
+                    for exp in store.list_experiments(Some(phase.id))? {
+                        total += 1;
+                        match exp.status {
+                            ExperimentStatus::Pass => pass += 1,
+                            ExperimentStatus::Fail => fail += 1,
+                            ExperimentStatus::Pending => pending += 1,
+                            _ => {}
+                        }
+                    }
+                }
+                println!("## Experiments: {} total, {} pass, {} fail, {} pending", total, pass, fail, pending);
+                
+                // Stagnation
+                if let Some(n) = dag.stagnation_check(3)? {
+                    println!("\n## STAGNATION: {} consecutive fails — REDIRECT needed", n);
+                } else {
+                    println!("\n## Stagnation: OK");
+                }
+                
+                // Impact
+                let next = dag.next_phases()?;
+                println!("\n## Top phases by impact:");
+                for p in next.iter().take(3) {
+                    println!("  #{} [impact:{}] {:?} {}", p.id, p.impact, p.status, p.name);
+                }
+                
+                // Contradictions
+                let findings = store.list_findings(None)?;
+                let contradictions = kg.find_contradictions(&findings)?;
+                if !contradictions.is_empty() {
+                    println!("\n## Contradictions: {}", contradictions.len());
+                }
+                
+                println!("\n## ACTION: Address any warnings above.");
+            } else { eprintln!("Project not found: {}", project); }
+        }
+
+        Commands::Scaffold { project, phase, format } => {
+            if let Some(_proj) = resolve_project(&store, &project) {
+                let p = store.get_phase(phase)?;
+                println!("=== Scaffold: Phase #{} ({}) ===\n", p.id, p.name);
+                let exps = store.list_experiments(Some(phase))?;
+                let pending: Vec<_> = exps.iter().filter(|e| e.status == ExperimentStatus::Pending).collect();
+                if format == "json" {
+                    let items: Vec<serde_json::Value> = pending.iter().map(|e| {
+                        serde_json::json!({"subject": format!("Exp #{}: {}", e.id, e.name), "description": format!("Phase {} ({})", p.id, p.name)})
+                    }).collect();
+                    println!("{}", serde_json::to_string_pretty(&items)?);
+                } else {
+                    for e in &pending {
+                        println!("  TASK: {} | phase={} | exp={}", e.name, phase, e.id);
+                    }
+                }
+            } else { eprintln!("Project not found: {}", project); }
+        }
+
         Commands::Import { path, name } => {
             import_v2(&store, &path, &name)?;
-        }
-        _ => {
-            println!("Command not yet implemented");
         }
     }
     Ok(())
@@ -85,101 +303,70 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 fn import_v2(store: &SqliteStore, path: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let data: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-    
-    // Create project
     let proj = store.create_project(name, None)?;
     println!("Created project: {} (id: {})", name, proj.id);
-    
-    // Import phases
-    let mut phase_id_map = std::collections::HashMap::new();
+
+    let mut phase_map = std::collections::HashMap::new();
     if let Some(phases) = data["phases"].as_array() {
         for p in phases {
             let old_id = p["id"].as_i64().unwrap_or(0);
             let pname = p["name"].as_str().unwrap_or("unnamed");
             let impact = p["impact"].as_i64().unwrap_or(0) as i32;
             let deps: Vec<i64> = p["depends_on"].as_array()
-                .map(|arr| arr.iter().filter_map(|v| v.as_i64()).collect())
+                .map(|a| a.iter().filter_map(|v| v.as_i64()).filter_map(|d| phase_map.get(&d).copied()).collect())
                 .unwrap_or_default();
-            // Map old dep IDs to new IDs
-            let mapped_deps: Vec<i64> = deps.iter()
-                .filter_map(|old| phase_id_map.get(old).copied())
-                .collect();
-            
-            let phase = store.create_phase(proj.id, pname, impact, &mapped_deps)?;
-            
-            // Set status
-            let status_str = p["status"].as_str().unwrap_or("pending");
-            let status = match status_str {
-                "complete" => pm::store::PhaseStatus::Complete,
-                "in_progress" => pm::store::PhaseStatus::InProgress,
-                "deprioritized" => pm::store::PhaseStatus::Deprioritized,
-                "paused" | "paused-at-ceiling" => pm::store::PhaseStatus::Paused,
-                _ => pm::store::PhaseStatus::Pending,
+            let phase = store.create_phase(proj.id, pname, impact, &deps)?;
+            let status = match p["status"].as_str().unwrap_or("pending") {
+                "complete" => PhaseStatus::Complete,
+                "in_progress" => PhaseStatus::InProgress,
+                "deprioritized" => PhaseStatus::Deprioritized,
+                "paused" | "paused-at-ceiling" => PhaseStatus::Paused,
+                _ => PhaseStatus::Pending,
             };
             store.update_phase_status(phase.id, status)?;
-            phase_id_map.insert(old_id, phase.id);
+            phase_map.insert(old_id, phase.id);
         }
-        println!("  Imported {} phases", phases.len());
+        println!("  {} phases", phases.len());
     }
-    
-    // Import experiments
-    let mut exp_id_map = std::collections::HashMap::new();
+
+    let mut exp_map = std::collections::HashMap::new();
     if let Some(exps) = data["experiments"].as_array() {
         for e in exps {
             let old_id = e["id"].as_i64().unwrap_or(0);
             let ename = e["name"].as_str().unwrap_or("unnamed");
-            let old_phase = e["phase"].as_i64();
-            let new_phase = old_phase.and_then(|op| phase_id_map.get(&op).copied());
-            
+            let new_phase = e["phase"].as_i64().and_then(|op| phase_map.get(&op).copied());
             let exp = store.create_experiment(new_phase, ename)?;
-            
-            let status_str = e["status"].as_str().unwrap_or(e["result"].as_str().unwrap_or("pending"));
-            let status = match status_str {
-                "pass" => pm::store::ExperimentStatus::Pass,
-                "fail" => pm::store::ExperimentStatus::Fail,
-                "pending" => pm::store::ExperimentStatus::Pending,
-                _ => pm::store::ExperimentStatus::Inconclusive,
+            let status = match e["status"].as_str().unwrap_or("pending") {
+                "pass" => ExperimentStatus::Pass,
+                "fail" => ExperimentStatus::Fail,
+                "pending" => ExperimentStatus::Pending,
+                _ => ExperimentStatus::Inconclusive,
             };
-            let result = e["result"].as_str();
-            store.update_experiment_status(exp.id, status, result)?;
-            exp_id_map.insert(old_id, exp.id);
+            store.update_experiment_status(exp.id, status, e["result"].as_str())?;
+            exp_map.insert(old_id, exp.id);
         }
-        println!("  Imported {} experiments", exps.len());
+        println!("  {} experiments", exps.len());
     }
-    
-    // Import findings
+
     if let Some(findings) = data["findings"].as_array() {
         for f in findings {
             let text = f["text"].as_str().unwrap_or("");
-            let old_exp = f["experiment"].as_i64();
-            let new_exp = old_exp.and_then(|oe| exp_id_map.get(&oe).copied());
-            
-            let finding = store.create_finding(new_exp, text)?;
-            
-            // Create edges for supports/contradicts
-            if let Some(sup) = f["supports"].as_i64() {
-                // Edge will reference old finding IDs — need mapping
-                // For now skip cross-references (would need a second pass)
-            }
-            if let Some(con) = f["contradicts"].as_i64() {
-                // Same — skip for now
-            }
+            let new_exp = f["experiment"].as_i64().and_then(|oe| exp_map.get(&oe).copied());
+            store.create_finding(new_exp, text)?;
         }
-        println!("  Imported {} findings", findings.len());
+        println!("  {} findings", findings.len());
     }
-    
-    // Import decisions
+
     if let Some(decs) = data["decisions"].as_array() {
         for d in decs {
             let what = d["what"].as_str().unwrap_or("");
             let why = d["why"].as_str();
-            let old_exp = d["experiment"].as_i64();
-            let new_exp = old_exp.and_then(|oe| exp_id_map.get(&oe).copied());
+            let new_exp = d["experiment"].as_i64().and_then(|oe| exp_map.get(&oe).copied());
             store.create_decision(new_exp, what, why)?;
         }
-        println!("  Imported {} decisions", decs.len());
+        println!("  {} decisions", decs.len());
     }
-    
+
     println!("\nImport complete. Run: pm next {}", name);
     Ok(())
 }
