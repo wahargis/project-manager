@@ -412,6 +412,25 @@ impl Store for SqliteStore {
         }))?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
+    fn list_all_edges(&self) -> Result<Vec<Edge>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, source_type, source_id, target_type, target_id, relation FROM edges ORDER BY id"
+        )?;
+        let rows = stmt.query_map([], |row| Ok(Edge {
+            id: row.get(0)?,
+            source_type: SqliteStore::parse_node_type(&row.get::<_, String>(1)?),
+            source_id: row.get(2)?,
+            target_type: SqliteStore::parse_node_type(&row.get::<_, String>(3)?),
+            target_id: row.get(4)?,
+            relation: SqliteStore::parse_edge_type(&row.get::<_, String>(5)?),
+        }))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
+    }
+
+    fn delete_edge(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM edges WHERE id = ?1", params![id])?;
+        Ok(())
+    }
 
     fn create_decision(&self, experiment_id: Option<i64>, what: &str, why: Option<&str>) -> Result<Decision> {
         let now = Self::now();

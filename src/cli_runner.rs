@@ -243,6 +243,50 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 KgAction::Cluster => {
                     println!("Cluster not yet implemented in v3");
                 }
+                KgAction::Edge { source_type, source_id, target_type, target_id, relation } => {
+                    let st = match source_type.as_str() {
+                        "Finding" | "finding" | "f" => NodeType::Finding,
+                        "Experiment" | "experiment" | "e" => NodeType::Experiment,
+                        "Decision" | "decision" | "d" => NodeType::Decision,
+                        "Phase" | "phase" | "p" => NodeType::Phase,
+                        "Research" | "research" | "r" => NodeType::Research,
+                        "Literature" | "literature" | "l" => NodeType::Literature,
+                        _ => return Err(format!("Unknown node type: {}", source_type).into()),
+                    };
+                    let tt = match target_type.as_str() {
+                        "Finding" | "finding" | "f" => NodeType::Finding,
+                        "Experiment" | "experiment" | "e" => NodeType::Experiment,
+                        "Decision" | "decision" | "d" => NodeType::Decision,
+                        "Phase" | "phase" | "p" => NodeType::Phase,
+                        "Research" | "research" | "r" => NodeType::Research,
+                        "Literature" | "literature" | "l" => NodeType::Literature,
+                        _ => return Err(format!("Unknown node type: {}", target_type).into()),
+                    };
+                    let rel = match relation.as_str() {
+                        "Supports" | "supports" => EdgeType::Supports,
+                        "Contradicts" | "contradicts" => EdgeType::Contradicts,
+                        "DependsOn" | "depends" => EdgeType::DependsOn,
+                        "Informed" | "informed" => EdgeType::Informed,
+                        "Supersedes" | "supersedes" => EdgeType::Supersedes,
+                        "RelatedTo" | "related" => EdgeType::RelatedTo,
+                        "ProducedBy" | "produced" => EdgeType::ProducedBy,
+                        "CitedIn" | "cited" => EdgeType::CitedIn,
+                        _ => return Err(format!("Unknown relation: {}", relation).into()),
+                    };
+                    let edge = store.create_edge(st, source_id, tt, target_id, rel)?;
+                    println!("Edge #{} added: {:?} #{} --{:?}--> {:?} #{}", edge.id, edge.source_type, edge.source_id, edge.relation, edge.target_type, edge.target_id);
+                }
+                KgAction::Edges => {
+                    let edges = store.list_all_edges()?;
+                    for e in &edges {
+                        println!("  #{}: {:?} #{} --{:?}--> {:?} #{}", e.id, e.source_type, e.source_id, e.relation, e.target_type, e.target_id);
+                    }
+                    println!("\n{} edges total", edges.len());
+                }
+                KgAction::Rm { id } => {
+                    store.delete_edge(id)?;
+                    println!("Edge #{} deleted", id);
+                }
             }
         }
 

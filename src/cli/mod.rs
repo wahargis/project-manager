@@ -133,6 +133,26 @@ pub enum KgAction {
     Map,
     Traverse { #[arg(long)] from: String },
     Cluster,
+    /// Add a KG edge
+    Edge {
+        /// Source node type (Finding, Experiment, Decision, Phase, Research)
+        source_type: String,
+        /// Source node ID
+        source_id: i64,
+        /// Target node type
+        target_type: String,
+        /// Target node ID
+        target_id: i64,
+        /// Relation (Supports, Contradicts, DependsOn, Informed, Supersedes, RelatedTo, ProducedBy, CitedIn)
+        relation: String,
+    },
+    /// List all KG edges
+    Edges,
+    /// Delete a KG edge by ID
+    Rm {
+        /// Edge ID to delete
+        id: i64,
+    },
 }
 
 #[derive(Subcommand)]

@@ -170,6 +170,8 @@ pub trait Store {
     fn create_edge(&self, source_type: NodeType, source_id: i64, target_type: NodeType, target_id: i64, relation: EdgeType) -> Result<Edge>;
     fn get_edges_from(&self, source_type: NodeType, source_id: i64) -> Result<Vec<Edge>>;
     fn get_edges_to(&self, target_type: NodeType, target_id: i64) -> Result<Vec<Edge>>;
+    fn list_all_edges(&self) -> Result<Vec<Edge>>;
+    fn delete_edge(&self, id: i64) -> Result<()>;
 
     // Decisions
     fn create_decision(&self, experiment_id: Option<i64>, what: &str, why: Option<&str>) -> Result<Decision>;
