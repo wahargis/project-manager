@@ -72,6 +72,11 @@ pub enum Commands {
     Handoff {
         project: String,
     },
+    /// Start web dashboard server
+    Serve {
+        #[arg(long, default_value_t = 9090)]
+        port: u16,
+    },
     Import {
         /// Path to v2 project.json
         path: String,

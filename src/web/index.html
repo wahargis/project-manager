@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>PM — Research Project Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; }
+#header { background: #161b22; padding: 12px 24px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+#header h1 { font-size: 16px; color: #58a6ff; }
+#controls { display: flex; gap: 8px; }
+button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12px; }
+button:hover { background: #30363d; }
+button.active { background: #1f6feb; border-color: #1f6feb; }
+#main { display: flex; height: calc(100vh - 49px); }
+#sidebar { width: 300px; background: #161b22; border-right: 1px solid #30363d; overflow-y: auto; padding: 16px; }
+#sidebar h2 { font-size: 13px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+.project-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; cursor: pointer; }
+.project-card:hover { border-color: #58a6ff; }
+.project-card.selected { border-color: #1f6feb; background: #161b22; }
+.project-card h3 { font-size: 14px; color: #f0f6fc; margin-bottom: 4px; }
+.project-card .stats { font-size: 11px; color: #8b949e; }
+.progress-bar { height: 4px; background: #21262d; border-radius: 2px; margin-top: 6px; }
+.progress-fill { height: 100%; background: #3fb950; border-radius: 2px; }
+#graph-container { flex: 1; position: relative; }
+#tooltip { position: absolute; background: #1c2128; border: 1px solid #30363d; border-radius: 8px; padding: 12px; max-width: 400px; font-size: 12px; display: none; z-index: 10; pointer-events: none; }
+#tooltip .title { color: #f0f6fc; font-weight: bold; margin-bottom: 4px; }
+#tooltip .body { color: #8b949e; }
+.legend { position: absolute; bottom: 16px; right: 16px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; font-size: 11px; }
+.legend-item { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>PM — Research Dashboard</h1>
+  <div id="controls">
+    <button id="btn-kg" class="active" onclick="setView('kg')">Knowledge Graph</button>
+    <button id="btn-dag" onclick="setView('dag')">Phase DAG</button>
+  </div>
+</div>
+<div id="main">
+  <div id="sidebar">
+    <h2>Projects</h2>
+    <div id="project-list"></div>
+    <h2 style="margin-top:16px">Dashboard</h2>
+    <div id="dashboard-text" style="font-size:11px;color:#8b949e;white-space:pre-wrap"></div>
+  </div>
+  <div id="graph-container"></div>
+</div>
+<div id="tooltip"><div class="title"></div><div class="body"></div></div>
+<div class="legend" id="legend-kg">
+  <div class="legend-item"><div class="legend-dot" style="background:#58a6ff"></div>Finding</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div>Experiment</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#d29922"></div>Decision</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f85149;width:20px;height:2px;border-radius:1px"></div>Contradicts</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950;width:20px;height:2px;border-radius:1px"></div>Supports</div>
+</div>
+<div class="legend" id="legend-dag" style="display:none">
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div>Complete</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#58a6ff"></div>In Progress</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#8b949e"></div>Pending</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f85149"></div>Paused</div>
+</div>
+
+<script src="https://unpkg.com/force-graph@1.43.5/dist/force-graph.min.js"></script>
+<script>
+let currentProject = null;
+let currentView = 'kg';
+let graph = null;
+
+async function loadProjects() {
+  const res = await fetch('/api/projects');
+  const projects = await res.json();
+  const list = document.getElementById('project-list');
+  list.innerHTML = '';
+  for (const p of projects) {
+    if (p.status !== 'Active') continue;
+    const card = document.createElement('div');
+    card.className = 'project-card';
+    card.onclick = () => selectProject(p.id, card);
+    const phases = await fetch(`/api/projects/${p.id}/phases`).then(r => r.json());
+    const complete = phases.filter(ph => ph.status === 'Complete').length;
+    card.innerHTML = `<h3>${p.name}</h3><div class="stats">${complete}/${phases.length} phases</div><div class="progress-bar"><div class="progress-fill" style="width:${phases.length?complete/phases.length*100:0}%"></div></div>`;
+    list.appendChild(card);
+  }
+  // Load dashboard
+  const dash = await fetch('/api/dashboard').then(r => r.json());
+  document.getElementById('dashboard-text').textContent = dash.text;
+  // Auto-select first project
+  if (projects.filter(p => p.status === 'Active').length > 0) {
+    const first = projects.find(p => p.status === 'Active');
+    selectProject(first.id, list.firstChild);
+  }
+}
+
+async function selectProject(id, card) {
+  currentProject = id;
+  document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
+  if (card) card.classList.add('selected');
+  if (currentView === 'kg') await loadKG(id);
+  else await loadDAG(id);
+}
+
+function setView(view) {
+  currentView = view;
+  document.getElementById('btn-kg').classList.toggle('active', view === 'kg');
+  document.getElementById('btn-dag').classList.toggle('active', view === 'dag');
+  document.getElementById('legend-kg').style.display = view === 'kg' ? '' : 'none';
+  document.getElementById('legend-dag').style.display = view === 'dag' ? '' : 'none';
+  if (currentProject) selectProject(currentProject);
+}
+
+async function loadKG(projectId) {
+  const [findings, edges, experiments, decisions] = await Promise.all([
+    fetch(`/api/projects/${projectId}/findings`).then(r => r.json()),
+    fetch(`/api/projects/${projectId}/edges`).then(r => r.json()),
+    fetch(`/api/projects/${projectId}/experiments`).then(r => r.json()),
+    fetch(`/api/projects/${projectId}/phases`).then(r => r.json()), // placeholder
+  ]);
+
+  const nodes = [];
+  const links = [];
+
+  // Finding nodes
+  for (const f of findings) {
+    nodes.push({ id: `f-${f.id}`, label: `F#${f.id}`, text: f.text, type: 'finding', color: '#58a6ff', val: 3 });
+  }
+  // Experiment nodes
+  for (const e of experiments) {
+    nodes.push({ id: `e-${e.id}`, label: `E#${e.id}`, text: e.name, type: 'experiment', color: '#3fb950', val: 2 });
+  }
+  // Edges: finding→experiment (produced_by)
+  for (const f of findings) {
+    if (f.experiment_id) {
+      links.push({ source: `e-${f.experiment_id}`, target: `f-${f.id}`, color: '#30363d' });
+    }
+  }
+  // KG edges
+  for (const edge of edges) {
+    const src = `${edge.source_type.toLowerCase().charAt(0)}-${edge.source_id}`;
+    const tgt = `${edge.target_type.toLowerCase().charAt(0)}-${edge.target_id}`;
+    const color = edge.relation === 'Contradicts' ? '#f85149' : edge.relation === 'Supports' ? '#3fb950' : '#8b949e';
+    links.push({ source: src, target: tgt, color: color });
+  }
+
+  renderGraph({ nodes, links });
+}
+
+async function loadDAG(projectId) {
+  const phases = await fetch(`/api/projects/${projectId}/phases`).then(r => r.json());
+  const nodes = [];
+  const links = [];
+
+  for (const p of phases) {
+    const color = p.status === 'Complete' ? '#3fb950' : p.status === 'InProgress' ? '#58a6ff' : p.status === 'Paused' ? '#f85149' : '#8b949e';
+    nodes.push({ id: `p-${p.id}`, label: `P#${p.id}`, text: `${p.name} [impact:${p.impact}]`, type: 'phase', color: color, val: Math.max(2, p.impact / 5) });
+    for (const dep of p.depends_on) {
+      links.push({ source: `p-${dep}`, target: `p-${p.id}`, color: '#30363d' });
+    }
+  }
+  renderGraph({ nodes, links });
+}
+
+function renderGraph(data) {
+  const container = document.getElementById('graph-container');
+  if (graph) graph._destructor();
+
+  graph = ForceGraph()(container)
+    .graphData(data)
+    .nodeLabel(n => `<b>${n.label}</b><br>${n.text ? n.text.substring(0, 120) : ''}`)
+    .nodeColor(n => n.color)
+    .nodeVal(n => n.val || 2)
+    .linkColor(l => l.color || '#30363d')
+    .linkWidth(1.5)
+    .linkDirectionalArrowLength(4)
+    .linkDirectionalArrowRelPos(1)
+    .backgroundColor('#0d1117')
+    .width(container.offsetWidth)
+    .height(container.offsetHeight);
+}
+
+window.addEventListener('resize', () => {
+  if (graph) {
+    const c = document.getElementById('graph-container');
+    graph.width(c.offsetWidth).height(c.offsetHeight);
+  }
+});
+
+loadProjects();
+</script>
+</body>
+</html>

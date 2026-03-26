@@ -294,6 +294,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             } else { eprintln!("Project not found: {}", project); }
         }
 
+        Commands::Serve { port } => {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(pm::web::serve(&db_path, port));
+        }
         Commands::Handoff { project } => {
             println!("{}", handoff_text(&store, &project)?);
         }
