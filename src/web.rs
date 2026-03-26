@@ -44,31 +44,10 @@ pub async fn serve(db_path: &str, port: u16) {
 
     let db4 = db.clone();
     let edges = warp::path!("api" / "projects" / i64 / "edges")
-        .map(move |project_id: i64| {
+        .map(move |_project_id: i64| {
             let store = SqliteStore::new(&db4).unwrap();
-            let mut all_edges = Vec::new();
-            // Get project-scoped findings first
-            let mut finding_ids = std::collections::HashSet::new();
-            if let Ok(phases) = store.list_phases(project_id) {
-                for phase in &phases {
-                    if let Ok(exps) = store.list_experiments(Some(phase.id)) {
-                        for exp in &exps {
-                            if let Ok(findings) = store.list_findings(Some(exp.id)) {
-                                for f in &findings {
-                                    finding_ids.insert(f.id);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // Only return edges where source is in this project's findings
-            for fid in &finding_ids {
-                if let Ok(edges) = store.get_edges_from(crate::store::NodeType::Finding, *fid) {
-                    all_edges.extend(edges);
-                }
-            }
-            warp::reply::json(&all_edges)
+            // Return ALL edges — the frontend filters by node membership
+            warp::reply::json(&store.list_all_edges().unwrap_or_default())
         });
 
     let db5 = db.clone();
@@ -113,6 +92,42 @@ pub async fn serve(db_path: &str, port: u16) {
             warp::reply::json(&project_research)
         });
 
+
+    let db_principles = db.clone();
+    let principles = warp::path!("api" / "projects" / i64 / "principles")
+        .map(move |project_id: i64| {
+            let store = SqliteStore::new(&db_principles).unwrap();
+            warp::reply::json(&store.list_principles(project_id).unwrap_or_default())
+        });
+
+    let db_hypotheses = db.clone();
+    let hypotheses = warp::path!("api" / "projects" / i64 / "hypotheses")
+        .map(move |project_id: i64| {
+            let store = SqliteStore::new(&db_hypotheses).unwrap();
+            warp::reply::json(&store.list_hypotheses(None).unwrap_or_default())
+        });
+
+    let db_constraints = db.clone();
+    let constraints = warp::path!("api" / "projects" / i64 / "constraints")
+        .map(move |project_id: i64| {
+            let store = SqliteStore::new(&db_constraints).unwrap();
+            warp::reply::json(&store.list_constraints(project_id).unwrap_or_default())
+        });
+
+    let db_literature = db.clone();
+    let literature = warp::path!("api" / "projects" / i64 / "literature")
+        .map(move |project_id: i64| {
+            let store = SqliteStore::new(&db_literature).unwrap();
+            warp::reply::json(&store.list_literature(project_id).unwrap_or_default())
+        });
+
+    let db_feedback = db.clone();
+    let feedback = warp::path!("api" / "projects" / i64 / "feedback")
+        .map(move |project_id: i64| {
+            let store = SqliteStore::new(&db_feedback).unwrap();
+            warp::reply::json(&store.list_feedback(project_id).unwrap_or_default())
+        });
+
     let db6 = db.clone();
     let dashboard = warp::path!("api" / "dashboard")
         .map(move || {
@@ -135,7 +150,7 @@ pub async fn serve(db_path: &str, port: u16) {
     let index = warp::path::end()
         .map(|| warp::reply::html(include_str!("web/index.html")));
 
-    let routes = index.or(projects).or(phases).or(findings).or(edges).or(experiments).or(decisions).or(research).or(dashboard);
+    let routes = index.or(projects).or(phases).or(findings).or(edges).or(experiments).or(decisions).or(research).or(principles).or(hypotheses).or(constraints).or(literature).or(feedback).or(dashboard);
 
     println!("PM dashboard at http://localhost:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;
