@@ -1,0 +1,171 @@
+use super::*;
+
+// SQLite store will be implemented in sqlite.rs
+// These tests define the contract that any Store implementation must satisfy.
+
+// For now, create a mock/stub to validate the test structure compiles.
+// The real SQLiteStore will replace this.
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    // Helper: create a test store (will be SQLiteStore with in-memory DB)
+    fn test_store() -> sqlite::SqliteStore {
+        sqlite::SqliteStore::in_memory().unwrap()
+        
+    }
+
+    // --- P1.1: Project CRUD ---
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn create_project_returns_project_with_id() {
+        let store = test_store();
+        let p = store.create_project("volta-renaissance", Some("vr")).unwrap();
+        assert!(p.id > 0);
+        assert_eq!(p.name, "volta-renaissance");
+        assert_eq!(p.alias, Some("vr".to_string()));
+        assert_eq!(p.status, ProjectStatus::Active);
+    }
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn get_project_by_id() {
+        let store = test_store();
+        let created = store.create_project("test", None).unwrap();
+        let fetched = store.get_project(created.id).unwrap();
+        assert_eq!(fetched.name, "test");
+    }
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn list_projects_returns_all() {
+        let store = test_store();
+        store.create_project("a", None).unwrap();
+        store.create_project("b", None).unwrap();
+        let all = store.list_projects().unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn update_project_status() {
+        let store = test_store();
+        let p = store.create_project("test", None).unwrap();
+        store.update_project_status(p.id, ProjectStatus::Paused).unwrap();
+        let fetched = store.get_project(p.id).unwrap();
+        assert_eq!(fetched.status, ProjectStatus::Paused);
+    }
+
+    // --- P1.2: Phase CRUD ---
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn create_phase_with_dependencies() {
+        let store = test_store();
+        let proj = store.create_project("test", None).unwrap();
+        let p1 = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
+        let p2 = store.create_phase(proj.id, "Phase 2", 30, &[p1.id]).unwrap();
+        assert_eq!(p2.depends_on, vec![p1.id]);
+        assert_eq!(p2.impact, 30);
+    }
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn list_phases_for_project() {
+        let store = test_store();
+        let proj = store.create_project("test", None).unwrap();
+        store.create_phase(proj.id, "A", 10, &[]).unwrap();
+        store.create_phase(proj.id, "B", 20, &[]).unwrap();
+        let phases = store.list_phases(proj.id).unwrap();
+        assert_eq!(phases.len(), 2);
+    }
+
+    // --- P1.3: Experiment CRUD ---
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn create_experiment_with_phase() {
+        let store = test_store();
+        let proj = store.create_project("test", None).unwrap();
+        let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+        let exp = store.create_experiment(Some(phase.id), "test exp").unwrap();
+        assert_eq!(exp.status, ExperimentStatus::Pending);
+        assert_eq!(exp.phase_id, Some(phase.id));
+    }
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn update_experiment_status_to_pass() {
+        let store = test_store();
+        let proj = store.create_project("test", None).unwrap();
+        let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+        let exp = store.create_experiment(Some(phase.id), "test").unwrap();
+        store.update_experiment_status(exp.id, ExperimentStatus::Pass, Some("0/256 mismatches")).unwrap();
+        let fetched = store.get_experiment(exp.id).unwrap();
+        assert_eq!(fetched.status, ExperimentStatus::Pass);
+        assert_eq!(fetched.result, Some("0/256 mismatches".to_string()));
+    }
+
+    // --- P1.4: Finding CRUD ---
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn create_finding_linked_to_experiment() {
+        let store = test_store();
+        let proj = store.create_project("test", None).unwrap();
+        let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+        let exp = store.create_experiment(Some(phase.id), "test").unwrap();
+        let finding = store.create_finding(Some(exp.id), "Q4_K GEMV is compute-bound").unwrap();
+        assert_eq!(finding.experiment_id, Some(exp.id));
+    }
+
+    // --- P1.5: Edge CRUD (KG) ---
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn create_edge_supports() {
+        let store = test_store();
+        let proj = store.create_project("test", None).unwrap();
+        let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+        let exp = store.create_experiment(Some(phase.id), "test").unwrap();
+        let f1 = store.create_finding(Some(exp.id), "finding 1").unwrap();
+        let f2 = store.create_finding(Some(exp.id), "finding 2").unwrap();
+        let edge = store.create_edge(
+            NodeType::Finding, f1.id,
+            NodeType::Finding, f2.id,
+            EdgeType::Supports,
+        ).unwrap();
+        assert_eq!(edge.relation, EdgeType::Supports);
+    }
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn get_edges_from_finding() {
+        let store = test_store();
+        let proj = store.create_project("test", None).unwrap();
+        let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+        let exp = store.create_experiment(Some(phase.id), "test").unwrap();
+        let f1 = store.create_finding(Some(exp.id), "source").unwrap();
+        let f2 = store.create_finding(Some(exp.id), "target").unwrap();
+        store.create_edge(NodeType::Finding, f1.id, NodeType::Finding, f2.id, EdgeType::Contradicts).unwrap();
+        let edges = store.get_edges_from(NodeType::Finding, f1.id).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].relation, EdgeType::Contradicts);
+    }
+
+    // --- P1.6: Decision CRUD ---
+
+    #[test]
+    #[should_panic(expected = "not yet implemented")]
+    fn create_decision_with_rationale() {
+        let store = test_store();
+        let proj = store.create_project("test", None).unwrap();
+        let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+        let exp = store.create_experiment(Some(phase.id), "test").unwrap();
+        let dec = store.create_decision(Some(exp.id), "Use Rust", Some("Type safety for KG")).unwrap();
+        assert_eq!(dec.what, "Use Rust");
+        assert_eq!(dec.why, Some("Type safety for KG".to_string()));
+    }
+}
