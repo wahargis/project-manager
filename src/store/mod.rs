@@ -41,6 +41,41 @@ pub enum ExperimentStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PrincipleScope {
+    Universal,
+    Project,
+    Phase,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PrincipleStatus {
+    Active,
+    Superseded,
+    Refined,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum HypothesisStatus {
+    Proposed,
+    Testing,
+    Confirmed,
+    Refuted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ConstraintScope {
+    Hardware,
+    Software,
+    Process,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum FeedbackCategory {
+    Correction,
+    Confirmation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ResearchStatus {
     Pending,
     InProgress,
@@ -67,6 +102,10 @@ pub enum NodeType {
     Literature,
     Phase,
     Research,
+    Principle,
+    Hypothesis,
+    Constraint,
+    Feedback,
 }
 
 // --- Entity Structs ---
@@ -140,6 +179,61 @@ pub struct Research {
     pub created_at: NaiveDateTime,
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Principle {
+    pub id: i64,
+    pub project_id: i64,
+    pub scope: PrincipleScope,
+    pub text: String,
+    pub status: PrincipleStatus,
+    pub superseded_by: Option<i64>,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hypothesis {
+    pub id: i64,
+    pub phase_id: Option<i64>,
+    pub text: String,
+    pub status: HypothesisStatus,
+    pub experiment_id: Option<i64>,
+    pub finding_id: Option<i64>,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Constraint {
+    pub id: i64,
+    pub project_id: i64,
+    pub scope: ConstraintScope,
+    pub text: String,
+    pub source: Option<String>,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiteratureEntry {
+    pub id: i64,
+    pub project_id: i64,
+    pub arxiv_id: Option<String>,
+    pub title: String,
+    pub authors: Option<String>,
+    pub relevance: Option<String>,
+    pub key_findings: Option<String>,
+    pub url: Option<String>,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedbackEntry {
+    pub id: i64,
+    pub project_id: i64,
+    pub text: String,
+    pub category: FeedbackCategory,
+    pub created_at: NaiveDateTime,
+}
+
 // --- Store Trait ---
 
 pub trait Store {
@@ -182,6 +276,27 @@ pub trait Store {
     fn get_research(&self, id: i64) -> Result<Research>;
     fn list_research(&self, phase_id: Option<i64>) -> Result<Vec<Research>>;
     fn update_research(&self, id: i64, status: ResearchStatus, report: Option<&str>) -> Result<()>;
+    // Principles
+    fn create_principle(&self, project_id: i64, scope: PrincipleScope, text: &str) -> Result<Principle>;
+    fn list_principles(&self, project_id: i64) -> Result<Vec<Principle>>;
+    fn update_principle_status(&self, id: i64, status: PrincipleStatus, superseded_by: Option<i64>) -> Result<()>;
+
+    // Hypotheses
+    fn create_hypothesis(&self, phase_id: Option<i64>, text: &str) -> Result<Hypothesis>;
+    fn list_hypotheses(&self, phase_id: Option<i64>) -> Result<Vec<Hypothesis>>;
+    fn update_hypothesis(&self, id: i64, status: HypothesisStatus, experiment_id: Option<i64>, finding_id: Option<i64>) -> Result<()>;
+
+    // Constraints
+    fn create_constraint(&self, project_id: i64, scope: ConstraintScope, text: &str, source: Option<&str>) -> Result<Constraint>;
+    fn list_constraints(&self, project_id: i64) -> Result<Vec<Constraint>>;
+
+    // Literature
+    fn create_literature(&self, project_id: i64, title: &str, arxiv_id: Option<&str>, relevance: Option<&str>, key_findings: Option<&str>) -> Result<LiteratureEntry>;
+    fn list_literature(&self, project_id: i64) -> Result<Vec<LiteratureEntry>>;
+
+    // Feedback
+    fn create_feedback(&self, project_id: i64, text: &str, category: FeedbackCategory) -> Result<FeedbackEntry>;
+    fn list_feedback(&self, project_id: i64) -> Result<Vec<FeedbackEntry>>;
 }
 
 #[cfg(test)]

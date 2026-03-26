@@ -74,6 +74,50 @@ impl SqliteStore {
                 target_id INTEGER NOT NULL,
                 relation TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS principles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                scope TEXT NOT NULL,
+                text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                superseded_by INTEGER,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS hypotheses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                phase_id INTEGER REFERENCES phases(id),
+                text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                experiment_id INTEGER,
+                finding_id INTEGER,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS constraints_tbl (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                scope TEXT NOT NULL,
+                text TEXT NOT NULL,
+                source TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS literature (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                arxiv_id TEXT,
+                title TEXT NOT NULL,
+                authors TEXT,
+                relevance TEXT,
+                key_findings TEXT,
+                url TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                text TEXT NOT NULL,
+                category TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS decisions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 experiment_id INTEGER REFERENCES experiments(id),
@@ -175,6 +219,10 @@ impl SqliteStore {
             "Literature" => NodeType::Literature,
             "Phase" => NodeType::Phase,
             "Research" => NodeType::Research,
+            "Principle" => NodeType::Principle,
+            "Hypothesis" => NodeType::Hypothesis,
+            "Constraint" => NodeType::Constraint,
+            "Feedback" => NodeType::Feedback,
             _ => NodeType::Finding,
         }
     }
@@ -446,6 +494,109 @@ impl Store for SqliteStore {
             why: why.map(|s| s.to_string()),
             created_at: Self::parse_dt(&now),
         })
+    }
+
+    fn create_principle(&self, project_id: i64, scope: PrincipleScope, text: &str) -> Result<Principle> {
+        let now = Self::now();
+        let s = match scope { PrincipleScope::Universal => "universal", PrincipleScope::Project => "project", PrincipleScope::Phase => "phase" };
+        self.conn.execute("INSERT INTO principles (project_id, scope, text, status, created_at) VALUES (?1, ?2, ?3, 'active', ?4)", params![project_id, s, text, now])?;
+        let id = self.conn.last_insert_rowid();
+        Ok(Principle { id, project_id, scope, text: text.to_string(), status: PrincipleStatus::Active, superseded_by: None, created_at: Self::parse_dt(&now) })
+    }
+    fn list_principles(&self, project_id: i64) -> Result<Vec<Principle>> {
+        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, status, superseded_by, created_at FROM principles WHERE project_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![project_id], |row| {
+            let scope_str: String = row.get(2)?;
+            let scope = match scope_str.as_str() { "universal" => PrincipleScope::Universal, "phase" => PrincipleScope::Phase, _ => PrincipleScope::Project };
+            let status_str: String = row.get(4)?;
+            let status = match status_str.as_str() { "superseded" => PrincipleStatus::Superseded, "refined" => PrincipleStatus::Refined, _ => PrincipleStatus::Active };
+            Ok(Principle { id: row.get(0)?, project_id: row.get(1)?, scope, text: row.get(3)?, status, superseded_by: row.get(5)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
+    }
+    fn update_principle_status(&self, id: i64, status: PrincipleStatus, superseded_by: Option<i64>) -> Result<()> {
+        let s = match status { PrincipleStatus::Active => "active", PrincipleStatus::Superseded => "superseded", PrincipleStatus::Refined => "refined" };
+        self.conn.execute("UPDATE principles SET status = ?1, superseded_by = ?2 WHERE id = ?3", params![s, superseded_by, id])?;
+        Ok(())
+    }
+
+    fn create_hypothesis(&self, phase_id: Option<i64>, text: &str) -> Result<Hypothesis> {
+        let now = Self::now();
+        self.conn.execute("INSERT INTO hypotheses (phase_id, text, status, created_at) VALUES (?1, ?2, 'proposed', ?3)", params![phase_id, text, now])?;
+        let id = self.conn.last_insert_rowid();
+        Ok(Hypothesis { id, phase_id, text: text.to_string(), status: HypothesisStatus::Proposed, experiment_id: None, finding_id: None, created_at: Self::parse_dt(&now) })
+    }
+    fn list_hypotheses(&self, phase_id: Option<i64>) -> Result<Vec<Hypothesis>> {
+        let sql = if phase_id.is_some() { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at FROM hypotheses WHERE phase_id = ?1 ORDER BY id" }
+                  else { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at FROM hypotheses ORDER BY id" };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = if let Some(pid) = phase_id {
+            stmt.query_map(params![pid], |row| {
+                let status_str: String = row.get(3)?;
+                let status = match status_str.as_str() { "testing" => HypothesisStatus::Testing, "confirmed" => HypothesisStatus::Confirmed, "refuted" => HypothesisStatus::Refuted, _ => HypothesisStatus::Proposed };
+                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+            })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
+        } else {
+            stmt.query_map([], |row| {
+                let status_str: String = row.get(3)?;
+                let status = match status_str.as_str() { "testing" => HypothesisStatus::Testing, "confirmed" => HypothesisStatus::Confirmed, "refuted" => HypothesisStatus::Refuted, _ => HypothesisStatus::Proposed };
+                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+            })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
+        };
+        Ok(rows)
+    }
+    fn update_hypothesis(&self, id: i64, status: HypothesisStatus, experiment_id: Option<i64>, finding_id: Option<i64>) -> Result<()> {
+        let s = match status { HypothesisStatus::Proposed => "proposed", HypothesisStatus::Testing => "testing", HypothesisStatus::Confirmed => "confirmed", HypothesisStatus::Refuted => "refuted" };
+        self.conn.execute("UPDATE hypotheses SET status = ?1, experiment_id = ?2, finding_id = ?3 WHERE id = ?4", params![s, experiment_id, finding_id, id])?;
+        Ok(())
+    }
+
+    fn create_constraint(&self, project_id: i64, scope: ConstraintScope, text: &str, source: Option<&str>) -> Result<Constraint> {
+        let now = Self::now();
+        let s = match scope { ConstraintScope::Hardware => "hardware", ConstraintScope::Software => "software", ConstraintScope::Process => "process" };
+        self.conn.execute("INSERT INTO constraints_tbl (project_id, scope, text, source, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![project_id, s, text, source, now])?;
+        let id = self.conn.last_insert_rowid();
+        Ok(Constraint { id, project_id, scope, text: text.to_string(), source: source.map(|s| s.to_string()), created_at: Self::parse_dt(&now) })
+    }
+    fn list_constraints(&self, project_id: i64) -> Result<Vec<Constraint>> {
+        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, source, created_at FROM constraints_tbl WHERE project_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![project_id], |row| {
+            let scope_str: String = row.get(2)?;
+            let scope = match scope_str.as_str() { "software" => ConstraintScope::Software, "process" => ConstraintScope::Process, _ => ConstraintScope::Hardware };
+            Ok(Constraint { id: row.get(0)?, project_id: row.get(1)?, scope, text: row.get(3)?, source: row.get(4)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?) })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
+    }
+
+    fn create_literature(&self, project_id: i64, title: &str, arxiv_id: Option<&str>, relevance: Option<&str>, key_findings: Option<&str>) -> Result<LiteratureEntry> {
+        let now = Self::now();
+        self.conn.execute("INSERT INTO literature (project_id, title, arxiv_id, relevance, key_findings, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![project_id, title, arxiv_id, relevance, key_findings, now])?;
+        let id = self.conn.last_insert_rowid();
+        Ok(LiteratureEntry { id, project_id, arxiv_id: arxiv_id.map(|s| s.to_string()), title: title.to_string(), authors: None, relevance: relevance.map(|s| s.to_string()), key_findings: key_findings.map(|s| s.to_string()), url: None, created_at: Self::parse_dt(&now) })
+    }
+    fn list_literature(&self, project_id: i64) -> Result<Vec<LiteratureEntry>> {
+        let mut stmt = self.conn.prepare("SELECT id, project_id, arxiv_id, title, authors, relevance, key_findings, url, created_at FROM literature WHERE project_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![project_id], |row| {
+            Ok(LiteratureEntry { id: row.get(0)?, project_id: row.get(1)?, arxiv_id: row.get(2)?, title: row.get(3)?, authors: row.get(4)?, relevance: row.get(5)?, key_findings: row.get(6)?, url: row.get(7)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(8)?) })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
+    }
+
+    fn create_feedback(&self, project_id: i64, text: &str, category: FeedbackCategory) -> Result<FeedbackEntry> {
+        let now = Self::now();
+        let c = match category { FeedbackCategory::Correction => "correction", FeedbackCategory::Confirmation => "confirmation" };
+        self.conn.execute("INSERT INTO feedback (project_id, text, category, created_at) VALUES (?1, ?2, ?3, ?4)", params![project_id, text, c, now])?;
+        let id = self.conn.last_insert_rowid();
+        Ok(FeedbackEntry { id, project_id, text: text.to_string(), category, created_at: Self::parse_dt(&now) })
+    }
+    fn list_feedback(&self, project_id: i64) -> Result<Vec<FeedbackEntry>> {
+        let mut stmt = self.conn.prepare("SELECT id, project_id, text, category, created_at FROM feedback WHERE project_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![project_id], |row| {
+            let cat_str: String = row.get(3)?;
+            let cat = match cat_str.as_str() { "confirmation" => FeedbackCategory::Confirmation, _ => FeedbackCategory::Correction };
+            Ok(FeedbackEntry { id: row.get(0)?, project_id: row.get(1)?, text: row.get(2)?, category: cat, created_at: SqliteStore::parse_dt(&row.get::<_, String>(4)?) })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
 
     fn list_decisions(&self, _project_id: i64) -> Result<Vec<Decision>> {

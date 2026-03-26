@@ -1,6 +1,6 @@
 use pm::cli::*;
 use pm::store::sqlite::SqliteStore;
-use pm::store::{Store, PhaseStatus, ExperimentStatus, ResearchStatus, NodeType, EdgeType};
+use pm::store::{Store, PhaseStatus, ExperimentStatus, ResearchStatus, NodeType, EdgeType, PrincipleScope, PrincipleStatus, HypothesisStatus, ConstraintScope, FeedbackCategory};
 use pm::dag::DagEngine;
 use pm::kg::KgEngine;
 
@@ -202,6 +202,118 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     let rep = report.as_deref().or(current.report.as_deref());
                     store.update_research(id, rs, rep)?;
                     println!("Research #{} updated", id);
+                }
+            }
+        }
+
+
+        Commands::Principle { project, action } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                PrincipleAction::Add { text, scope } => {
+                    let s = match scope.as_str() {
+                        "universal" => PrincipleScope::Universal,
+                        "phase" => PrincipleScope::Phase,
+                        _ => PrincipleScope::Project,
+                    };
+                    let p = store.create_principle(proj.id, s, &text)?;
+                    println!("Principle #{} added [{:?}]: {}", p.id, p.scope, &p.text[..p.text.len().min(80)]);
+                }
+                PrincipleAction::List => {
+                    for p in store.list_principles(proj.id)? {
+                        let sup = if let Some(by) = p.superseded_by { format!(" (superseded by #{})", by) } else { String::new() };
+                        println!("  #{} [{:?}/{:?}] {}{}", p.id, p.scope, p.status, &p.text[..p.text.len().min(80)], sup);
+                    }
+                }
+                PrincipleAction::Supersede { id, by } => {
+                    store.update_principle_status(id, PrincipleStatus::Superseded, by)?;
+                    println!("Principle #{} superseded", id);
+                }
+            }
+        }
+
+        Commands::Hyp { project, action } => {
+            let _proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                HypAction::Add { text, phase } => {
+                    let h = store.create_hypothesis(phase, &text)?;
+                    println!("Hypothesis #{} added: {}", h.id, &h.text[..h.text.len().min(80)]);
+                }
+                HypAction::List { phase } => {
+                    for h in store.list_hypotheses(phase)? {
+                        let exp = if let Some(eid) = h.experiment_id { format!(" (exp #{})", eid) } else { String::new() };
+                        println!("  #{} [{:?}] {}{}", h.id, h.status, &h.text[..h.text.len().min(80)], exp);
+                    }
+                }
+                HypAction::Test { id, experiment } => {
+                    store.update_hypothesis(id, HypothesisStatus::Testing, Some(experiment), None)?;
+                    println!("Hypothesis #{} now testing via experiment #{}", id, experiment);
+                }
+                HypAction::Resolve { id, status, finding } => {
+                    let s = match status.as_str() {
+                        "confirmed" => HypothesisStatus::Confirmed,
+                        "refuted" => HypothesisStatus::Refuted,
+                        _ => return Err(format!("Invalid status: {} (use confirmed/refuted)", status).into()),
+                    };
+                    store.update_hypothesis(id, s, None, finding)?;
+                    println!("Hypothesis #{} resolved: {}", id, status);
+                }
+            }
+        }
+
+        Commands::Con { project, action } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                ConAction::Add { text, scope, source } => {
+                    let s = match scope.as_str() {
+                        "software" => ConstraintScope::Software,
+                        "process" => ConstraintScope::Process,
+                        _ => ConstraintScope::Hardware,
+                    };
+                    let c = store.create_constraint(proj.id, s, &text, source.as_deref())?;
+                    println!("Constraint #{} added [{:?}]: {}", c.id, c.scope, &c.text[..c.text.len().min(80)]);
+                }
+                ConAction::List => {
+                    for c in store.list_constraints(proj.id)? {
+                        let src = c.source.as_deref().unwrap_or("-");
+                        println!("  #{} [{:?}] {} (source: {})", c.id, c.scope, &c.text[..c.text.len().min(80)], src);
+                    }
+                }
+            }
+        }
+
+        Commands::Lit { project, action } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                LitAction::Add { title, arxiv, relevance, findings } => {
+                    let l = store.create_literature(proj.id, &title, arxiv.as_deref(), relevance.as_deref(), findings.as_deref())?;
+                    let aid = l.arxiv_id.as_deref().unwrap_or("-");
+                    println!("Literature #{} added: {} [{}]", l.id, l.title, aid);
+                }
+                LitAction::List => {
+                    for l in store.list_literature(proj.id)? {
+                        let aid = l.arxiv_id.as_deref().unwrap_or("-");
+                        println!("  #{} [{}] {}", l.id, aid, l.title);
+                    }
+                }
+            }
+        }
+
+        Commands::Fb { project, action } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            match action {
+                FbAction::Add { text, category } => {
+                    let cat = match category.as_str() {
+                        "confirmation" => FeedbackCategory::Confirmation,
+                        _ => FeedbackCategory::Correction,
+                    };
+                    let f = store.create_feedback(proj.id, &text, cat)?;
+                    println!("Feedback #{} added [{:?}]: {}", f.id, f.category, &f.text[..f.text.len().min(80)]);
+                }
+                FbAction::List => {
+                    for f in store.list_feedback(proj.id)? {
+                        println!("  #{} [{:?}] {}", f.id, f.category, &f.text[..f.text.len().min(80)]);
+                    }
                 }
             }
         }

@@ -49,6 +49,36 @@ pub enum Commands {
         #[command(subcommand)]
         action: ResearchAction,
     },
+    /// Principle management (project-level guidance)
+    Principle {
+        project: String,
+        #[command(subcommand)]
+        action: PrincipleAction,
+    },
+    /// Hypothesis management (testable predictions)
+    Hyp {
+        project: String,
+        #[command(subcommand)]
+        action: HypAction,
+    },
+    /// Constraint management (hard boundaries)
+    Con {
+        project: String,
+        #[command(subcommand)]
+        action: ConAction,
+    },
+    /// Literature management (citations)
+    Lit {
+        project: String,
+        #[command(subcommand)]
+        action: LitAction,
+    },
+    /// Feedback management (corrections/confirmations)
+    Fb {
+        project: String,
+        #[command(subcommand)]
+        action: FbAction,
+    },
     /// Knowledge graph
     Kg {
         project: String,
@@ -161,3 +191,37 @@ pub enum ResearchAction {
     List { #[arg(long)] phase: Option<i64> },
     Update { id: i64, #[arg(long)] status: Option<String>, #[arg(long)] report: Option<String> },
 }
+
+#[derive(Subcommand)]
+pub enum PrincipleAction {
+    Add { text: String, #[arg(long, default_value = "project")] scope: String },
+    List,
+    Supersede { id: i64, #[arg(long)] by: Option<i64> },
+}
+
+#[derive(Subcommand)]
+pub enum HypAction {
+    Add { text: String, #[arg(long)] phase: Option<i64> },
+    List { #[arg(long)] phase: Option<i64> },
+    Test { id: i64, #[arg(long)] experiment: i64 },
+    Resolve { id: i64, #[arg(long)] status: String, #[arg(long)] finding: Option<i64> },
+}
+
+#[derive(Subcommand)]
+pub enum ConAction {
+    Add { text: String, #[arg(long, default_value = "hardware")] scope: String, #[arg(long)] source: Option<String> },
+    List,
+}
+
+#[derive(Subcommand)]
+pub enum LitAction {
+    Add { title: String, #[arg(long)] arxiv: Option<String>, #[arg(long)] relevance: Option<String>, #[arg(long)] findings: Option<String> },
+    List,
+}
+
+#[derive(Subcommand)]
+pub enum FbAction {
+    Add { text: String, #[arg(long, default_value = "correction")] category: String },
+    List,
+}
+
