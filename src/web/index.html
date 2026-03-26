@@ -12,7 +12,7 @@ button { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding
 button:hover { background: #30363d; }
 button.active { background: #1f6feb; border-color: #1f6feb; }
 #main { display: flex; height: calc(100vh - 49px); }
-#sidebar { width: 300px; background: #161b22; border-right: 1px solid #30363d; overflow-y: auto; padding: 16px; }
+#sidebar { width: 300px; min-width: 300px; background: #161b22; border-right: 1px solid #30363d; overflow-y: auto; padding: 16px; position: relative; z-index: 5; }
 #sidebar h2 { font-size: 13px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
 .project-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; cursor: pointer; }
 .project-card:hover { border-color: #58a6ff; }
@@ -21,7 +21,7 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 .project-card .stats { font-size: 11px; color: #8b949e; }
 .progress-bar { height: 4px; background: #21262d; border-radius: 2px; margin-top: 6px; }
 .progress-fill { height: 100%; background: #3fb950; border-radius: 2px; }
-#graph-container { flex: 1; position: relative; }
+#graph-container { flex: 1; position: relative; overflow: hidden; }
 #tooltip { position: absolute; background: #1c2128; border: 1px solid #30363d; border-radius: 8px; padding: 12px; max-width: 400px; font-size: 12px; display: none; z-index: 10; pointer-events: none; }
 #tooltip .title { color: #f0f6fc; font-weight: bold; margin-bottom: 4px; }
 #tooltip .body { color: #8b949e; }
@@ -107,7 +107,10 @@ function setView(view) {
   document.getElementById('btn-dag').classList.toggle('active', view === 'dag');
   document.getElementById('legend-kg').style.display = view === 'kg' ? '' : 'none';
   document.getElementById('legend-dag').style.display = view === 'dag' ? '' : 'none';
-  if (currentProject) selectProject(currentProject);
+  if (currentProject) {
+    const card = document.querySelector('.project-card.selected');
+    selectProject(currentProject, card);
+  }
 }
 
 async function loadKG(projectId) {
