@@ -1,0 +1,12 @@
+{
+  "active": [
+    {
+      "name": "volta-renaissance",
+      "alias": "vr"
+    },
+    {
+      "name": "project-manager-dev",
+      "alias": "pm-dev"
+    }
+  ]
+}

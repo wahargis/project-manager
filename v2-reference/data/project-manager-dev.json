@@ -1,0 +1,275 @@
+{
+  "project": "project-manager-dev",
+  "created": "2026-03-26 11:00",
+  "phases": [
+    {
+      "id": 1,
+      "name": "Research & Design",
+      "status": "complete",
+      "depends_on": [],
+      "created": "2026-03-26 11:00"
+    },
+    {
+      "id": 2,
+      "name": "Core Implementation (JSON DB, phases, experiments, findings)",
+      "status": "complete",
+      "depends_on": [
+        1
+      ],
+      "created": "2026-03-26 11:00"
+    },
+    {
+      "id": 3,
+      "name": "Adapter Layer (claude-code hooks)",
+      "status": "complete",
+      "depends_on": [
+        2
+      ],
+      "created": "2026-03-26 11:00",
+      "impact": 50
+    },
+    {
+      "id": 4,
+      "name": "DAG→TaskTracker Scaffold",
+      "status": "pending",
+      "depends_on": [
+        2
+      ],
+      "created": "2026-03-26 11:00",
+      "impact": 45
+    },
+    {
+      "id": 5,
+      "name": "TDD Test Suite",
+      "status": "pending",
+      "depends_on": [
+        2
+      ],
+      "created": "2026-03-26 11:00",
+      "impact": 30
+    },
+    {
+      "id": 6,
+      "name": "KG Relationships (supports/contradicts edges)",
+      "status": "complete",
+      "depends_on": [
+        2
+      ],
+      "created": "2026-03-26 11:00",
+      "impact": 35
+    },
+    {
+      "id": 7,
+      "name": "Migration of Volta-Renaissance docs",
+      "status": "complete",
+      "depends_on": [
+        2
+      ],
+      "created": "2026-03-26 11:00"
+    },
+    {
+      "id": 8,
+      "name": "Enforced Review/Reflection Feature",
+      "status": "pending",
+      "depends_on": [
+        2
+      ],
+      "created": "2026-03-26 11:06",
+      "impact": 40
+    },
+    {
+      "id": 9,
+      "name": "Claude-code native extension/plugin for proactive project management",
+      "status": "pending",
+      "depends_on": [
+        3
+      ],
+      "impact": 25,
+      "created": "2026-03-26 11:25"
+    },
+    {
+      "id": 10,
+      "name": "Multi-project dashboard and cross-project prioritization",
+      "status": "pending",
+      "depends_on": [
+        2
+      ],
+      "impact": 40,
+      "created": "2026-03-26 11:45"
+    }
+  ],
+  "experiments": [
+    {
+      "id": 1,
+      "name": "Claude-code extension requirements analysis",
+      "phase": 9,
+      "result": "pending — need to investigate: MCP server as extension mechanism, tool call frequency monitoring, system reminder injection, auto-scaffold on experiment completion. Phase 9 in PM-dev project.",
+      "hypothesis": "",
+      "date": "2026-03-26 11:26"
+    },
+    {
+      "id": 2,
+      "name": "PM UX improvements batch",
+      "phase": 3,
+      "result": "completed: short aliases (pm vr/pm-dev), positional arg support, actionable ACTION line in next command, impact-weighted phase display, deprioritized filter",
+      "hypothesis": "",
+      "date": "2026-03-26 11:45"
+    },
+    {
+      "id": 3,
+      "name": "Pending: TDD test suite for all PM commands",
+      "phase": 5,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:45"
+    },
+    {
+      "id": 4,
+      "name": "Pending: KG cluster command for grouping related findings",
+      "phase": 6,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:45"
+    },
+    {
+      "id": 5,
+      "name": "Pending: review command with Amdahl check + literature freshness + strategy eval",
+      "phase": 8,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:45"
+    },
+    {
+      "id": 6,
+      "name": "Pending: Claude-code extension investigation — MCP server for idle detection",
+      "phase": 9,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:45"
+    }
+  ],
+  "decisions": [],
+  "findings": [
+    {
+      "id": 1,
+      "text": "autoresearch: single-file constraint + time-boxed eval + program.md as strategy spec enables 12 exp/hr autonomy",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:00"
+    },
+    {
+      "id": 2,
+      "text": "autokernel: Amdahl law prioritization (optimize by end-to-end impact, not raw kernel speedup) + 5-stage correctness gate + diminishing returns detection",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:00"
+    },
+    {
+      "id": 3,
+      "text": "AVO: agent IS the variation operator, commit gating for monotonic improvement, stagnation detection, vector-valued fitness, 500 explored / 40 committed ratio, 7-day autonomy",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:00"
+    },
+    {
+      "id": 4,
+      "text": "Cross-cutting: correctness before performance (hard gate), git as persistence backbone, impact-based prioritization, exploration/commitment tracking",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:00"
+    },
+    {
+      "id": 5,
+      "text": "DAG nodes map to task tracker subtasks via scaffold command — each DAG node = many subtasks in todo list",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:00"
+    },
+    {
+      "id": 6,
+      "text": "Layered architecture: core (harness-agnostic) + adapter (claude-code, future EE) + extension interface (on_node_start/complete, scaffold, restore_context)",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:00"
+    },
+    {
+      "id": 7,
+      "text": "Need enforced periodic review/reflection step: (1) Profile-based impact assessment (Amdahl check), (2) Literature/reference re-scan to ground findings externally, (3) Strategy evaluation — are we still optimizing the right thing? This session demonstrated the need: spent significant effort on FA PTX (7% of compute) before profiling revealed MoE GEMV (40%) as the real target. A mandated profile-first step would have redirected immediately.",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:05"
+    },
+    {
+      "id": 8,
+      "text": "Review command design: (1) Amdahl check — re-profile, verify optimizing highest-impact kernel. (2) Literature scan — check for new papers/approaches. (3) Strategy eval — compare planned vs actual, should priorities shift? (4) Commitment ratio — explored vs committed experiments (AVO pattern). Trigger: auto after N experiments or elapsed time.",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:06"
+    },
+    {
+      "id": 9,
+      "text": "Review is a correctness gate (from autokernel pattern): research direction must pass impact validation before continuing. Failed Amdahl check = redirect to higher-impact target. This session proved the need — FA PTX work (7% compute) should have been caught by profile-first gate before MoE GEMV (40%) was identified.",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:06"
+    },
+    {
+      "id": 10,
+      "text": "Review/reflection must enforce: never assume existing code is near-optimal without measuring. Nudge pattern: when agent says \"already optimized\" or \"near hardware ceiling\" — trigger Amdahl check + bandwidth utilization measurement. Humans are bad at information-theoretic linear algebra; cross-field transfer has not taken off for kernel engineering. The gap between typical GPU code and theoretical max is often 2-5x.",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:09"
+    },
+    {
+      "id": 11,
+      "text": "GENERAL: All research projects should include a mathematical cross-reference step during review/reflection. The review command should check: has the current optimization target been analyzed through the lens of relevant mathematical theory? Fields to consider: information theory, lattice theory, coding theory, compressed sensing, algebraic geometry, differential forms, optimization theory, stochastic processes. This applies universally, not just to Volta-Renaissance.",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:12"
+    },
+    {
+      "id": 12,
+      "text": "KG design: findings/experiments/decisions form a traversable knowledge graph SEPARATE from the DAG (which is for project planning). KG nodes: findings, experiments, decisions. KG edges: supports, contradicts, informed_by, produced_by, depends_on_finding. Traversal: kg traverse --from finding:12 shows all connected nodes. Grouping: kg cluster groups related findings into topics. This gives directional expansion of knowledge as the project develops. The DAG tells you WHAT to do next. The KG tells you WHAT you know and HOW findings relate.",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:21"
+    },
+    {
+      "id": 13,
+      "text": "Claude-code native extension/plugin is required for proper idle detection and proactive nudging. Hooks only fire on discrete events (SessionStart, Stop). A plugin running inside the claude-code runtime could: (1) Monitor tool call frequency and detect stalling, (2) Inject project-manager next output as system reminder when idle detected, (3) Auto-scaffold tasks when experiments complete, (4) Track phase transitions and update project state. This requires understanding claude-code extension architecture — needs investigation into whether custom MCP servers or similar mechanisms can provide this.",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:25"
+    },
+    {
+      "id": 14,
+      "text": "MULTI-PROJECT MANAGEMENT: The next and scaffold commands only show one project. Need a cross-project priority view that interleaves phases from all active projects by impact score. Design: (1) pm dashboard — shows top 5 actions across ALL projects, sorted by impact. (2) Each project registers itself in a global config (~/.config/project-manager/projects.json). (3) The dashboard traverses all registered projects DAGs and returns a unified priority list. (4) The stop hook and idle detection should use the dashboard, not a single project. This is critical for preventing the agent from getting stuck on one project when another has higher-impact available work.",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:45"
+    },
+    {
+      "id": 15,
+      "text": "Experiment results must be structured objects, not free-text strings parsed by regex. Design: result = {status: pass|fail|pending|inconclusive, value: string, metrics: {}, notes: string}. The review command should check result.status directly, not regex-match the result text. Current free-text approach is fragile and produces false negatives in stagnation detection.",
+      "experiment": 0,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:58"
+    }
+  ],
+  "literature": []
+}

@@ -1,0 +1,693 @@
+{
+  "project": "volta-renaissance",
+  "created": "2026-03-26 10:48",
+  "phases": [
+    {
+      "id": 1,
+      "name": "Kernel Analysis",
+      "status": "complete",
+      "depends_on": [],
+      "created": "2026-03-26 10:48"
+    },
+    {
+      "id": 2,
+      "name": "Register Profiling",
+      "status": "complete",
+      "depends_on": [
+        1
+      ],
+      "created": "2026-03-26 10:48"
+    },
+    {
+      "id": 3,
+      "name": "Split-D Tiling",
+      "status": "complete",
+      "depends_on": [
+        2
+      ],
+      "created": "2026-03-26 10:48"
+    },
+    {
+      "id": 4,
+      "name": "Inline PTX MMA",
+      "status": "complete",
+      "depends_on": [
+        3
+      ],
+      "created": "2026-03-26 10:48"
+    },
+    {
+      "id": 5,
+      "name": "VKQ PTX Replacement",
+      "status": "deprioritized",
+      "depends_on": [
+        4
+      ],
+      "created": "2026-03-26 10:48"
+    },
+    {
+      "id": 6,
+      "name": "Bank Conflict Optimization",
+      "status": "deprioritized",
+      "depends_on": [
+        4
+      ],
+      "created": "2026-03-26 10:48"
+    },
+    {
+      "id": 7,
+      "name": "ITS Pipeline",
+      "status": "deprioritized",
+      "depends_on": [
+        5,
+        6
+      ],
+      "created": "2026-03-26 10:48"
+    },
+    {
+      "id": 8,
+      "name": "Production Benchmark",
+      "status": "deprioritized",
+      "depends_on": [
+        4
+      ],
+      "created": "2026-03-26 10:48",
+      "impact": 5
+    },
+    {
+      "id": 9,
+      "name": "Profile Qwen3.5-35B-A3B decode hotspots",
+      "status": "complete",
+      "depends_on": [
+        4
+      ],
+      "created": "2026-03-26 11:01"
+    },
+    {
+      "id": 10,
+      "name": "GDN kernel optimization (75% of layers)",
+      "status": "paused-at-ceiling",
+      "depends_on": [
+        9
+      ],
+      "created": "2026-03-26 11:01",
+      "impact": 40
+    },
+    {
+      "id": 11,
+      "name": "Memory-bound dequant PTX optimization",
+      "status": "pending",
+      "depends_on": [
+        9
+      ],
+      "created": "2026-03-26 11:01",
+      "impact": 25
+    },
+    {
+      "id": 12,
+      "name": "Cross-field mathematical literature survey",
+      "status": "complete",
+      "depends_on": [
+        9
+      ],
+      "created": "2026-03-26 11:12",
+      "impact": 35
+    }
+  ],
+  "experiments": [
+    {
+      "id": 1,
+      "name": "fattn register profiling",
+      "phase": 1,
+      "result": "pass",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "pass"
+    },
+    {
+      "id": 2,
+      "name": "Split-D D_CHUNK=32 correctness",
+      "phase": 3,
+      "result": "pass",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "pass"
+    },
+    {
+      "id": 3,
+      "name": "Split-D D_CHUNK=64 variant",
+      "phase": 3,
+      "result": "pass",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "pass"
+    },
+    {
+      "id": 4,
+      "name": "m8n8k4 basic MMA test",
+      "phase": 4,
+      "result": "pass",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "pass"
+    },
+    {
+      "id": 5,
+      "name": "MMA QP lane mapping debug",
+      "phase": 4,
+      "result": "pass",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "pass"
+    },
+    {
+      "id": 6,
+      "name": "KQ dot product D=128 inline PTX",
+      "phase": 4,
+      "result": "pass",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "pass"
+    },
+    {
+      "id": 7,
+      "name": "XOR swizzle benchmark",
+      "phase": 4,
+      "result": "0.93x (wrong pattern)",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "inconclusive"
+    },
+    {
+      "id": 8,
+      "name": "col^row swizzle zero conflicts",
+      "phase": 4,
+      "result": "pass",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "pass"
+    },
+    {
+      "id": 9,
+      "name": "32x8 full-warp KQ test",
+      "phase": 4,
+      "result": "pass 0/256",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "pass"
+    },
+    {
+      "id": 10,
+      "name": "PTX kernel build smoke test",
+      "phase": 4,
+      "result": "pass",
+      "hypothesis": "",
+      "date": "2026-03-26 10:48",
+      "status": "pass"
+    },
+    {
+      "id": 11,
+      "name": "PTX vs WMMA decode benchmark on Qwen3.5-35B-A3B NVLink pair",
+      "phase": 4,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 10:52",
+      "status": "pending"
+    },
+    {
+      "id": 12,
+      "name": "PTX build 717870c6 tg128 on CB2 NVLink (GPU3+4)",
+      "phase": 4,
+      "result": "74.59 tok/s (\u00b19.81, high variance from thermal ramp). Need same-GPU baseline comparison. Note: Qwen3.5-35B-A3B has only 10/40 attention layers \u2014 FA kernel is small fraction of decode time. End-to-end speedup will be modest even with significant kernel improvement.",
+      "hypothesis": "",
+      "date": "2026-03-26 10:53",
+      "status": "inconclusive"
+    },
+    {
+      "id": 13,
+      "name": "PTX build CB1 NVLink 5-rep benchmark",
+      "phase": 4,
+      "result": "92.21 \u00b1 0.35 tok/s \u2014 5.1% REGRESSION vs baseline 97.2 tok/s (build 4321). PTX KQ path is SLOWER than WMMA. Root cause likely: 4 sequential MMA calls (PTX) vs 1 WMMA call that internally pipelines 4 MMAs. WMMA can overlap K global loads with MMA computation; our PTX loads K serially. Need: (1) K SMEM staging for coalesced loads, (2) double-buffering, (3) unroll optimization.",
+      "hypothesis": "",
+      "date": "2026-03-26 10:54",
+      "status": "fail"
+    },
+    {
+      "id": 14,
+      "name": "PTX+shuffle KQ benchmark",
+      "phase": 4,
+      "result": "92.12 \u00b1 0.32 tok/s \u2014 NO IMPROVEMENT from shuffle (was 92.21 naive). Global load count is NOT the bottleneck. Regression likely from: (1) m8n8k4 instruction overhead (128 vs 8 WMMA calls), (2) WMMA VKQ register pressure increase from Q_b[Dk/16] revert, or (3) PTX KQ store pattern (QP0-only scatter store vs WMMA coalesced store_matrix_sync).",
+      "hypothesis": "",
+      "date": "2026-03-26 11:00",
+      "status": "fail"
+    },
+    {
+      "id": 15,
+      "name": "nvprof decode profile Qwen3.5-35B-A3B tg16 CB1 NVLink",
+      "phase": 9,
+      "result": "COMPLETE. Top kernels by compute time: mul_mat_vec_q Q4_K 40.2% (MoE GEMV), mul_mat_vec_q Q6_K 11.7%, cpy_flt 7.2%, fused_mul_mat_vec_q Q5_K 7.1%, flash_attn 7.0%, quantize_q8_1 4.2%, cuBLAS gemv 3.2%, rms_norm 2.9%, delta_net 2.5%, topk_moe 2.4%. FA is 7% \u2014 confirmed low impact. MoE GEMV (Q4_K) at 40% is THE optimization target.",
+      "hypothesis": "",
+      "date": "2026-03-26 11:05",
+      "status": "pass"
+    },
+    {
+      "id": 16,
+      "name": "Q4_K GEMV bandwidth utilization measurement",
+      "phase": 10,
+      "result": "54% HBM2 utilization (485/900 GB/s). 46% HEADROOM confirmed. Per-call: 6.34 MB loaded in 15.3 us = 415 GB/s per kernel invocation. The kernel is severely memory-inefficient \u2014 nearly 2x improvement possible from memory optimization alone. NOT near hardware ceiling.",
+      "hypothesis": "",
+      "date": "2026-03-26 11:12",
+      "status": "inconclusive"
+    },
+    {
+      "id": 17,
+      "name": "Pending: Q4_K GEMV memory access pattern deep analysis",
+      "phase": 10,
+      "result": "complete: 28% coalescing efficiency, 46% bandwidth waste from scattered block access",
+      "hypothesis": "",
+      "date": "2026-03-26 11:16",
+      "status": "pass"
+    },
+    {
+      "id": 18,
+      "name": "Q4_K GEMV access pattern deep analysis",
+      "phase": 10,
+      "result": "Root cause of 46% bandwidth waste: coalescing efficiency ~28% for weight loads. 4 threads share each 144B Q4_K block but adjacent warps access non-contiguous blocks (row stride). rows_per_cuda_block=2 doubles scatter. Optimization vectors: (A) SMEM cooperative loading for coalesced access, (B) SOA block layout for column-major weight storage, (C) Hilbert curve block ordering for L2 locality, (D) Warp-level rotation: all threads load one block then rotate.",
+      "hypothesis": "",
+      "date": "2026-03-26 11:19",
+      "status": "inconclusive"
+    },
+    {
+      "id": 19,
+      "name": "Write SMEM-staged Q4_K GEMV prototype",
+      "phase": 10,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:20",
+      "status": "pending"
+    },
+    {
+      "id": 20,
+      "name": "Cross-field literature: CRT for bank conflicts + optimal transport for codebook",
+      "phase": 12,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:20",
+      "status": "pending"
+    },
+    {
+      "id": 21,
+      "name": "Benchmark SMEM-staged vs baseline GEMV",
+      "phase": 10,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:20",
+      "status": "pending"
+    },
+    {
+      "id": 22,
+      "name": "SMEM-staged Q4_K GEMV prototype",
+      "phase": 10,
+      "result": "FAILED: 2.4x SLOWER (0.288ms vs 0.119ms baseline). SMEM cooperative loading adds sync overhead that exceeds benefit for small 144-byte blocks. The fix is NOT SMEM staging \u2014 it is changing the DATA LAYOUT (SOA) or thread-to-block mapping to make the existing scattered loads coalesced at the source. Key insight: dont add indirection (global->SMEM->compute), fix the access pattern directly.",
+      "hypothesis": "",
+      "date": "2026-03-26 11:25",
+      "status": "fail"
+    },
+    {
+      "id": 23,
+      "name": "Pending: SOA Q4_K layout for coalesced GEMV loads",
+      "phase": 10,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:25",
+      "status": "pending"
+    },
+    {
+      "id": 24,
+      "name": "Roofline analysis: Q4_K GEMV is compute-bound",
+      "phase": 10,
+      "result": "Compute ceiling 426 GB/s closely matches measured 485 GB/s. 23 instructions per 40 bytes = instruction-limited. Three optimization paths: (1) MMA tensor cores for dequantized FP16 GEMV (trades 2x memory for 8x compute efficiency per instruction), (2) LUT-based dot product (precompute partial sums in SMEM), (3) Approximate dot product from information theory (skip low-significance elements). All three are cross-field approaches that conventional GPU optimization would not consider.",
+      "hypothesis": "",
+      "date": "2026-03-26 11:45",
+      "status": "inconclusive"
+    },
+    {
+      "id": 25,
+      "name": "Pending: Tensor-core (m8n8k4 MMA) Q4_K GEMV \u2014 dequant to FP16 in SMEM, use MMA for dot product. 8x compute per instruction vs dp4a, but 2x memory. Net 4x if compute-bound.",
+      "phase": 10,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:47",
+      "status": "pending"
+    },
+    {
+      "id": 26,
+      "name": "MMA tensor-core GEMV prototype",
+      "phase": 10,
+      "result": "2x SLOWER: 134 vs 272 GB/s. Dequant-to-FP16 conversion (__int2half_rn) adds more instructions than MMA saves. For tensor cores to win, data must already be FP16 \u2014 which defeats the purpose of 4-bit quantization. The dp4a path is actually well-suited to Q4_K because it operates directly on packed int8 without conversion. The compute bottleneck is in the shift/mask/scale overhead AROUND dp4a, not in dp4a itself.",
+      "hypothesis": "",
+      "date": "2026-03-26 11:48",
+      "status": "fail"
+    },
+    {
+      "id": 27,
+      "name": "Phase 12 literature survey complete",
+      "phase": 12,
+      "result": "6 domains, 6 papers, 3 actionable optimizations: Z-order scheduling, deferred scale, block-sparse MoE",
+      "hypothesis": "",
+      "date": "2026-03-26 11:52",
+      "status": "inconclusive"
+    },
+    {
+      "id": 28,
+      "name": "Pending: Z-order thread block scheduling",
+      "phase": 10,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:52",
+      "status": "pending"
+    },
+    {
+      "id": 29,
+      "name": "Pending: Deferred scale accumulation",
+      "phase": 10,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:52",
+      "status": "pending"
+    },
+    {
+      "id": 30,
+      "name": "Pending: Block-sparse MoE GEMV",
+      "phase": 10,
+      "result": "pending",
+      "hypothesis": "",
+      "date": "2026-03-26 11:52",
+      "status": "pending"
+    },
+    {
+      "id": 31,
+      "name": "Deferred scale accumulation",
+      "phase": 10,
+      "result": "0% improvement. V100 dual-issues INT (dp4a) and FP (scale multiply) in parallel. The FP operations already run for free during dp4a latency. The kernel is at the DUAL-ISSUE CEILING \u2014 both INT and FP pipelines saturated simultaneously. No single-pipeline optimization can help.",
+      "hypothesis": "",
+      "date": "2026-03-26 11:56",
+      "status": "fail"
+    }
+  ],
+  "decisions": [
+    {
+      "id": 1,
+      "what": "SM70 m8n8k4 produces ONE 8x8 tile per MMA",
+      "why": "4 QPs are redundant, not independent",
+      "experiment": 9,
+      "date": "2026-03-26 10:48"
+    },
+    {
+      "id": 2,
+      "what": "Revert Split-D for WMMA path",
+      "why": "SMEM aliasing bug at D>64 + SMEM overflow for large ncols",
+      "experiment": null,
+      "date": "2026-03-26 10:48"
+    },
+    {
+      "id": 3,
+      "what": "PTX path only for SM70 ncols=8 decode",
+      "why": "Decode is latency-critical; prefill uses ncols=16/32 with WMMA",
+      "experiment": null,
+      "date": "2026-03-26 10:48"
+    },
+    {
+      "id": 4,
+      "what": "Revert PTX KQ path \u2014 WMMA is faster for m8n8k4-based KQ",
+      "why": "128 PTX m8n8k4 calls have higher instruction overhead than 8 WMMA m32n8k16 calls. Shuffle optimization showed no improvement. PTX advantage must come from register/occupancy, not instruction replacement. WMMA internally pipelines sub-operations that raw PTX cannot.",
+      "experiment": 14,
+      "date": "2026-03-26 11:00"
+    },
+    {
+      "id": 5,
+      "what": "Redirect from FA PTX to GDN/MoE optimization per Amdahl law",
+      "why": "FA is 10% of decode time. 128 m8n8k4 PTX calls are slower than 8 WMMA m32n8k16 (instruction overhead). GDN layers are 75% of Qwen3.5-35B-A3B. Autokernel research confirms: optimize by end-to-end impact.",
+      "experiment": 13,
+      "date": "2026-03-26 11:01"
+    },
+    {
+      "id": 6,
+      "what": "Do NOT repack to R4 \u2014 that sidesteps the research goal",
+      "why": "Volta-Renaissance is about understanding and improving inference kernels for V100, not trying different quant formats. R4 repack uses existing IK code. Our goal is to understand WHY Q4_K GEMV achieves only 54% bandwidth and write a V100-specific kernel that closes the gap, informed by mathematical theory.",
+      "experiment": 22,
+      "date": "2026-03-26 11:37"
+    }
+  ],
+  "findings": [
+    {
+      "id": 1,
+      "text": "m8n8k4 4 QuadPairs are redundant copies, not independent compute units",
+      "experiment": 9,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 10:48"
+    },
+    {
+      "id": 2,
+      "text": "Fragment loading: thread ltid provides one full row of A, one full column of B",
+      "experiment": 9,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 10:48"
+    },
+    {
+      "id": 3,
+      "text": "Split-D tiling has SMEM aliasing bug at D>64 \u2014 KQ writes corrupt Q data",
+      "experiment": 2,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 10:48"
+    },
+    {
+      "id": 4,
+      "text": "col^row swizzle eliminates all bank conflicts for MMA output",
+      "experiment": 8,
+      "supports": null,
+      "contradicts": 3,
+      "date": "2026-03-26 10:48"
+    },
+    {
+      "id": 5,
+      "text": "Naive PTX KQ is 5.1% slower than WMMA (92.2 vs 97.2 tok/s). Root cause: serial K global loads without SMEM staging or double-buffering. WMMA internally pipelines loads with MMA computation. PTX advantage (direct register control) is currently negated by inefficient memory access pattern.",
+      "experiment": 13,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 10:55"
+    },
+    {
+      "id": 6,
+      "text": "Warp shuffle K distribution shows NO improvement over direct global loads. The bottleneck is NOT memory access pattern \u2014 it is instruction-level: 128 m8n8k4 calls have higher instruction overhead than 8 WMMA m32n8k16 calls, even though total arithmetic is identical. WMMA internally pipelines sub-operations that PTX exposes as sequential instructions.",
+      "experiment": 14,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:00"
+    },
+    {
+      "id": 7,
+      "text": "FA kernel is only ~10% of decode time for Qwen3.5-35B-A3B (10/40 attention layers). Even a perfect FA speedup yields <5 tok/s. High-impact optimization targets: GDN layers (30/40 = 75% of layers), MoE routing, memory-bound dequant paths.",
+      "experiment": 13,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:01"
+    },
+    {
+      "id": 8,
+      "text": "MoE GEMV (mul_mat_vec_q Q4_K) is 40.2% of decode compute \u2014 5.8x more than flash_attn (7.0%). This is THE optimization target for Volta-Renaissance. The kernel does Q4_K dequant + dot product in a single fused pass. V100-specific optimization: dp4a int8 path, SMEM tiling for Q4_K blocks, register-level accumulation.",
+      "experiment": 15,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:05"
+    },
+    {
+      "id": 9,
+      "text": "Q4_K GEMV already uses dp4a (__dp4a intrinsic) on V100 (SM70 >= MIN_CC_DP4A=610). The compute path is already optimal for integer dot product. The 40% decode time is dominated by memory bandwidth (loading Q4_K blocks from HBM2), not compute. V100 HBM2 bandwidth: 900 GB/s. Optimization vectors: (1) SMEM prefetch/double-buffer for weight blocks, (2) reduce redundant global loads across warps, (3) better thread-to-block mapping for coalescing.",
+      "experiment": 15,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:07"
+    },
+    {
+      "id": 10,
+      "text": "CRITICAL RESEARCH MINDSET: \"already uses dp4a\" does NOT mean \"already optimal.\" Existing kernels are written for broad GPU compat, not V100-specific. The optimization space is: memory access patterns, thread scheduling, register allocation, SMEM utilization, occupancy, coalescing \u2014 NOT the compute primitive. Cross-field transfer (graphics kernel tricks) is the thesis of this project. Do not assume near-hardware-ceiling without measuring bandwidth utilization.",
+      "experiment": 15,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:09"
+    },
+    {
+      "id": 11,
+      "text": "Cross-field transfer scope is broader than just graphics: entire decades of mathematics (information theory, lattice theory, coding theory, compressed sensing, combinatorial optimization) have not percolated to GPU kernel engineering. Example: GPTQ = Babais nearest plane algorithm. Quantized GEMV has deep connections to source coding (rate-distortion theory), lattice decoding (closest vector problem), and coding theory (syndrome decoding). The optimization space is not just \"better CUDA\" \u2014 it is \"apply known mathematics that the CUDA community has not discovered yet.\"",
+      "experiment": 15,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:10"
+    },
+    {
+      "id": 12,
+      "text": "Q4_K GEMV achieves only 54% of V100 HBM2 bandwidth (485 vs 900 GB/s). 46% headroom = potential ~85% throughput improvement on the 40%-of-decode kernel = ~34% end-to-end speedup (97 \u2192 ~130 tok/s). This is MASSIVE. Optimization vectors: coalescing, SMEM prefetch, warp-level cooperative loading, L2 cache exploitation, thread block geometry.",
+      "experiment": 16,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:12"
+    },
+    {
+      "id": 13,
+      "text": "RESEARCH GUIDANCE: Must systematically identify cross-field mathematical insights for kernel engineering. Relevant fields: (1) Rate-distortion theory \u2192 optimal bit allocation for quantized dot product, (2) Lattice theory \u2192 dequant = lattice decoding, structured lattices have fast algorithms, (3) Coding theory \u2192 Q4_K scale+min = scalar quantization with side information (Slepian-Wolf/Wyner-Ziv), (4) Compressed sensing \u2192 MoE top-2/8 sparsity = structured sparsity that CS theory optimizes, (5) Information geometry \u2192 weight distribution manifold determines optimal access patterns, (6) Differential forms / algebraic geometry \u2192 unified approach to optimization on quantization manifolds. Need: graduate-level math textbook and paper references as project literature. This is the core thesis of Volta-Renaissance.",
+      "experiment": 16,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:12"
+    },
+    {
+      "id": 14,
+      "text": "GENERAL GUIDANCE: Cross-field mathematical transfer is THE core differentiator of Volta-Renaissance. Decades of pure and applied mathematics have direct but unrecognized applications to GPU kernel optimization. This applies both (a) generally \u2014 any project that involves low-level hardware optimization should survey relevant mathematical theory before writing code, and (b) specifically \u2014 this Q4_K GEMV kernel at 54% bandwidth utilization is a concrete instance where information theory, lattice theory, and coding theory likely hold the key to closing the 46% gap. GPU programming is low-hanging fruit precisely because this cross-pollination has not happened yet in the field.",
+      "experiment": 16,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:12"
+    },
+    {
+      "id": 15,
+      "text": "EXHAUSTIVE MATHEMATICAL REFERENCE MAP CREATED: 14 mathematical fields with direct kernel optimization relevance cataloged in research journal. Fields: (1) Linear algebra \u2014 structured decompositions, RandNLA, sparse LA. (2) Vector calculus \u2014 gradient flow, divergence theorem for access patterns. (3) Differential forms \u2014 de Rham cohomology of bank conflicts, fiber bundles for quantization blocks. (4) Algebraic geometry \u2014 toric varieties for index packing, Bezout for occupancy. (5) Information theory \u2014 rate-distortion, channel capacity of memory bus, Slepian-Wolf/Wyner-Ziv for GEMV with side information. (6) Optimization theory \u2014 SDP for bank conflicts, combinatorial optimization for coalescing, Bayesian/Morse for parameter search. (7) Stochastic processes \u2014 Markov cache models, queueing theory for memory controller, renewal theory for double-buffering. (8) Unified approaches \u2014 category theory, geometric measure theory (Hilbert curves), TDA for performance landscapes, tropical geometry for integer arithmetic, sheaf theory for multi-GPU. (9) Number theory \u2014 CRT for bank conflicts, p-adic for cache hierarchy. (10) Harmonic analysis \u2014 Fourier/wavelet for multi-resolution quant, NTT for dequant. (11) Graph theory \u2014 chromatic number for registers, network flow for data movement, matroid for access scheduling. (12) Measure theory \u2014 optimal transport for codebook design, concentration inequalities. (13) Control theory \u2014 adaptive kernel tuning, Kalman for expert prediction. (14) Functional analysis \u2014 Banach space quant bounds, RKHS for quantized inner products, spectral theory for effective rank.",
+      "experiment": 16,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:15"
+    },
+    {
+      "id": 16,
+      "text": "SMEM staging adds sync overhead that exceeds benefit for small (144B) blocks. The optimization must be at the DATA LAYOUT level, not the access pattern level. SOA (separate qs/scales/dm arrays) enables fully coalesced loads for the dominant qs array (128/144 = 89% of block data). This is a model-level change (re-quantize weights in SOA format) not just a kernel change.",
+      "experiment": 22,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:25"
+    },
+    {
+      "id": 17,
+      "text": "ik_llama.cpp already has IQ4_K_R4 (4-row interleaved Q4_K) for MMQ (batched matmul) but NOT for MMVQ (single-token decode GEMV). The row-interleaving concept improves coalescing by packing 4 adjacent rows together. Our 40% hotspot is MMVQ, not MMQ. Optimization path: either (a) port R4 interleaving to MMVQ kernel, or (b) propose a new row-interleaved MMVQ-specific format optimized for M=1 decode on V100.",
+      "experiment": 22,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:26"
+    },
+    {
+      "id": 18,
+      "text": "IQ4_K_R4 MMVQ kernel exists in ik_llama.cpp (template-instances/mmvq-instance-iq4_k_r4.cu). This is a row-interleaved Q4_K variant with 4 rows packed contiguously for coalesced GEMV access. The fastest path to testing the 46% bandwidth improvement hypothesis: (1) re-quantize production model to IQ4_K_R4 format, (2) benchmark R4 MMVQ vs baseline Q4_K MMVQ on the same model, (3) measure bandwidth utilization improvement. No kernel writing needed \u2014 just re-quantize and compare.",
+      "experiment": 18,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:29"
+    },
+    {
+      "id": 19,
+      "text": "CRITICAL: Q4_K GEMV coalescing is 6.25%, not 28% as initially estimated. Each warp spreads 4-byte reads across 8 blocks at 144-byte stride, loading 1024 bytes of cache lines for 64 bytes useful data. This is a 16x memory bandwidth waste. FIX: redesign thread mapping so all 32 warp threads process ONE Q4_K block cooperatively (128 bytes qs / 32 threads = 4 bytes each = perfect coalescing). Trade per-thread accumulation for warp-level reduction via dp4a + shuffle.",
+      "experiment": 18,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:39"
+    },
+    {
+      "id": 20,
+      "text": "Coalesced 32-thread-per-block approach is 2.5x SLOWER than scattered 4-thread-per-block even at 99MB (exceeds L2). Root cause: warp reduction per block kills instruction-level parallelism. Scattered approach: each thread independently accumulates across many blocks, single reduction at end. Coalesced approach: forced reduction every block = 5 shuffles \u00d7 21 blocks = 105 shuffles vs 5 shuffles total for scattered. The bandwidth utilization gap (39% scattered) is NOT from coalescing \u2014 V100 L2 cache line prefetcher handles the scattered pattern. The 54% production gap must come from other factors: kernel launch overhead, cross-warp sync, scale/min metadata loads, or interaction with other kernels.",
+      "experiment": 22,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:41"
+    },
+    {
+      "id": 21,
+      "text": "PARADIGM SHIFT: Q4_K GEMV is COMPUTE-BOUND, not memory-bound. Roofline analysis: 23 instructions per 40 bytes loaded. V100 peak instruction throughput = 245 GIPS. Compute ceiling = 426 GB/s equivalent bandwidth \u2014 closely matches measured 485 GB/s (54%). The 46% gap is NOT wasted bandwidth \u2014 it is the GPU spending cycles on shift/mask/dp4a/accumulate instructions, not waiting for memory. OPTIMIZATION DIRECTION CHANGE: reduce instruction count per vec_dot call, not improve memory access. This is where mathematical cross-field transfer has maximum impact \u2014 can we compute the quantized dot product with fewer instructions?",
+      "experiment": 18,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:44"
+    },
+    {
+      "id": 22,
+      "text": "Tensor cores cannot help Q4_K GEMV because the int4\u2192FP16 dequant conversion cost exceeds the compute savings. dp4a operates directly on packed int8 \u2014 no conversion needed. The optimization must REDUCE the overhead instructions (shift, mask, scale multiply) while keeping dp4a, not replace dp4a with MMA. Approaches: (1) LUT-based nibble extraction (precompute in SMEM), (2) Bit manipulation tricks to combine shift+mask into fewer ops, (3) Fuse scale multiply into the accumulation (FMA chain).",
+      "experiment": 26,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:48"
+    },
+    {
+      "id": 23,
+      "text": "INSTRUCTION REDUCTION OPPORTUNITY: The Q4_K min correction term (sumf_m) costs 4 instructions per QR4_K iteration (2 dp4a for sum-of-u + 2 mul/FMA for scale). Total: 8 instructions out of 23 = 35% of compute. If min is absorbed into scale (bias-free quantization), those 8 instructions are eliminated. Trade: slightly worse quantization quality for 35% fewer instructions. This is a rate-distortion theory question: what is the information-theoretic cost of removing the min offset? For Q4_K with 4-bit values centered around a nonzero mean, the min captures ~0.5 bits of information. Removing it degrades from 4.5 bpw effective to ~4.0 bpw quality at 4.5 bpw storage \u2014 but with 35% faster compute.",
+      "experiment": 24,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:50"
+    },
+    {
+      "id": 24,
+      "text": "PARADIGM SHIFT #2: Removing 35% of instructions (min correction) shows 0% speedup. The kernel is NOT instruction-throughput-limited. V100 dual-issues integer (dp4a, shift, mask) and floating-point (FMA, mul) on separate pipelines \u2014 they run in parallel. The actual bottleneck is NEITHER memory NOR instruction throughput \u2014 it is likely LATENCY (instruction-level parallelism within the dp4a chain) or OCCUPANCY (not enough warps to hide latency). Need to investigate: (a) instruction dependency chain length, (b) warp occupancy and stall reasons, (c) whether the bottleneck is in the warp scheduler, not functional units.",
+      "experiment": 24,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:51"
+    },
+    {
+      "id": 25,
+      "text": "LITERATURE: Rate-distortion theory (Ordentlich+Polyanskiy arXiv:2410.13780) proves optimal scalar quantizer for matmul is NON-UNIFORM (denser near zero). Q4_K uses uniform grid within blocks \u2014 leaves 0.5-1 bit/weight recoverable quality. Practical: redistribute quant levels non-uniformly within existing bit budget.",
+      "experiment": 20,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:52"
+    },
+    {
+      "id": 26,
+      "text": "LITERATURE: GPTQ = Babai nearest plane (Choudhury ICLR2026 arXiv:2507.18553). LLL basis reduction tightens CVP bound. Leech lattice VQ (arXiv:2603.11021) has algebraic dequant via Golay decoding \u2014 replaces table lookups with arithmetic, favorable on V100. NestQuant (arXiv:2502.09720) enables LUT-based dot products.",
+      "experiment": 20,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:52"
+    },
+    {
+      "id": 27,
+      "text": "LITERATURE: MegaBlocks (arXiv:2211.15841) reformulates MoE as block-sparse GEMV using BCSR format \u2014 98.6% of dense cuBLAS throughput. For Qwen3.5 MoE: pack active expert weights into block-sparse matrix, single kernel launch instead of per-expert launches. Better SM occupancy.",
+      "experiment": 20,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:52"
+    },
+    {
+      "id": 28,
+      "text": "LITERATURE: Z-order thread block scheduling (Nocentino+Rhodes 2010) maximizes L2 cache reuse. Activation vector (16KB) fits in V100 6MB L2. Morton ordering of blockIdx remapping increases temporal reuse across thread blocks. ~5 instructions overhead.",
+      "experiment": 20,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:52"
+    },
+    {
+      "id": 29,
+      "text": "LITERATURE: dp4a integer path with deferred scale (NTT-inspired) \u2014 compute integer dot product first, multiply scale once. V100 INT8 throughput = 2x FP16. Current kernel already uses dp4a but does FP scale per-iteration. Deferring scale to end of block reduces FP instruction pressure.",
+      "experiment": 20,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:52"
+    },
+    {
+      "id": 30,
+      "text": "LITERATURE: Wasserstein-optimal codebook (Dereich 2012, Zador bound) has density proportional to p(x)^{1/3}. For Gaussian weights: denser near zero, sparser in tails. Reduces quant error 10-15% at same bit-rate. Lattice-structured codebooks enable algebraic dequant (formula instead of LUT).",
+      "experiment": 20,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:52"
+    },
+    {
+      "id": 31,
+      "text": "DUAL-ISSUE CEILING: V100 saturates both INT and FP pipelines simultaneously during Q4_K GEMV. Removing FP ops = 0% speedup (INT still bottleneck). Removing INT ops = 0% speedup (FP still bottleneck). Removing 35% of ALL ops = 0% speedup (dual-issue compensates). The kernel is at the V100 architectural ceiling for this instruction mix. Further optimization requires ALGORITHMIC change (fewer total ops via mathematical insight), not kernel engineering. Pausing Phase 10 micro-optimization. Redirecting to: (1) project-manager tooling (higher-priority dependency), (2) Z-order scheduling (grid-level, not instruction-level), (3) block-sparse MoE (kernel fusion, not single-kernel optimization).",
+      "experiment": 31,
+      "supports": null,
+      "contradicts": null,
+      "date": "2026-03-26 11:56"
+    }
+  ],
+  "literature": []
+}
