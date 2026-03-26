@@ -86,6 +86,14 @@ pub async fn serve(db_path: &str, port: u16) {
             warp::reply::json(&project_exps)
         });
 
+
+    let db7 = db.clone();
+    let decisions = warp::path!("api" / "projects" / i64 / "decisions")
+        .map(move |project_id: i64| {
+            let store = SqliteStore::new(&db7).unwrap();
+            warp::reply::json(&store.list_decisions(project_id).unwrap_or_default())
+        });
+
     let db6 = db.clone();
     let dashboard = warp::path!("api" / "dashboard")
         .map(move || {
@@ -108,7 +116,7 @@ pub async fn serve(db_path: &str, port: u16) {
     let index = warp::path::end()
         .map(|| warp::reply::html(include_str!("web/index.html")));
 
-    let routes = index.or(projects).or(phases).or(findings).or(edges).or(experiments).or(dashboard);
+    let routes = index.or(projects).or(phases).or(findings).or(edges).or(experiments).or(decisions).or(dashboard);
 
     println!("PM dashboard at http://localhost:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;

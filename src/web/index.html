@@ -121,11 +121,12 @@ function setView(view) {
 }
 
 async function loadKG(projectId) {
-  const [findings, edges, experiments, phases] = await Promise.all([
+  const [findings, edges, experiments, phases, decisions] = await Promise.all([
     fetch(`/api/projects/${projectId}/findings`).then(r => r.json()),
     fetch(`/api/projects/${projectId}/edges`).then(r => r.json()),
     fetch(`/api/projects/${projectId}/experiments`).then(r => r.json()),
     fetch(`/api/projects/${projectId}/phases`).then(r => r.json()),
+    fetch(`/api/projects/${projectId}/decisions`).then(r => r.json()).catch(() => []),
   ]);
 
   const nodes = [];
@@ -150,6 +151,20 @@ async function loadKG(projectId) {
     const statusColor = p.status === 'Complete' ? '#3fb950' : p.status === 'InProgress' ? '#58a6ff' : p.status === 'Paused' ? '#f85149' : '#8b949e';
     nodes.push({ id, label: `Phase#${p.id}`, text: `${p.name} [impact:${p.impact}]`, type: 'phase', color: statusColor, val: Math.max(3, p.impact / 8) });
     nodeIds.add(id);
+  }
+
+  // Decision nodes (orange diamonds in the KG — fork points)
+  for (const d of decisions) {
+    const id = `d-${d.id}`;
+    nodes.push({ id, label: `Dec#${d.id}`, text: `DECISION: ${d.what}${d.why ? ' — ' + d.why : ''}`, type: 'decision', color: '#d29922', val: 5 });
+    nodeIds.add(id);
+    // Link decision to its informing experiment
+    if (d.experiment_id) {
+      const expId = `e-${d.experiment_id}`;
+      if (nodeIds.has(expId)) {
+        links.push({ source: expId, target: id, color: '#d29922' });
+      }
+    }
   }
 
   // Edges: finding→experiment (produced_by)
