@@ -146,3 +146,73 @@ fn create_decision_with_rationale() {
     assert_eq!(dec.what, "Use Rust");
     assert_eq!(dec.why, Some("Type safety for KG".to_string()));
 }
+
+// --- Additional tests for v3 completeness ---
+
+#[test]
+fn list_experiments_by_phase() {
+    let store = test_store();
+    let proj = store.create_project("test", None).unwrap();
+    let p1 = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let p2 = store.create_phase(proj.id, "P2", 20, &[]).unwrap();
+    store.create_experiment(Some(p1.id), "exp_p1").unwrap();
+    store.create_experiment(Some(p2.id), "exp_p2a").unwrap();
+    store.create_experiment(Some(p2.id), "exp_p2b").unwrap();
+    
+    let p1_exps = store.list_experiments(Some(p1.id)).unwrap();
+    assert_eq!(p1_exps.len(), 1);
+    let p2_exps = store.list_experiments(Some(p2.id)).unwrap();
+    assert_eq!(p2_exps.len(), 2);
+    let all_exps = store.list_experiments(None).unwrap();
+    assert_eq!(all_exps.len(), 3);
+}
+
+#[test]
+fn update_phase_status_round_trip() {
+    let store = test_store();
+    let proj = store.create_project("test", None).unwrap();
+    let phase = store.create_phase(proj.id, "test", 10, &[]).unwrap();
+    
+    for status in [PhaseStatus::InProgress, PhaseStatus::Complete, PhaseStatus::Deprioritized, PhaseStatus::Paused, PhaseStatus::Pending] {
+        store.update_phase_status(phase.id, status.clone()).unwrap();
+        let fetched = store.get_phase(phase.id).unwrap();
+        assert_eq!(fetched.status, status);
+    }
+}
+
+#[test]
+fn finding_list_by_experiment() {
+    let store = test_store();
+    let proj = store.create_project("test", None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let e1 = store.create_experiment(Some(phase.id), "e1").unwrap();
+    let e2 = store.create_experiment(Some(phase.id), "e2").unwrap();
+    store.create_finding(Some(e1.id), "f1").unwrap();
+    store.create_finding(Some(e1.id), "f2").unwrap();
+    store.create_finding(Some(e2.id), "f3").unwrap();
+    
+    assert_eq!(store.list_findings(Some(e1.id)).unwrap().len(), 2);
+    assert_eq!(store.list_findings(Some(e2.id)).unwrap().len(), 1);
+    assert_eq!(store.list_findings(None).unwrap().len(), 3);
+}
+
+#[test]
+fn edges_bidirectional() {
+    let store = test_store();
+    let proj = store.create_project("test", None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "e1").unwrap();
+    let f1 = store.create_finding(Some(exp.id), "A").unwrap();
+    let f2 = store.create_finding(Some(exp.id), "B").unwrap();
+    store.create_edge(NodeType::Finding, f1.id, NodeType::Finding, f2.id, EdgeType::Supports).unwrap();
+    
+    // Forward: from f1
+    let from = store.get_edges_from(NodeType::Finding, f1.id).unwrap();
+    assert_eq!(from.len(), 1);
+    assert_eq!(from[0].target_id, f2.id);
+    
+    // Reverse: to f2
+    let to = store.get_edges_to(NodeType::Finding, f2.id).unwrap();
+    assert_eq!(to.len(), 1);
+    assert_eq!(to[0].source_id, f1.id);
+}
