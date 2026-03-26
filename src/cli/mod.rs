@@ -68,6 +68,10 @@ pub enum Commands {
         format: String,
     },
     /// Import v2 JSON project data
+    /// Generate session handoff document
+    Handoff {
+        project: String,
+    },
     Import {
         /// Path to v2 project.json
         path: String,

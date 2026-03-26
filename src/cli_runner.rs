@@ -294,6 +294,9 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             } else { eprintln!("Project not found: {}", project); }
         }
 
+        Commands::Handoff { project } => {
+            println!("{}", handoff_text(&store, &project)?);
+        }
         Commands::Import { path, name } => {
             import_v2(&store, &path, &name)?;
         }
@@ -369,4 +372,38 @@ fn import_v2(store: &SqliteStore, path: &str, name: &str) -> Result<(), Box<dyn 
 
     println!("\nImport complete. Run: pm next {}", name);
     Ok(())
+}
+
+fn handoff_text(store: &SqliteStore, project: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let proj = resolve_project(store, project).ok_or("Project not found")?;
+    let dag = pm::dag::DagEngine::new(store, proj.id);
+    let kg = pm::kg::KgEngine::new(store);
+    let phases = store.list_phases(proj.id)?;
+    
+    let mut out = format!("=== Session Handoff: {} ===\n\n", proj.name);
+    let in_progress: Vec<_> = phases.iter().filter(|p| p.status == PhaseStatus::InProgress).collect();
+    let complete: Vec<_> = phases.iter().filter(|p| p.status == PhaseStatus::Complete).collect();
+    
+    out += &format!("## Progress: {}/{} phases complete\n", complete.len(), phases.len());
+    if !in_progress.is_empty() {
+        out += "\n## Active:\n";
+        for p in &in_progress { out += &format!("  Phase #{} [impact:{}]: {}\n", p.id, p.impact, p.name); }
+    }
+    if let Ok(next) = dag.next_phases() {
+        if let Some(top) = next.first() {
+            out += &format!("\n## Next Action: Phase #{} [impact:{}] {}\n", top.id, top.impact, top.name);
+        }
+    }
+    if let Ok(Some(n)) = dag.stagnation_check(3) {
+        out += &format!("\n## WARNING: {} consecutive fails — redirect needed\n", n);
+    }
+    let all_findings = store.list_findings(None)?;
+    if !all_findings.is_empty() {
+        out += "\n## Recent Findings:\n";
+        for f in all_findings.iter().rev().take(3) {
+            let trunc = if f.text.len() > 100 { &f.text[..100] } else { &f.text };
+            out += &format!("  #{}: {}\n", f.id, trunc);
+        }
+    }
+    Ok(out)
 }
