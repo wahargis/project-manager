@@ -215,6 +215,9 @@ function renderGraph(data) {
   const container = document.getElementById('graph-container');
   if (graph) graph._destructor();
 
+  const W = container.offsetWidth;
+  const H = container.offsetHeight;
+
   // Count edges per node for sizing
   const edgeCount = {};
   for (const l of data.links) {
@@ -223,33 +226,88 @@ function renderGraph(data) {
     edgeCount[sid] = (edgeCount[sid] || 0) + 1;
     edgeCount[tid] = (edgeCount[tid] || 0) + 1;
   }
-  // Set node size by connectivity
+
+  // Assign chronological X position based on node type and ID
+  // Experiments form the timeline backbone (x = experiment_id * spacing)
+  // Findings cluster around their experiment's x position
+  // Phases spread across the top
+  // Decisions are prominent at their experiment's x position
+  const expIds = data.nodes.filter(n => n.type === 'experiment').map(n => parseInt(n.id.split('-')[1]));
+  const minExp = Math.min(...expIds, 1);
+  const maxExp = Math.max(...expIds, 1);
+  const xSpacing = W / (maxExp - minExp + 2);
+
+  const nodeById = {};
+  for (const n of data.nodes) nodeById[n.id] = n;
+
   for (const n of data.nodes) {
+    const numId = parseInt(n.id.split('-')[1]);
+    if (n.type === 'experiment') {
+      n.fx = (numId - minExp + 1) * xSpacing;
+      n.fy = H * 0.5; // experiments in middle band
+    } else if (n.type === 'finding') {
+      // Find experiment this finding belongs to via links
+      let expX = null;
+      for (const l of data.links) {
+        const src = typeof l.source === 'string' ? l.source : l.source.id;
+        const tgt = typeof l.target === 'string' ? l.target : l.target.id;
+        if (tgt === n.id && src.startsWith('e-')) {
+          const eid = parseInt(src.split('-')[1]);
+          expX = (eid - minExp + 1) * xSpacing;
+          break;
+        }
+      }
+      if (expX !== null) {
+        n.fx = expX + (Math.random() - 0.5) * xSpacing * 0.3;
+        // findings spread vertically around experiment
+      } else {
+        n.fx = numId * 8; // fallback for unlinked findings
+      }
+      // Y is free — force layout handles vertical positioning
+    } else if (n.type === 'phase') {
+      // Phases at top, spread by ID
+      n.fx = (numId / 25) * W * 0.8 + W * 0.1;
+      n.fy = H * 0.05;
+    } else if (n.type === 'decision') {
+      // Decisions at their experiment's x, slightly above
+      let expX = W * 0.5;
+      for (const l of data.links) {
+        const src = typeof l.source === 'string' ? l.source : l.source.id;
+        const tgt = typeof l.target === 'string' ? l.target : l.target.id;
+        if (tgt === n.id && src.startsWith('e-')) {
+          const eid = parseInt(src.split('-')[1]);
+          expX = (eid - minExp + 1) * xSpacing;
+          break;
+        }
+      }
+      n.fx = expX;
+      n.fy = H * 0.3; // decisions above experiments
+    }
     n.val = Math.max(2, (edgeCount[n.id] || 0) * 0.8);
   }
 
   graph = ForceGraph()(container)
     .graphData(data)
-    .nodeLabel(n => `<b>${n.label}</b> (${edgeCount[n.id] || 0} edges)<br>${n.text ? n.text.substring(0, 200) : ''}`)
+    .nodeLabel(n => `<b>${n.label}</b> [${n.type}] (${edgeCount[n.id] || 0} edges)<br>${n.text ? n.text.substring(0, 250) : ''}`)
     .nodeColor(n => n.color)
     .nodeVal(n => n.val || 2)
     .linkColor(l => l.color || '#30363d')
-    .linkWidth(l => l.color === '#f85149' ? 3 : l.color === '#3fb950' ? 2 : 1)
+    .linkWidth(l => l.color === '#f85149' ? 3 : l.color === '#3fb950' ? 2 : l.color === '#a371f7' ? 2.5 : 1)
     .linkDirectionalArrowLength(4)
     .linkDirectionalArrowRelPos(1)
+    .linkCurvature(l => l.color === '#f85149' ? 0.3 : 0) // curve contradiction edges
     .backgroundColor('#0d1117')
-    .width(container.offsetWidth)
-    .height(container.offsetHeight)
-    .d3Force('charge', d3.forceManyBody().strength(-120))
-    .d3Force('link', d3.forceLink().distance(l => {
-      // Contradicts/supports edges pull nodes closer
-      return l.color === '#f85149' || l.color === '#3fb950' ? 40 : 80;
-    }))
-    .warmupTicks(100)
-    .cooldownTicks(200);
+    .width(W)
+    .height(H)
+    .d3Force('charge', d3.forceManyBody().strength(-30))
+    .d3Force('collide', d3.forceCollide().radius(n => Math.sqrt(n.val || 2) * 4))
+    .warmupTicks(50)
+    .cooldownTicks(100);
 
-  // Force initial render
-  setTimeout(() => { if (graph) graph.zoomToFit(400, 50); }, 500);
+  // Remove x-force since we're fixing x positions
+  graph.d3Force('x', null);
+
+  setTimeout(() => { if (graph) graph.zoomToFit(400, 30); }, 800);
 }
 
 window.addEventListener('resize', () => {
