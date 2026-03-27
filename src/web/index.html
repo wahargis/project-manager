@@ -14,15 +14,39 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 #main { display: flex; height: calc(100vh - 49px); }
 #sidebar { width: 280px; min-width: 280px; background: #161b22; border-right: 1px solid #30363d; overflow-y: auto; padding: 16px; position: relative; z-index: 5; }
 #sidebar h2 { font-size: 13px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-.project-item { padding: 8px 12px; margin-bottom: 4px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid transparent; }
-.project-item:hover { border-color: #58a6ff; background: #0d1117; }
-.project-item.selected { border-color: #1f6feb; background: #161b22; }
-.project-item .proj-name { color: #f0f6fc; font-weight: bold; font-size: 13px; }
-.project-item .proj-stats { color: #8b949e; font-size: 10px; margin-top: 2px; }
-.project-item .proj-badge { font-size: 9px; color: #8b949e; background: #21262d; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
-.project-group { margin-bottom: 8px; }
-.project-item.child { padding-left: 24px; }
-.project-item.child .proj-name { font-weight: normal; font-size: 12px; color: #c9d1d9; }
+
+/* Tree node styles */
+.tree-node { display: flex; align-items: center; padding: 4px 8px; margin-bottom: 2px; border-radius: 4px; cursor: pointer; font-size: 12px; border: 1px solid transparent; user-select: none; }
+.tree-node:hover { border-color: #58a6ff; background: #0d1117; }
+.tree-node.selected { border-color: #1f6feb; background: #161b22; }
+.tree-node.paused { opacity: 0.7; }
+.tree-node.archived-item { opacity: 0.5; }
+.tree-node.archived-item .tree-project-name { text-decoration: line-through; }
+.tree-toggle { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; font-size: 8px; color: #8b949e; flex-shrink: 0; margin-right: 2px; transition: transform 0.15s ease; }
+.tree-toggle.collapsed { transform: rotate(-90deg); }
+.tree-toggle.leaf { visibility: hidden; }
+.tree-project-name { color: #f0f6fc; font-weight: bold; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-node.depth-1 .tree-project-name { font-weight: normal; color: #c9d1d9; font-size: 11px; }
+.tree-node.depth-2 .tree-project-name { font-weight: normal; color: #8b949e; font-size: 11px; }
+.tree-node-count { font-size: 9px; color: #6e7681; margin-left: auto; flex-shrink: 0; padding-left: 4px; }
+.tree-children { overflow: hidden; transition: max-height 0.2s ease; }
+.tree-children.collapsed { max-height: 0 !important; overflow: hidden; }
+.tree-alias { font-size: 9px; color: #6e7681; margin-left: 4px; }
+.tree-status-badge { font-size: 8px; padding: 0 3px; border-radius: 2px; margin-left: 3px; }
+.tree-status-badge.paused { background: #d29922; color: #0d1117; }
+.tree-status-badge.archived { background: #484f58; color: #c9d1d9; }
+
+.status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; cursor: pointer; vertical-align: middle; border: 1px solid transparent; flex-shrink: 0; }
+.status-dot:hover { border-color: #fff; transform: scale(1.3); }
+.status-dot.active { background: #3fb950; }
+.status-dot.paused { background: #d29922; }
+.status-dot.archived { background: #484f58; }
+
+.archived-section { margin-top: 10px; border-top: 1px solid #30363d; padding-top: 6px; }
+.archived-toggle { cursor: pointer; padding: 4px 0; color: #6e7681; font-size: 10px; user-select: none; }
+.archived-toggle:hover { color: #c9d1d9; }
+.archived-list { display: none; }
+
 .subproject-hull { pointer-events: all; cursor: pointer; }
 .subproject-hull:hover { fill-opacity: 0.12 !important; }
 .subproject-label { font-size: 10px; fill: #8b949e; font-weight: bold; pointer-events: none; }
@@ -48,19 +72,6 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 .legend-item { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 .legend-line { height: 2px; border-radius: 1px; }
-
-.project-item.paused .proj-name { opacity: 0.7; }
-.project-item.archived-item .proj-name { opacity: 0.5; text-decoration: line-through; }
-.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; cursor: pointer; vertical-align: middle; border: 1px solid transparent; flex-shrink: 0; }
-.status-dot:hover { border-color: #fff; transform: scale(1.3); }
-.status-dot.active { background: #3fb950; }
-.status-dot.paused { background: #d29922; }
-.status-dot.archived { background: #484f58; }
-.archived-section { margin-top: 10px; border-top: 1px solid #444; }
-.archived-toggle { cursor: pointer; padding: 5px 0; color: #888; font-size: 11px; user-select: none; }
-.archived-toggle:hover { color: #c9d1d9; }
-.archived-list { display: none; }
-.proj-name-row { display: flex; align-items: center; }
 </style>
 </head>
 <body>
@@ -140,6 +151,7 @@ const TYPE_COLORS = {
 const SUBPROJECT_COLORS = [
   '#264653', '#2a9d8f', '#e9c46a', '#f4a261', '#e76f51',
   '#606c38', '#283618', '#dda15e', '#bc6c25', '#457b9d',
+  '#6d6875', '#b5838d', '#ffb4a2', '#e5989b', '#6b705c',
 ];
 
 function formatNodeCounts(nc) {
@@ -158,16 +170,57 @@ function statusDotClass(status) {
   return 'active';
 }
 
-function makeStatusDot(proj) {
-  const cls = statusDotClass(proj.status);
-  const dot = document.createElement('span');
-  dot.className = 'status-dot ' + cls;
-  dot.title = proj.status + ' — click to change';
-  dot.onclick = function(ev) {
-    ev.stopPropagation();
-    toggleProjectStatus(proj.id, proj.name, proj.status);
-  };
-  return dot;
+// --- Collapse state persistence ---
+function getCollapseState() {
+  try {
+    const raw = sessionStorage.getItem('pm-tree-collapse');
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function setCollapseState(state) {
+  try { sessionStorage.setItem('pm-tree-collapse', JSON.stringify(state)); } catch {}
+}
+
+function isCollapsed(projectId, depth) {
+  const state = getCollapseState();
+  if (state.hasOwnProperty(projectId)) return state[projectId];
+  // Default: depth 0 expanded, depth 1+ collapsed
+  return depth >= 1;
+}
+
+function toggleCollapse(projectId, depth) {
+  const state = getCollapseState();
+  const current = state.hasOwnProperty(projectId) ? state[projectId] : (depth >= 1);
+  state[projectId] = !current;
+  setCollapseState(state);
+  updateCollapseVisuals();
+}
+
+function updateCollapseVisuals() {
+  document.querySelectorAll('.tree-children').forEach(el => {
+    const pid = el.dataset.parentId;
+    const depth = parseInt(el.dataset.depth || '0');
+    const collapsed = isCollapsed(parseInt(pid), depth);
+    el.classList.toggle('collapsed', collapsed);
+    // Update arrow
+    const toggle = document.querySelector(`.tree-toggle[data-id="${pid}"]`);
+    if (toggle && !toggle.classList.contains('leaf')) {
+      toggle.classList.toggle('collapsed', collapsed);
+    }
+  });
+}
+
+// --- Project tree building ---
+function buildProjectTree(projects, parentId, depth) {
+  if (parentId === undefined) parentId = null;
+  if (depth === undefined) depth = 0;
+  return projects
+    .filter(function(p) { return p.parent_id === parentId; })
+    .map(function(p) {
+      var children = buildProjectTree(projects, p.id, depth + 1);
+      return Object.assign({}, p, { children: children, depth: depth });
+    });
 }
 
 async function toggleProjectStatus(projectId, projectName, currentStatus) {
@@ -176,25 +229,20 @@ async function toggleProjectStatus(projectId, projectName, currentStatus) {
     const choice = prompt('Change status for "' + projectName + '":\n1) Archive (hide from default view)\n2) Pause (dim in dashboard)\n\nEnter 1 or 2 (or cancel):');
     if (!choice) return;
     if (choice.trim() === '2') {
-      newStatus = 'paused';
-      msg = 'Pause "' + projectName + '"? It will be dimmed in the dashboard.';
+      newStatus = 'paused'; msg = 'Pause "' + projectName + '"?';
     } else {
-      newStatus = 'archived';
-      msg = 'Archive "' + projectName + '"? It will be hidden from the default dashboard view.';
+      newStatus = 'archived'; msg = 'Archive "' + projectName + '"?';
     }
   } else if (currentStatus === 'Paused') {
     const choice = prompt('Change status for "' + projectName + '" (currently Paused):\n1) Reactivate\n2) Archive\n\nEnter 1 or 2 (or cancel):');
     if (!choice) return;
     if (choice.trim() === '2') {
-      newStatus = 'archived';
-      msg = 'Archive "' + projectName + '"? It will be hidden from the default dashboard view.';
+      newStatus = 'archived'; msg = 'Archive "' + projectName + '"?';
     } else {
-      newStatus = 'active';
-      msg = 'Reactivate "' + projectName + '"? It will appear in the main dashboard.';
+      newStatus = 'active'; msg = 'Reactivate "' + projectName + '"?';
     }
   } else {
-    newStatus = 'active';
-    msg = 'Reactivate "' + projectName + '"? It will appear in the main dashboard.';
+    newStatus = 'active'; msg = 'Reactivate "' + projectName + '"?';
   }
   if (!confirm(msg)) return;
   const resp = await fetch('/api/projects/' + projectId + '/status', {
@@ -209,50 +257,94 @@ async function toggleProjectStatus(projectId, projectName, currentStatus) {
   }
 }
 
-function toggleArchived() {
-  const list = document.getElementById('archived-project-list');
-  const toggle = document.getElementById('archived-toggle-text');
-  if (list.style.display === 'none') {
-    list.style.display = 'block';
-    toggle.textContent = toggle.textContent.replace(/^[^ ]/, '\u25BC');
-  } else {
-    list.style.display = 'none';
-    toggle.textContent = toggle.textContent.replace(/^[^ ]/, '\u25B6');
+function renderTreeNode(proj, container) {
+  const hasChildren = proj.children && proj.children.length > 0;
+  const collapsed = isCollapsed(proj.id, proj.depth);
+
+  // Node row
+  const node = document.createElement('div');
+  node.className = 'tree-node depth-' + proj.depth;
+  if (proj.status === 'Paused') node.className += ' paused';
+  if (proj.status === 'Archived') node.className += ' archived-item';
+  node.dataset.id = proj.id;
+  node.style.paddingLeft = (8 + proj.depth * 16) + 'px';
+
+  // Toggle arrow
+  const toggle = document.createElement('span');
+  toggle.className = 'tree-toggle' + (hasChildren ? (collapsed ? ' collapsed' : '') : ' leaf');
+  toggle.dataset.id = proj.id;
+  toggle.textContent = '\u25BC';
+  if (hasChildren) {
+    toggle.onclick = function(ev) {
+      ev.stopPropagation();
+      toggleCollapse(proj.id, proj.depth);
+    };
   }
-}
+  node.appendChild(toggle);
 
-function buildProjectItem(proj, isChild, isArchived) {
-  const item = document.createElement('div');
-  let className = 'project-item';
-  if (isChild) className += ' child';
-  if (proj.status === 'Archived') className += ' archived-item';
-  if (proj.status === 'Paused') className += ' paused';
-  if (!isChild && !isArchived) className += ' standalone';
-  item.className = className;
-  item.dataset.id = proj.id;
+  // Status dot
+  const dot = document.createElement('span');
+  dot.className = 'status-dot ' + statusDotClass(proj.status);
+  dot.title = proj.status + ' -- click to change';
+  dot.onclick = function(ev) {
+    ev.stopPropagation();
+    toggleProjectStatus(proj.id, proj.name, proj.status);
+  };
+  node.appendChild(dot);
 
-  const dot = makeStatusDot(proj);
-  const nameRow = document.createElement('div');
-  nameRow.className = 'proj-name-row';
-  nameRow.appendChild(dot);
-
+  // Project name
   const nameSpan = document.createElement('span');
-  nameSpan.className = 'proj-name';
-  const prefix = isChild ? '\u230A ' : '';
-  const aliasStr = proj.alias && isChild ? ' [' + proj.alias + ']' : '';
-  const statusTag = proj.status !== 'Active' ? ' [' + proj.status.toLowerCase() + ']' : '';
-  nameSpan.textContent = prefix + proj.name + aliasStr + statusTag;
-  nameRow.appendChild(nameSpan);
+  nameSpan.className = 'tree-project-name';
+  nameSpan.textContent = proj.name;
+  node.appendChild(nameSpan);
 
-  item.appendChild(nameRow);
+  // Alias badge
+  if (proj.alias) {
+    const alias = document.createElement('span');
+    alias.className = 'tree-alias';
+    alias.textContent = proj.alias;
+    node.appendChild(alias);
+  }
 
-  const statsDiv = document.createElement('div');
-  statsDiv.className = 'proj-stats';
-  const projData = allProjectsData.find(p => p.id === proj.id);
-  statsDiv.textContent = projData ? formatNodeCounts(projData.node_counts) : '';
-  item.appendChild(statsDiv);
+  // Status badge (for non-active)
+  if (proj.status !== 'Active') {
+    const badge = document.createElement('span');
+    badge.className = 'tree-status-badge ' + proj.status.toLowerCase();
+    badge.textContent = proj.status.toLowerCase();
+    node.appendChild(badge);
+  }
 
-  return item;
+  // Node counts
+  const projData = allProjectsData.find(function(p) { return p.id === proj.id; });
+  if (projData && projData.node_counts) {
+    const countStr = formatNodeCounts(projData.node_counts);
+    if (countStr !== 'empty') {
+      const countSpan = document.createElement('span');
+      countSpan.className = 'tree-node-count';
+      countSpan.textContent = countStr;
+      node.appendChild(countSpan);
+    }
+  }
+
+  // Click handler to select project
+  node.onclick = function(ev) {
+    ev.stopPropagation();
+    selectProject(proj.id, node, hasChildren);
+  };
+
+  container.appendChild(node);
+
+  // Children container
+  if (hasChildren) {
+    const childContainer = document.createElement('div');
+    childContainer.className = 'tree-children' + (collapsed ? ' collapsed' : '');
+    childContainer.dataset.parentId = proj.id;
+    childContainer.dataset.depth = proj.depth;
+    for (const child of proj.children) {
+      renderTreeNode(child, childContainer);
+    }
+    container.appendChild(childContainer);
+  }
 }
 
 async function loadProjects() {
@@ -261,98 +353,61 @@ async function loadProjects() {
   const tree = document.getElementById('project-tree');
   tree.innerHTML = '';
 
-  const childMap = {};
-  for (const p of allProjectsData) {
-    if (p.parent_id) {
-      if (!childMap[p.parent_id]) childMap[p.parent_id] = [];
-      childMap[p.parent_id].push(p);
-    }
-  }
+  // Build recursive tree from flat list
+  const flatProjects = allProjectsData.map(function(p) {
+    return { id: p.id, name: p.name, alias: p.alias, status: p.status, parent_id: p.parent_id, node_counts: p.node_counts };
+  });
+  const projectTree = buildProjectTree(flatProjects, null, 0);
 
-  // Active and Paused top-level projects
-  const activeTop = allProjectsData.filter(p => !p.parent_id && (p.status === 'Active' || p.status === 'Paused'));
-  // Archived top-level projects
-  const archivedTop = allProjectsData.filter(p => !p.parent_id && p.status === 'Archived');
+  // Split into active/paused and archived at top level
+  const activeTree = projectTree.filter(function(p) { return p.status !== 'Archived'; });
+  const archivedTree = projectTree.filter(function(p) { return p.status === 'Archived'; });
 
-  for (const proj of activeTop) {
-    const children = (childMap[proj.id] || []).filter(c => c.status === 'Active' || c.status === 'Paused');
-    const hasChildren = children.length > 0;
-
-    if (hasChildren) {
-      const group = document.createElement('div');
-      group.className = 'project-group';
-
-      const parentItem = buildProjectItem(proj, false, false);
-      parentItem.className = 'project-item parent' + (proj.status === 'Paused' ? ' paused' : '');
-      parentItem.querySelector('.proj-name').innerHTML = proj.name + '<span class="proj-badge">parent</span>' + (proj.status !== 'Active' ? ' <span class="proj-badge">' + proj.status.toLowerCase() + '</span>' : '');
-      parentItem.onclick = () => selectProject(proj.id, parentItem, true);
-      group.appendChild(parentItem);
-
-      for (const child of children) {
-        const childItem = buildProjectItem(child, true, false);
-        childItem.onclick = (ev) => { ev.stopPropagation(); selectProject(child.id, childItem, false); };
-        group.appendChild(childItem);
-      }
-
-      // Archived children
-      const archivedChildren = (childMap[proj.id] || []).filter(c => c.status === 'Archived');
-      for (const child of archivedChildren) {
-        const childItem = buildProjectItem(child, true, true);
-        childItem.onclick = (ev) => { ev.stopPropagation(); selectProject(child.id, childItem, false); };
-        group.appendChild(childItem);
-      }
-
-      tree.appendChild(group);
-    } else {
-      const item = buildProjectItem(proj, false, false);
-      item.onclick = () => selectProject(proj.id, item, false);
-      tree.appendChild(item);
-    }
+  for (const proj of activeTree) {
+    renderTreeNode(proj, tree);
   }
 
   // Archived section
-  if (archivedTop.length > 0) {
+  if (archivedTree.length > 0) {
     const section = document.createElement('div');
     section.className = 'archived-section';
 
     const toggle = document.createElement('div');
     toggle.className = 'archived-toggle';
     toggle.id = 'archived-toggle-text';
-    toggle.textContent = '\u25B6 Archived Projects (' + archivedTop.length + ')';
-    toggle.onclick = toggleArchived;
+    toggle.textContent = '\u25B6 Archived (' + archivedTree.length + ')';
+    toggle.onclick = function() {
+      const list = document.getElementById('archived-project-list');
+      if (list.style.display === 'none') {
+        list.style.display = 'block';
+        toggle.textContent = toggle.textContent.replace(/^[^ ]/, '\u25BC');
+      } else {
+        list.style.display = 'none';
+        toggle.textContent = toggle.textContent.replace(/^[^ ]/, '\u25B6');
+      }
+    };
     section.appendChild(toggle);
 
     const list = document.createElement('div');
     list.id = 'archived-project-list';
     list.className = 'archived-list';
     list.style.display = 'none';
-
-    for (const proj of archivedTop) {
-      const item = buildProjectItem(proj, false, true);
-      item.onclick = () => selectProject(proj.id, item, false);
-      list.appendChild(item);
-
-      // Also show archived children
-      const archivedChildren = (childMap[proj.id] || []);
-      for (const child of archivedChildren) {
-        const childItem = buildProjectItem(child, true, true);
-        childItem.onclick = (ev) => { ev.stopPropagation(); selectProject(child.id, childItem, false); };
-        list.appendChild(childItem);
-      }
+    for (const proj of archivedTree) {
+      renderTreeNode(proj, list);
     }
-
     section.appendChild(list);
     tree.appendChild(section);
   }
 
-  const dash = await fetch('/api/dashboard').then(r => r.json());
+  const dash = await fetch('/api/dashboard').then(function(r) { return r.json(); });
   document.getElementById('dashboard-text').textContent = dash.text;
 
-  if (activeTop.length > 0) {
-    const first = activeTop[0];
-    const firstItem = tree.querySelector('.project-item');
-    const hasKids = (childMap[first.id] || []).filter(c => c.status === 'Active' || c.status === 'Paused').length > 0;
-    selectProject(first.id, firstItem, hasKids);
+  // Select first active project
+  if (activeTree.length > 0) {
+    const first = activeTree[0];
+    const firstItem = tree.querySelector('.tree-node');
+    const hasSubs = first.children && first.children.length > 0;
+    selectProject(first.id, firstItem, hasSubs);
   }
 }
 
@@ -362,7 +417,7 @@ async function selectProject(id, item, includeSubprojects) {
   pinnedNodeEl = null;
   activeSubprojectFilter = null;
   tooltip.style.display = 'none';
-  document.querySelectorAll('.project-item').forEach(c => c.classList.remove('selected'));
+  document.querySelectorAll('.tree-node').forEach(function(c) { c.classList.remove('selected'); });
   if (item) item.classList.add('selected');
   const container = document.getElementById('graph-container');
   container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8b949e;font-size:14px">Loading graph...</div>';
@@ -377,8 +432,8 @@ function setView(view) {
   document.getElementById('legend-kg').style.display = view === 'kg' ? '' : 'none';
   document.getElementById('legend-dag').style.display = view === 'dag' ? '' : 'none';
   if (currentProject) {
-    const item = document.querySelector('.project-item.selected');
-    const projData = allProjectsData.find(p => p.id === currentProject);
+    const item = document.querySelector('.tree-node.selected');
+    const projData = allProjectsData.find(function(p) { return p.id === currentProject; });
     const hasSubs = projData && projData.children && projData.children.length > 0;
     selectProject(currentProject, item, hasSubs);
   }
@@ -407,7 +462,7 @@ function drawNodeShape(ng, type, color, size) {
         .attr('fill', color).attr('fill-opacity', 0.8);
     case 'literature': {
       const r = s * 0.9;
-      const pts = [0,1,2,3,4,5].map(i => {
+      const pts = [0,1,2,3,4,5].map(function(i) {
         const a = Math.PI/6 + i * Math.PI/3;
         return `${r*Math.cos(a)},${r*Math.sin(a)}`;
       }).join(' ');
@@ -434,7 +489,7 @@ function drawNodeShape(ng, type, color, size) {
     }
     case 'research': {
       const r = s * 0.9;
-      const pts = [0,1,2,3,4,5].map(i => {
+      const pts = [0,1,2,3,4,5].map(function(i) {
         const a = i * Math.PI/3;
         return `${r*Math.cos(a)},${r*Math.sin(a)}`;
       }).join(' ');
@@ -446,18 +501,16 @@ function drawNodeShape(ng, type, color, size) {
   }
 }
 
-// Build enriched tooltip HTML based on node type
 function buildTooltipHtml(d) {
   let html = '';
   const extra = d.extra || {};
 
   function field(label, value) {
     if (value === null || value === undefined || value === '') return '';
-    return `<div class="tt-field"><span class="tt-field-label">${label}:</span> <span class="tt-field-value">${miniMarkdown(String(value))}</span></div>`;
+    return '<div class="tt-field"><span class="tt-field-label">' + label + ':</span> <span class="tt-field-value">' + miniMarkdown(String(value)) + '</span></div>';
   }
 
-  // Common: text/name
-  if (d.text) html += `<div style="margin-bottom:6px">${miniMarkdown(d.text.substring(0, 500))}</div>`;
+  if (d.text) html += '<div style="margin-bottom:6px">' + miniMarkdown(d.text.substring(0, 500)) + '</div>';
 
   switch (d.type) {
     case 'phase':
@@ -466,7 +519,7 @@ function buildTooltipHtml(d) {
       html += field('Description', extra.description);
       html += field('Goals', extra.goals);
       html += field('Success Criteria', extra.success_criteria);
-      if (extra.depends_on && extra.depends_on.length) html += field('Depends On', extra.depends_on.map(id => '#' + id).join(', '));
+      if (extra.depends_on && extra.depends_on.length) html += field('Depends On', extra.depends_on.map(function(id) { return '#' + id; }).join(', '));
       html += field('Started', extra.started_at);
       html += field('Completed', extra.completed_at);
       break;
@@ -521,17 +574,16 @@ function buildTooltipHtml(d) {
   }
 
   if (d.subproject_name) {
-    html += `<div class="tt-field" style="margin-top:4px;border-top:1px solid #30363d;padding-top:4px"><span class="tt-field-label">Subproject:</span> <span class="tt-field-value">${d.subproject_name}</span></div>`;
+    html += '<div class="tt-field" style="margin-top:4px;border-top:1px solid #30363d;padding-top:4px"><span class="tt-field-label">Subproject:</span> <span class="tt-field-value">' + d.subproject_name + '</span></div>';
   }
 
   return html;
 }
 
 async function loadKG(projectId, includeSubprojects) {
-  // Try the new KG endpoint first
   let kgData;
   try {
-    kgData = await fetch(`/api/projects/${projectId}/kg`).then(r => r.json());
+    kgData = await fetch('/api/projects/' + projectId + '/kg').then(function(r) { return r.json(); });
   } catch (e) {
     kgData = null;
   }
@@ -541,7 +593,6 @@ async function loadKG(projectId, includeSubprojects) {
     return;
   }
 
-  // Fallback to old per-type endpoints
   await loadKGLegacy(projectId);
 }
 
@@ -552,10 +603,14 @@ function renderKGFromEndpoint(kgData, includeSubprojects) {
 
   const subprojectNames = {};
   const subprojectColorMap = {};
+  const subprojectDepthMap = {};
+  const subprojectParentMap = {};
   if (kgData.subprojects) {
-    kgData.subprojects.forEach((sp, i) => {
+    kgData.subprojects.forEach(function(sp, i) {
       subprojectNames[sp.id] = sp.alias || sp.name;
       subprojectColorMap[sp.id] = SUBPROJECT_COLORS[i % SUBPROJECT_COLORS.length];
+      subprojectDepthMap[sp.id] = sp.depth !== undefined ? sp.depth : 0;
+      subprojectParentMap[sp.id] = sp.parent_subproject_id || null;
     });
   }
 
@@ -567,10 +622,9 @@ function renderKGFromEndpoint(kgData, includeSubprojects) {
 
   for (const kn of kgData.nodes) {
     const prefix = typePrefix[kn.node_type] || 'x';
-    const id = `${prefix}-${kn.node_id}`;
+    const id = prefix + '-' + kn.node_id;
 
     let color = TYPE_COLORS[kn.node_type] || '#8b949e';
-    // Status-based coloring for certain types
     if (kn.node_type === 'experiment') {
       color = kn.status === 'Pass' ? '#3fb950' : kn.status === 'Fail' ? '#f85149' : kn.status === 'Inconclusive' ? '#d29922' : '#8b949e';
     } else if (kn.node_type === 'hypothesis') {
@@ -580,8 +634,8 @@ function renderKGFromEndpoint(kgData, includeSubprojects) {
     }
 
     const node = {
-      id, numId: kn.node_id, label: kn.label, text: kn.text,
-      type: kn.node_type, color, status: kn.status,
+      id: id, numId: kn.node_id, label: kn.label, text: kn.text,
+      type: kn.node_type, color: color, status: kn.status,
       subproject_id: kn.subproject_id,
       subproject_name: kn.subproject_id ? subprojectNames[kn.subproject_id] : null,
       extra: kn.extra || {},
@@ -589,13 +643,11 @@ function renderKGFromEndpoint(kgData, includeSubprojects) {
     nodes.push(node);
     nodeMap[id] = node;
 
-    // Structural edges for findings
-    if (kn.node_type === 'finding' && kn.extra && kn.extra.experiment_id && nodeMap[`e-${kn.extra.experiment_id}`]) {
-      links.push({ source: `e-${kn.extra.experiment_id}`, target: id, relation: 'structural', color: '#30363d' });
+    if (kn.node_type === 'finding' && kn.extra && kn.extra.experiment_id && nodeMap['e-' + kn.extra.experiment_id]) {
+      links.push({ source: 'e-' + kn.extra.experiment_id, target: id, relation: 'structural', color: '#30363d' });
     }
   }
 
-  // KG Edges
   const edgeTypePrefix = {
     'Finding': 'f', 'Experiment': 'e', 'Phase': 'p', 'Decision': 'd',
     'Research': 'r', 'Principle': 'pr', 'Hypothesis': 'h', 'Constraint': 'co',
@@ -605,8 +657,8 @@ function renderKGFromEndpoint(kgData, includeSubprojects) {
   for (const edge of kgData.edges) {
     const srcP = edgeTypePrefix[edge.source_type] || 'x';
     const tgtP = edgeTypePrefix[edge.target_type] || 'x';
-    const src = `${srcP}-${edge.source_id}`;
-    const tgt = `${tgtP}-${edge.target_id}`;
+    const src = srcP + '-' + edge.source_id;
+    const tgt = tgtP + '-' + edge.target_id;
     if (nodeMap[src] && nodeMap[tgt]) {
       const rel = edge.relation;
       const color = rel === 'Contradicts' ? '#f85149' :
@@ -619,96 +671,96 @@ function renderKGFromEndpoint(kgData, includeSubprojects) {
                     rel === 'DerivedFrom' ? '#fbbf24' :
                     rel === 'TestedBy' ? '#2dd4bf' :
                     rel === 'ViolatedBy' ? '#f87171' : '#30363d';
-      links.push({ source: src, target: tgt, relation: rel, color });
+      links.push({ source: src, target: tgt, relation: rel, color: color });
     }
   }
 
-  renderForceGraph(nodes, links, nodeMap, kgData.subprojects || [], subprojectColorMap);
+  renderForceGraph(nodes, links, nodeMap, kgData.subprojects || [], subprojectColorMap, subprojectDepthMap, subprojectParentMap);
 }
 
 async function loadKGLegacy(projectId) {
   const [findings, edges, experiments, phases, decisions, research,
          principles, hypotheses, constraints, literature, feedback] = await Promise.all([
-    fetch(`/api/projects/${projectId}/findings`).then(r => r.json()),
-    fetch(`/api/projects/${projectId}/edges`).then(r => r.json()),
-    fetch(`/api/projects/${projectId}/experiments`).then(r => r.json()),
-    fetch(`/api/projects/${projectId}/phases`).then(r => r.json()),
-    fetch(`/api/projects/${projectId}/decisions`).then(r => r.json()).catch(() => []),
-    fetch(`/api/projects/${projectId}/research`).then(r => r.json()).catch(() => []),
-    fetch(`/api/projects/${projectId}/principles`).then(r => r.json()).catch(() => []),
-    fetch(`/api/projects/${projectId}/hypotheses`).then(r => r.json()).catch(() => []),
-    fetch(`/api/projects/${projectId}/constraints`).then(r => r.json()).catch(() => []),
-    fetch(`/api/projects/${projectId}/literature`).then(r => r.json()).catch(() => []),
-    fetch(`/api/projects/${projectId}/feedback`).then(r => r.json()).catch(() => []),
+    fetch('/api/projects/' + projectId + '/findings').then(function(r) { return r.json(); }),
+    fetch('/api/projects/' + projectId + '/edges').then(function(r) { return r.json(); }),
+    fetch('/api/projects/' + projectId + '/experiments').then(function(r) { return r.json(); }),
+    fetch('/api/projects/' + projectId + '/phases').then(function(r) { return r.json(); }),
+    fetch('/api/projects/' + projectId + '/decisions').then(function(r) { return r.json(); }).catch(function() { return []; }),
+    fetch('/api/projects/' + projectId + '/research').then(function(r) { return r.json(); }).catch(function() { return []; }),
+    fetch('/api/projects/' + projectId + '/principles').then(function(r) { return r.json(); }).catch(function() { return []; }),
+    fetch('/api/projects/' + projectId + '/hypotheses').then(function(r) { return r.json(); }).catch(function() { return []; }),
+    fetch('/api/projects/' + projectId + '/constraints').then(function(r) { return r.json(); }).catch(function() { return []; }),
+    fetch('/api/projects/' + projectId + '/literature').then(function(r) { return r.json(); }).catch(function() { return []; }),
+    fetch('/api/projects/' + projectId + '/feedback').then(function(r) { return r.json(); }).catch(function() { return []; }),
   ]);
 
   const nodes = [];
   const links = [];
   const nodeMap = {};
 
-  for (const e of [...experiments].sort((a, b) => a.id - b.id)) {
-    const id = `e-${e.id}`;
+  for (const e of [...experiments].sort(function(a, b) { return a.id - b.id; })) {
+    const id = 'e-' + e.id;
     const statusColor = e.status === 'Pass' ? '#3fb950' : e.status === 'Fail' ? '#f85149' : e.status === 'Inconclusive' ? '#d29922' : '#8b949e';
-    nodes.push({ id, numId: e.id, label: `E${e.id}`, text: e.name, type: 'experiment', color: statusColor, extra: {} });
+    nodes.push({ id: id, numId: e.id, label: 'E' + e.id, text: e.name, type: 'experiment', color: statusColor, extra: {} });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
   for (const d of decisions) {
-    const id = `d-${d.id}`;
-    nodes.push({ id, numId: d.id, label: `D${d.id}`, text: d.what, type: 'decision', color: TYPE_COLORS.decision, extra: { why: d.why } });
+    const id = 'd-' + d.id;
+    nodes.push({ id: id, numId: d.id, label: 'D' + d.id, text: d.what, type: 'decision', color: TYPE_COLORS.decision, extra: { why: d.why } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
   for (const r of research) {
-    const id = `r-${r.id}`;
-    nodes.push({ id, numId: r.id, label: `R${r.id}`, text: r.name, type: 'research', color: TYPE_COLORS.research, extra: {} });
+    const id = 'r-' + r.id;
+    nodes.push({ id: id, numId: r.id, label: 'R' + r.id, text: r.name, type: 'research', color: TYPE_COLORS.research, extra: {} });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
   for (const f of findings) {
-    const id = `f-${f.id}`;
-    nodes.push({ id, numId: f.id, label: `F${f.id}`, text: f.text ? f.text.substring(0, 200) : '', type: 'finding', color: TYPE_COLORS.finding, extra: { experiment_id: f.experiment_id } });
+    const id = 'f-' + f.id;
+    nodes.push({ id: id, numId: f.id, label: 'F' + f.id, text: f.text ? f.text.substring(0, 200) : '', type: 'finding', color: TYPE_COLORS.finding, extra: { experiment_id: f.experiment_id } });
     nodeMap[id] = nodes[nodes.length - 1];
-    if (f.experiment_id && nodeMap[`e-${f.experiment_id}`]) {
-      links.push({ source: `e-${f.experiment_id}`, target: id, relation: 'structural', color: '#30363d' });
+    if (f.experiment_id && nodeMap['e-' + f.experiment_id]) {
+      links.push({ source: 'e-' + f.experiment_id, target: id, relation: 'structural', color: '#30363d' });
     }
   }
 
   for (const p of principles) {
-    const id = `pr-${p.id}`;
-    nodes.push({ id, numId: p.id, label: `P${p.id}`, text: p.text ? p.text.substring(0, 200) : '', type: 'principle', color: TYPE_COLORS.principle, extra: { rationale: p.rationale, enforcement_level: p.enforcement_level, scope: p.scope } });
+    const id = 'pr-' + p.id;
+    nodes.push({ id: id, numId: p.id, label: 'P' + p.id, text: p.text ? p.text.substring(0, 200) : '', type: 'principle', color: TYPE_COLORS.principle, extra: { rationale: p.rationale, enforcement_level: p.enforcement_level, scope: p.scope } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
   for (const h of hypotheses) {
-    const id = `h-${h.id}`;
+    const id = 'h-' + h.id;
     const statusColor = h.status === 'Confirmed' ? '#3fb950' : h.status === 'Refuted' ? '#f85149' : h.status === 'Testing' ? '#58a6ff' : '#c084fc';
-    nodes.push({ id, numId: h.id, label: `H${h.id}`, text: h.text ? h.text.substring(0, 200) : '', type: 'hypothesis', color: statusColor, extra: { prediction: h.prediction, criteria: h.criteria, confidence: h.confidence } });
+    nodes.push({ id: id, numId: h.id, label: 'H' + h.id, text: h.text ? h.text.substring(0, 200) : '', type: 'hypothesis', color: statusColor, extra: { prediction: h.prediction, criteria: h.criteria, confidence: h.confidence } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
   for (const c of constraints) {
-    const id = `co-${c.id}`;
-    nodes.push({ id, numId: c.id, label: `C${c.id}`, text: c.text ? c.text.substring(0, 200) : '', type: 'constraint', color: TYPE_COLORS.constraint, extra: { severity: c.severity, resource: c.resource, measured_value: c.measured_value, expires_at: c.expires_at, source: c.source } });
+    const id = 'co-' + c.id;
+    nodes.push({ id: id, numId: c.id, label: 'C' + c.id, text: c.text ? c.text.substring(0, 200) : '', type: 'constraint', color: TYPE_COLORS.constraint, extra: { severity: c.severity, resource: c.resource, measured_value: c.measured_value, expires_at: c.expires_at, source: c.source } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
   for (const l of literature) {
-    const id = `l-${l.id}`;
-    nodes.push({ id, numId: l.id, label: `L${l.id}`, text: l.title, type: 'literature', color: TYPE_COLORS.literature, extra: { authors: l.authors, venue: l.venue, year: l.year, arxiv_id: l.arxiv_id, summary: l.summary } });
+    const id = 'l-' + l.id;
+    nodes.push({ id: id, numId: l.id, label: 'L' + l.id, text: l.title, type: 'literature', color: TYPE_COLORS.literature, extra: { authors: l.authors, venue: l.venue, year: l.year, arxiv_id: l.arxiv_id, summary: l.summary } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
   for (const p of phases) {
-    const id = `p-${p.id}`;
+    const id = 'p-' + p.id;
     const statusColor = p.status === 'Complete' ? '#3fb950' : p.status === 'InProgress' ? '#58a6ff' : p.status === 'Paused' ? '#f85149' : '#8b949e';
-    nodes.push({ id, numId: p.id, label: `Ph${p.id}`, text: `${p.name} [impact:${p.impact}]`, type: 'phase', color: statusColor, extra: { impact: p.impact, description: p.description, goals: p.goals } });
+    nodes.push({ id: id, numId: p.id, label: 'Ph' + p.id, text: p.name + ' [impact:' + p.impact + ']', type: 'phase', color: statusColor, extra: { impact: p.impact, description: p.description, goals: p.goals } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
   for (const f of feedback) {
-    const id = `fb-${f.id}`;
-    nodes.push({ id, numId: f.id, label: `Fb${f.id}`, text: f.text ? f.text.substring(0, 200) : '', type: 'feedback', color: TYPE_COLORS.feedback, extra: {} });
+    const id = 'fb-' + f.id;
+    nodes.push({ id: id, numId: f.id, label: 'Fb' + f.id, text: f.text ? f.text.substring(0, 200) : '', type: 'feedback', color: TYPE_COLORS.feedback, extra: {} });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
@@ -720,19 +772,22 @@ async function loadKGLegacy(projectId) {
   for (const edge of edges) {
     const srcP = typePrefix[edge.source_type] || 'x';
     const tgtP = typePrefix[edge.target_type] || 'x';
-    const src = `${srcP}-${edge.source_id}`;
-    const tgt = `${tgtP}-${edge.target_id}`;
+    const src = srcP + '-' + edge.source_id;
+    const tgt = tgtP + '-' + edge.target_id;
     if (nodeMap[src] && nodeMap[tgt]) {
       const rel = edge.relation;
       const color = rel === 'Contradicts' ? '#f85149' : rel === 'Supports' ? '#3fb950' : rel === 'Informed' ? '#e8883a' : rel === 'Supersedes' ? '#a371f7' : rel === 'DependsOn' ? '#79c0ff' : '#30363d';
-      links.push({ source: src, target: tgt, relation: rel, color });
+      links.push({ source: src, target: tgt, relation: rel, color: color });
     }
   }
 
-  renderForceGraph(nodes, links, nodeMap, [], {});
+  renderForceGraph(nodes, links, nodeMap, [], {}, {}, {});
 }
 
-function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap) {
+function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap, subprojectDepthMap, subprojectParentMap) {
+  subprojectDepthMap = subprojectDepthMap || {};
+  subprojectParentMap = subprojectParentMap || {};
+
   const container = document.getElementById('graph-container');
   container.innerHTML = '';
   const W = container.offsetWidth;
@@ -748,7 +803,7 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
   };
   for (const [rel, col] of Object.entries(arrowColors)) {
     defs.append('marker')
-      .attr('id', `arrow-${rel}`)
+      .attr('id', 'arrow-' + rel)
       .attr('viewBox', '0 0 8 5')
       .attr('refX', 12).attr('refY', 2.5)
       .attr('markerWidth', 4).attr('markerHeight', 3)
@@ -762,7 +817,7 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
   svg.append('rect').attr('width', W).attr('height', H).attr('fill', '#0d1117');
   const g = svg.append('g');
 
-  const zoom = d3.zoom().scaleExtent([0.1, 10]).on('zoom', e => g.attr('transform', e.transform));
+  const zoom = d3.zoom().scaleExtent([0.1, 10]).on('zoom', function(e) { g.attr('transform', e.transform); });
   svg.call(zoom).on('dblclick.zoom', null);
 
   const edgeStyle = {
@@ -780,17 +835,34 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
     'structural':  { width: 0.3, opacity: 0.08, dash: '', arrow: false },
   };
 
-  const simNodes = nodes.map(n => ({...n}));
-  const simLinks = links.map(l => ({source: l.source, target: l.target, relation: l.relation, color: l.color}));
+  const simNodes = nodes.map(function(n) { return Object.assign({}, n); });
+  const simLinks = links.map(function(l) { return {source: l.source, target: l.target, relation: l.relation, color: l.color}; });
+
+  // Group subproject nodes for force clustering
+  if (subprojects && subprojects.length > 0) {
+    // Assign cluster centers to encourage grouping
+    const clusterAngle = (2 * Math.PI) / Math.max(subprojects.length, 1);
+    const clusterRadius = Math.min(W, H) * 0.25;
+    subprojects.forEach(function(sp, i) {
+      const cx = W / 2 + clusterRadius * Math.cos(clusterAngle * i);
+      const cy = H / 2 + clusterRadius * Math.sin(clusterAngle * i);
+      simNodes.forEach(function(n) {
+        if (n.subproject_id === sp.id) {
+          n.clusterX = cx;
+          n.clusterY = cy;
+        }
+      });
+    });
+  }
 
   const simulation = d3.forceSimulation(simNodes)
-    .force('link', d3.forceLink(simLinks).id(d => d.id).distance(d => {
+    .force('link', d3.forceLink(simLinks).id(function(d) { return d.id; }).distance(function(d) {
       if (d.relation === 'structural') return 25;
       return 50;
     }).strength(0.8))
     .force('charge', d3.forceManyBody().strength(-120).distanceMax(300))
     .force('center', d3.forceCenter(W / 2, H / 2))
-    .force('collision', d3.forceCollide().radius(d => {
+    .force('collision', d3.forceCollide().radius(function(d) {
       if (d.type === 'phase') return 25;
       if (d.type === 'finding') return 6;
       return 12;
@@ -798,27 +870,39 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
     .force('x', d3.forceX(W / 2).strength(0.03))
     .force('y', d3.forceY(H / 2).strength(0.03));
 
-  // Subproject hull layer (drawn below links and nodes)
+  // Add clustering force for subproject grouping
+  if (subprojects && subprojects.length > 0) {
+    simulation.force('cluster', function(alpha) {
+      simNodes.forEach(function(d) {
+        if (d.clusterX !== undefined) {
+          d.vx += (d.clusterX - d.x) * alpha * 0.08;
+          d.vy += (d.clusterY - d.y) * alpha * 0.08;
+        }
+      });
+    });
+  }
+
+  // Hull layer (below links and nodes)
   const hullG = g.append('g').attr('class', 'hulls');
 
   const linkG = g.append('g').attr('class', 'links');
   const linkEls = linkG.selectAll('line').data(simLinks).enter().append('line')
-    .attr('stroke', d => d.color || '#30363d')
-    .attr('stroke-width', d => (edgeStyle[d.relation] || edgeStyle['structural']).width)
-    .attr('stroke-opacity', d => (edgeStyle[d.relation] || edgeStyle['structural']).opacity)
-    .attr('stroke-dasharray', d => (edgeStyle[d.relation] || edgeStyle['structural']).dash || null)
-    .attr('marker-end', d => {
+    .attr('stroke', function(d) { return d.color || '#30363d'; })
+    .attr('stroke-width', function(d) { return (edgeStyle[d.relation] || edgeStyle['structural']).width; })
+    .attr('stroke-opacity', function(d) { return (edgeStyle[d.relation] || edgeStyle['structural']).opacity; })
+    .attr('stroke-dasharray', function(d) { return (edgeStyle[d.relation] || edgeStyle['structural']).dash || null; })
+    .attr('marker-end', function(d) {
       const s = edgeStyle[d.relation] || edgeStyle['structural'];
-      return s.arrow ? `url(#arrow-${d.relation})` : null;
+      return s.arrow ? 'url(#arrow-' + d.relation + ')' : null;
     });
 
   const nodeG = g.append('g').attr('class', 'nodes');
   const nodeEls = nodeG.selectAll('g').data(simNodes).enter().append('g')
     .style('cursor', 'pointer')
     .call(d3.drag()
-      .on('start', (ev, d) => { if (!ev.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-      .on('drag', (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
-      .on('end', (ev, d) => { if (!ev.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+      .on('start', function(ev, d) { if (!ev.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', function(ev, d) { d.fx = ev.x; d.fy = ev.y; })
+      .on('end', function(ev, d) { if (!ev.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
     );
 
   nodeEls.each(function(d) {
@@ -839,7 +923,7 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
   function showTooltipForNode(d, ev) {
     tooltip.querySelector('.tt-type').textContent = d.type.toUpperCase();
     tooltip.querySelector('.tt-type').style.color = d.color;
-    tooltip.querySelector('.tt-title').textContent = `#${d.numId}: ${d.label}`;
+    tooltip.querySelector('.tt-title').textContent = '#' + d.numId + ': ' + d.label;
     let html = buildTooltipHtml(d);
     if (d.type === 'phase') {
       html += buildPhaseRollup(d);
@@ -852,7 +936,7 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
 
   function highlightEdgesForNode(d) {
     linkEls.attr('stroke-opacity', 0.03);
-    linkEls.filter(l => l.source.id === d.id || l.target.id === d.id)
+    linkEls.filter(function(l) { return l.source.id === d.id || l.target.id === d.id; })
       .attr('stroke-opacity', 0.8).attr('stroke-width', 2);
   }
 
@@ -865,7 +949,6 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
 
   function hideTooltip() { tooltip.style.display = 'none'; }
 
-  // Phase recursive highlight state
   let phaseHighlightActive = false;
 
   function clearPhaseHighlight() {
@@ -876,42 +959,34 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
 
   function highlightPhaseRecursive(phaseNode) {
     phaseHighlightActive = true;
-    const phaseId = phaseNode.id; // e.g. "p-5"
-
-    // Collect all related node IDs via multi-hop traversal
+    const phaseId = phaseNode.id;
     const relatedNodeIds = new Set();
     relatedNodeIds.add(phaseId);
 
-    // Level 1: Direct connections (Phase --Contains/DependsOn/etc--> X)
-    simLinks.forEach(l => {
+    simLinks.forEach(function(l) {
       const srcId = typeof l.source === 'object' ? l.source.id : l.source;
       const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
       if (srcId === phaseId) relatedNodeIds.add(tgtId);
       if (tgtId === phaseId) relatedNodeIds.add(srcId);
     });
 
-    // Level 2: Children of children
     const level1Ids = new Set(relatedNodeIds);
-    simLinks.forEach(l => {
+    simLinks.forEach(function(l) {
       const srcId = typeof l.source === 'object' ? l.source.id : l.source;
       const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
       if (level1Ids.has(srcId)) relatedNodeIds.add(tgtId);
       if (level1Ids.has(tgtId)) relatedNodeIds.add(srcId);
     });
 
-    // Level 3: One more hop
     const level2Ids = new Set(relatedNodeIds);
-    simLinks.forEach(l => {
+    simLinks.forEach(function(l) {
       const srcId = typeof l.source === 'object' ? l.source.id : l.source;
       const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
       if (level2Ids.has(srcId)) relatedNodeIds.add(tgtId);
       if (level2Ids.has(tgtId)) relatedNodeIds.add(srcId);
     });
 
-    // Dim non-related nodes
-    nodeEls.style('opacity', d => relatedNodeIds.has(d.id) ? 1.0 : 0.15);
-
-    // Highlight edges between related nodes, dim others
+    nodeEls.style('opacity', function(d) { return relatedNodeIds.has(d.id) ? 1.0 : 0.15; });
     linkEls.each(function(l) {
       const srcId = typeof l.source === 'object' ? l.source.id : l.source;
       const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
@@ -924,32 +999,30 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
 
   function buildPhaseRollup(phaseNode) {
     const phaseId = phaseNode.id;
-    // Gather direct + 2-hop children
     const childIds = new Set();
-    simLinks.forEach(l => {
+    simLinks.forEach(function(l) {
       const srcId = typeof l.source === 'object' ? l.source.id : l.source;
       const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
       if (srcId === phaseId) childIds.add(tgtId);
       if (tgtId === phaseId) childIds.add(srcId);
     });
     const level1 = new Set(childIds);
-    simLinks.forEach(l => {
+    simLinks.forEach(function(l) {
       const srcId = typeof l.source === 'object' ? l.source.id : l.source;
       const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
       if (level1.has(srcId)) childIds.add(tgtId);
       if (level1.has(tgtId)) childIds.add(srcId);
     });
     const level2 = new Set(childIds);
-    simLinks.forEach(l => {
+    simLinks.forEach(function(l) {
       const srcId = typeof l.source === 'object' ? l.source.id : l.source;
       const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
       if (level2.has(srcId)) childIds.add(tgtId);
       if (level2.has(tgtId)) childIds.add(srcId);
     });
 
-    // Count by type and status
     const counts = { experiment: {}, finding: 0, hypothesis: 0, decision: 0, research: 0, literature: 0, principle: 0, constraint: 0 };
-    simNodes.forEach(n => {
+    simNodes.forEach(function(n) {
       if (!childIds.has(n.id) || n.id === phaseId) return;
       if (n.type === 'experiment') {
         const st = n.status || 'Pending';
@@ -962,7 +1035,7 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
     let html = '<div style="margin-top:6px;border-top:1px solid #30363d;padding-top:6px"><span class="tt-field-label">Phase Rollup:</span>';
     const expEntries = Object.entries(counts.experiment);
     if (expEntries.length > 0) {
-      const expParts = expEntries.map(([st, c]) => c + ' ' + st).join(', ');
+      const expParts = expEntries.map(function(e) { return e[1] + ' ' + e[0]; }).join(', ');
       html += '<div class="tt-field"><span class="tt-field-value">Experiments: ' + expParts + '</span></div>';
     }
     if (counts.finding > 0) html += '<div class="tt-field"><span class="tt-field-value">Findings: ' + counts.finding + '</span></div>';
@@ -1025,15 +1098,14 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
       showTooltipForNode(d, ev);
       highlightEdgesForNode(d);
       d3.select(this).select('.node-shape').attr('stroke', '#fff').attr('stroke-width', 2);
-      // Dim non-connected nodes on hover
       const connectedIds = new Set([d.id]);
-      simLinks.forEach(l => {
+      simLinks.forEach(function(l) {
         const srcId = typeof l.source === 'object' ? l.source.id : l.source;
         const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
         if (srcId === d.id) connectedIds.add(tgtId);
         if (tgtId === d.id) connectedIds.add(srcId);
       });
-      nodeEls.style('opacity', n => connectedIds.has(n.id) ? 1.0 : 0.25);
+      nodeEls.style('opacity', function(n) { return connectedIds.has(n.id) ? 1.0 : 0.25; });
     })
     .on('mouseleave', function(ev, d) {
       if (pinnedNode) return;
@@ -1048,73 +1120,142 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
       tooltip.style.top = (ev.clientY - 8) + 'px';
     });
 
-  // Update hull positions on each tick
+  // --- Nested convex hulls ---
+  // Build parent-child relationship for subprojects to determine rendering order
+  // Deeper hulls should render on top of shallower ones
+  function getDescendantSubprojectIds(parentSpId) {
+    const descendants = [];
+    for (const sp of subprojects) {
+      if (sp.parent_subproject_id === parentSpId) {
+        descendants.push(sp.id);
+        descendants.push.apply(descendants, getDescendantSubprojectIds(sp.id));
+      }
+    }
+    return descendants;
+  }
+
+  function getNodesForSubproject(spId, includeDescendants) {
+    // Get nodes directly belonging to this subproject
+    const directNodes = simNodes.filter(function(n) { return n.subproject_id === spId; });
+    if (!includeDescendants) return directNodes;
+    // Also include nodes from all descendant subprojects (for outer hull)
+    const descendantIds = getDescendantSubprojectIds(spId);
+    const allNodes = simNodes.filter(function(n) {
+      return n.subproject_id === spId || descendantIds.indexOf(n.subproject_id) >= 0;
+    });
+    return allNodes;
+  }
+
   function updateHulls() {
     hullG.selectAll('*').remove();
     if (!subprojects || subprojects.length === 0) return;
 
-    for (const sp of subprojects) {
-      const spNodes = simNodes.filter(n => n.subproject_id === sp.id);
-      if (spNodes.length < 2) continue;
+    // Sort subprojects: draw deeper (child) hulls after shallower (parent) hulls
+    // so children render on top
+    const sortedSps = subprojects.slice().sort(function(a, b) {
+      return (a.depth || 0) - (b.depth || 0);
+    });
 
-      const points = spNodes.map(n => [n.x, n.y]);
-      // Add padding points for convex hull
+    for (const sp of sortedSps) {
+      const depth = sp.depth !== undefined ? sp.depth : (subprojectDepthMap[sp.id] || 0);
+      const hasChildSubprojects = subprojects.some(function(s) { return s.parent_subproject_id === sp.id; });
+
+      // For parent subprojects, include descendant nodes in the hull
+      const spNodes = hasChildSubprojects ? getNodesForSubproject(sp.id, true) : getNodesForSubproject(sp.id, false);
+      if (spNodes.length < 2) {
+        // Still draw a label for single-node subprojects
+        if (spNodes.length === 1) {
+          const n = spNodes[0];
+          const color = subprojectColorMap[sp.id] || '#30363d';
+          hullG.append('text')
+            .attr('class', 'subproject-label')
+            .attr('x', n.x).attr('y', n.y - 20)
+            .attr('text-anchor', 'middle')
+            .attr('fill', color)
+            .attr('fill-opacity', 0.5)
+            .text(sp.alias || sp.name);
+        }
+        continue;
+      }
+
+      const points = spNodes.map(function(n) { return [n.x, n.y]; });
+      // Padding varies by depth: deeper = smaller padding
+      const pad = Math.max(20, 35 - depth * 8);
       const padded = [];
-      const pad = 30;
-      for (const [x, y] of points) {
-        padded.push([x - pad, y - pad]);
-        padded.push([x + pad, y - pad]);
-        padded.push([x + pad, y + pad]);
-        padded.push([x - pad, y + pad]);
+      for (const pt of points) {
+        padded.push([pt[0] - pad, pt[1] - pad]);
+        padded.push([pt[0] + pad, pt[1] - pad]);
+        padded.push([pt[0] + pad, pt[1] + pad]);
+        padded.push([pt[0] - pad, pt[1] + pad]);
       }
       const hull = d3.polygonHull(padded);
       if (!hull) continue;
 
       const color = subprojectColorMap[sp.id] || '#30363d';
+      // Fill opacity decreases with depth for visual nesting clarity
+      const fillOpacity = Math.max(0.03, 0.08 - depth * 0.02);
+      // Stroke opacity and width also adjust
+      const strokeOpacity = Math.max(0.15, 0.3 - depth * 0.08);
+      const strokeWidth = Math.max(0.5, 1.5 - depth * 0.3);
+      // Dashed border for nested (depth > 0) hulls
+      const strokeDash = depth > 0 ? '4,3' : '';
+
+      // Smooth hull path using cardinal curve
+      const hullPath = 'M' + hull.map(function(p) { return p[0] + ',' + p[1]; }).join('L') + 'Z';
 
       hullG.append('path')
         .attr('class', 'subproject-hull')
-        .attr('d', `M${hull.join('L')}Z`)
+        .attr('d', hullPath)
         .attr('fill', color)
-        .attr('fill-opacity', 0.07)
+        .attr('fill-opacity', fillOpacity)
         .attr('stroke', color)
-        .attr('stroke-opacity', 0.2)
-        .attr('stroke-width', 1)
-        .on('click', function(ev) {
-          ev.stopPropagation();
-          if (activeSubprojectFilter === sp.id) {
-            activeSubprojectFilter = null;
-            nodeEls.style('opacity', 1);
-            linkEls.style('opacity', 1);
-          } else {
-            activeSubprojectFilter = sp.id;
-            nodeEls.style('opacity', d => d.subproject_id === sp.id ? 1 : 0.15);
-            linkEls.style('opacity', l => {
-              const sId = typeof l.source === 'object' ? l.source.subproject_id : null;
-              const tId = typeof l.target === 'object' ? l.target.subproject_id : null;
-              return (sId === sp.id || tId === sp.id) ? 1 : 0.05;
-            });
-          }
-        });
+        .attr('stroke-opacity', strokeOpacity)
+        .attr('stroke-width', strokeWidth)
+        .attr('stroke-dasharray', strokeDash || null)
+        .on('click', (function(spId) {
+          return function(ev) {
+            ev.stopPropagation();
+            if (activeSubprojectFilter === spId) {
+              activeSubprojectFilter = null;
+              nodeEls.style('opacity', 1);
+              linkEls.style('opacity', 1);
+            } else {
+              activeSubprojectFilter = spId;
+              // Include descendant subproject nodes when filtering
+              const descIds = getDescendantSubprojectIds(spId);
+              const filterIds = [spId].concat(descIds);
+              nodeEls.style('opacity', function(d) {
+                return filterIds.indexOf(d.subproject_id) >= 0 ? 1 : 0.15;
+              });
+              linkEls.style('opacity', function(l) {
+                const sId = typeof l.source === 'object' ? l.source.subproject_id : null;
+                const tId = typeof l.target === 'object' ? l.target.subproject_id : null;
+                return (filterIds.indexOf(sId) >= 0 || filterIds.indexOf(tId) >= 0) ? 1 : 0.05;
+              });
+            }
+          };
+        })(sp.id));
 
-      // Label at centroid
-      const cx = d3.mean(spNodes, n => n.x);
-      const cy = d3.min(spNodes, n => n.y) - pad - 5;
+      // Label at top of hull
+      const cx = d3.mean(spNodes, function(n) { return n.x; });
+      const cy = d3.min(spNodes, function(n) { return n.y; }) - pad - 4;
+      const fontSize = Math.max(8, 11 - depth * 1.5);
       hullG.append('text')
         .attr('class', 'subproject-label')
         .attr('x', cx).attr('y', cy)
         .attr('text-anchor', 'middle')
         .attr('fill', color)
-        .attr('fill-opacity', 0.5)
+        .attr('fill-opacity', Math.max(0.3, 0.6 - depth * 0.15))
+        .attr('font-size', fontSize + 'px')
         .text(sp.alias || sp.name);
     }
   }
 
-  simulation.on('tick', () => {
+  simulation.on('tick', function() {
     linkEls
-      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
-      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-    nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+      .attr('x1', function(d) { return d.source.x; }).attr('y1', function(d) { return d.source.y; })
+      .attr('x2', function(d) { return d.target.x; }).attr('y2', function(d) { return d.target.y; });
+    nodeEls.attr('transform', function(d) { return 'translate(' + d.x + ',' + d.y + ')'; });
     updateHulls();
   });
 
@@ -1122,18 +1263,18 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
   for (let i = 0; i < 300; i++) simulation.tick();
   simulation.alpha(0.01);
   linkEls
-    .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
-    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-  nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+    .attr('x1', function(d) { return d.source.x; }).attr('y1', function(d) { return d.source.y; })
+    .attr('x2', function(d) { return d.target.x; }).attr('y2', function(d) { return d.target.y; });
+  nodeEls.attr('transform', function(d) { return 'translate(' + d.x + ',' + d.y + ')'; });
   updateHulls();
 
-  const allX = simNodes.map(n => n.x);
-  const allY = simNodes.map(n => n.y);
+  const allX = simNodes.map(function(n) { return n.x; });
+  const allY = simNodes.map(function(n) { return n.y; });
   if (allX.length > 1) {
-    const minX = Math.min(...allX) - 60;
-    const maxX = Math.max(...allX) + 60;
-    const minY = Math.min(...allY) - 60;
-    const maxY = Math.max(...allY) + 60;
+    const minX = Math.min.apply(null, allX) - 60;
+    const maxX = Math.max.apply(null, allX) + 60;
+    const minY = Math.min.apply(null, allY) - 60;
+    const maxY = Math.max.apply(null, allY) + 60;
     const bw = maxX - minX;
     const bh = maxY - minY;
     const scale = Math.min(W / bw, H / bh, 3) * 0.85;
@@ -1144,14 +1285,14 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
 }
 
 async function loadDAG(projectId) {
-  const phases = await fetch(`/api/projects/${projectId}/phases`).then(r => r.json());
+  const phases = await fetch('/api/projects/' + projectId + '/phases').then(function(r) { return r.json(); });
   const container = document.getElementById('graph-container');
   container.innerHTML = '';
   const W = container.offsetWidth;
   const H = container.offsetHeight;
 
   const pMap = {};
-  phases.forEach(p => { pMap[p.id] = p; p.layer = 0; });
+  phases.forEach(function(p) { pMap[p.id] = p; p.layer = 0; });
   let changed = true;
   while (changed) {
     changed = false;
@@ -1166,7 +1307,7 @@ async function loadDAG(projectId) {
   }
 
   const layerGroups = {};
-  phases.forEach(p => {
+  phases.forEach(function(p) {
     if (!layerGroups[p.layer]) layerGroups[p.layer] = [];
     layerGroups[p.layer].push(p);
   });
@@ -1174,7 +1315,7 @@ async function loadDAG(projectId) {
   const layerSpacing = 160;
   const nodeSpacing = 70;
 
-  phases.forEach(p => {
+  phases.forEach(function(p) {
     const group = layerGroups[p.layer];
     const idx = group.indexOf(p);
     p.x = 80 + p.layer * layerSpacing;
@@ -1184,7 +1325,7 @@ async function loadDAG(projectId) {
   const svg = d3.select(container).append('svg').attr('width', W).attr('height', H);
   svg.append('rect').attr('width', W).attr('height', H).attr('fill', '#0d1117');
   const gMain = svg.append('g');
-  const zoom = d3.zoom().scaleExtent([0.2, 5]).on('zoom', e => gMain.attr('transform', e.transform));
+  const zoom = d3.zoom().scaleExtent([0.2, 5]).on('zoom', function(e) { gMain.attr('transform', e.transform); });
   svg.call(zoom).on('dblclick.zoom', null);
 
   const defs = svg.append('defs');
@@ -1203,7 +1344,7 @@ async function loadDAG(projectId) {
       const src = pMap[dep];
       if (!src) continue;
       gMain.append('path')
-        .attr('d', `M${src.x + 30},${src.y} C${(src.x + p.x) / 2},${src.y} ${(src.x + p.x) / 2},${p.y} ${p.x - 30},${p.y}`)
+        .attr('d', 'M' + (src.x + 30) + ',' + src.y + ' C' + ((src.x + p.x) / 2) + ',' + src.y + ' ' + ((src.x + p.x) / 2) + ',' + p.y + ' ' + (p.x - 30) + ',' + p.y)
         .attr('fill', 'none')
         .attr('stroke', '#30363d')
         .attr('stroke-width', 0.8)
@@ -1214,23 +1355,23 @@ async function loadDAG(projectId) {
 
   for (const p of phases) {
     const color = p.status === 'Complete' ? '#3fb950' : p.status === 'InProgress' ? '#58a6ff' : p.status === 'Paused' ? '#f85149' : '#8b949e';
-    const ng = gMain.append('g').attr('transform', `translate(${p.x}, ${p.y})`)
+    const ng = gMain.append('g').attr('transform', 'translate(' + p.x + ', ' + p.y + ')')
       .style('cursor', 'pointer')
       .on('mouseenter', function(ev) {
         tooltip.querySelector('.tt-type').textContent = 'PHASE';
         tooltip.querySelector('.tt-type').style.color = color;
-        tooltip.querySelector('.tt-title').textContent = `#${p.id}: ${p.name}`;
+        tooltip.querySelector('.tt-title').textContent = '#' + p.id + ': ' + p.name;
         tooltip.querySelector('.tt-body').innerHTML = miniMarkdown(
-          `**Impact:** ${p.impact}\n**Status:** ${p.status}\n` +
-          (p.description ? `\n${p.description}` : '') +
-          (p.goals ? `\n**Goals:** ${p.goals}` : '')
+          '**Impact:** ' + p.impact + '\n**Status:** ' + p.status +
+          (p.description ? '\n' + p.description : '') +
+          (p.goals ? '\n**Goals:** ' + p.goals : '')
         );
         tooltip.style.display = 'block';
         tooltip.style.left = (ev.clientX + 12) + 'px';
         tooltip.style.top = (ev.clientY - 8) + 'px';
       })
-      .on('mouseleave', () => { tooltip.style.display = 'none'; })
-      .on('mousemove', (ev) => {
+      .on('mouseleave', function() { tooltip.style.display = 'none'; })
+      .on('mousemove', function(ev) {
         tooltip.style.left = (ev.clientX + 12) + 'px';
         tooltip.style.top = (ev.clientY - 8) + 'px';
       });
@@ -1246,7 +1387,7 @@ async function loadDAG(projectId) {
       .attr('fill', '#0d1117')
       .attr('font-size', '9px')
       .attr('font-weight', 'bold')
-      .text(`P${p.id}`);
+      .text('P' + p.id);
     ng.append('text')
       .attr('text-anchor', 'middle')
       .attr('y', 22)
@@ -1255,13 +1396,13 @@ async function loadDAG(projectId) {
       .text(p.name ? p.name.substring(0, 25) : '');
   }
 
-  const allX = phases.map(p => p.x);
-  const allY = phases.map(p => p.y);
+  const allX = phases.map(function(p) { return p.x; });
+  const allY = phases.map(function(p) { return p.y; });
   if (allX.length) {
-    const minX = Math.min(...allX) - 60;
-    const maxX = Math.max(...allX) + 60;
-    const minY = Math.min(...allY) - 40;
-    const maxY = Math.max(...allY) + 40;
+    const minX = Math.min.apply(null, allX) - 60;
+    const maxX = Math.max.apply(null, allX) + 60;
+    const minY = Math.min.apply(null, allY) - 40;
+    const maxY = Math.max.apply(null, allY) + 40;
     const bw = maxX - minX;
     const bh = maxY - minY;
     const scale = Math.min(W / bw, H / bh, 3) * 0.85;
@@ -1271,10 +1412,10 @@ async function loadDAG(projectId) {
   }
 }
 
-window.addEventListener('resize', () => {
+window.addEventListener('resize', function() {
   if (currentProject) {
-    const item = document.querySelector('.project-item.selected');
-    const projData = allProjectsData.find(p => p.id === currentProject);
+    const item = document.querySelector('.tree-node.selected');
+    const projData = allProjectsData.find(function(p) { return p.id === currentProject; });
     const hasSubs = projData && projData.children && projData.children.length > 0;
     selectProject(currentProject, item, hasSubs);
   }

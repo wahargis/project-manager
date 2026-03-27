@@ -74,6 +74,8 @@ struct SubprojectInfo {
     id: i64,
     name: String,
     alias: Option<String>,
+    depth: usize,
+    parent_subproject_id: Option<i64>,
 }
 
 fn collect_kg_nodes(store: &SqliteStore, project_id: i64, subproject_id: Option<i64>, nodes: &mut Vec<KgNode>) {
@@ -249,6 +251,24 @@ fn collect_kg_nodes(store: &SqliteStore, project_id: i64, subproject_id: Option<
     }
 }
 
+
+fn collect_subproject_tree(store: &SqliteStore, project_id: i64, depth: usize, parent_sub_id: Option<i64>, subprojects: &mut Vec<SubprojectInfo>, nodes: &mut Vec<KgNode>) {
+    if let Ok(subs) = store.list_subprojects(project_id) {
+        for sub in &subs {
+            subprojects.push(SubprojectInfo {
+                id: sub.id,
+                name: sub.name.clone(),
+                alias: sub.alias.clone(),
+                depth,
+                parent_subproject_id: parent_sub_id,
+            });
+            collect_kg_nodes(store, sub.id, Some(sub.id), nodes);
+            // Recurse into grandchildren
+            collect_subproject_tree(store, sub.id, depth + 1, Some(sub.id), subprojects, nodes);
+        }
+    }
+}
+
 pub async fn serve(db_path: &str, port: u16) {
     let db = Arc::new(db_path.to_string());
 
@@ -276,12 +296,8 @@ pub async fn serve(db_path: &str, port: u16) {
 
             collect_kg_nodes(&store, project_id, None, &mut nodes);
 
-            if let Ok(subs) = store.list_subprojects(project_id) {
-                for sub in &subs {
-                    subprojects.push(SubprojectInfo { id: sub.id, name: sub.name.clone(), alias: sub.alias.clone() });
-                    collect_kg_nodes(&store, sub.id, Some(sub.id), &mut nodes);
-                }
-            }
+            // Recursively collect all descendant subprojects and their nodes
+            collect_subproject_tree(&store, project_id, 0, None, &mut subprojects, &mut nodes);
 
             let edges = store.list_all_edges().unwrap_or_default();
             let response = KgResponse { nodes, edges, subprojects };
