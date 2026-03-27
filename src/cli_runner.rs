@@ -124,8 +124,22 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         "inconclusive" => ExperimentStatus::Inconclusive,
                         _ => ExperimentStatus::Pending,
                     };
-                    store.update_experiment_status(id, es, result.as_deref())?;
+                    store.update_experiment_status(id, es.clone(), result.as_deref())?;
                     println!("Experiment #{} updated: status={}", id, status);
+
+                    // Auto-resolve linked hypotheses
+                    if es == ExperimentStatus::Pass || es == ExperimentStatus::Fail {
+                        if let Ok(hyps) = store.list_hypotheses(None) {
+                            for h in &hyps {
+                                if h.experiment_id == Some(id) && h.status != HypothesisStatus::Confirmed && h.status != HypothesisStatus::Refuted {
+                                    let new_status = if es == ExperimentStatus::Pass { HypothesisStatus::Confirmed } else { HypothesisStatus::Refuted };
+                                    let label = if es == ExperimentStatus::Pass { "confirmed" } else { "refuted" };
+                                    store.update_hypothesis(h.id, new_status, Some(id), None).ok();
+                                    println!("  -> Hypothesis #{} auto-{} by experiment #{}", h.id, label, id);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
