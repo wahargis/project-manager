@@ -124,6 +124,23 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         println!("  #{} [{:?}] {} (phase: {:?})", e.id, e.status, e.name, e.phase_id);
                     }
                 }
+                ExpAction::Get { id } => {
+                    let exp = store.get_experiment(id)?;
+                    println!("Experiment #{}: {} [{:?}]", exp.id, exp.name, exp.status);
+                    if let Some(r) = &exp.result { println!("  Result: {}", r); }
+                    if let Some(n) = &exp.notes { println!("  Notes: {}", n); }
+                    if let Some(pid) = exp.phase_id { println!("  Phase: #{}", pid); }
+                    // Show findings from this experiment
+                    if let Ok(findings) = store.list_findings(Some(exp.id)) {
+                        if !findings.is_empty() {
+                            println!("  Findings ({}): ", findings.len());
+                            for f in &findings {
+                                let trunc = if f.text.len() > 80 { &f.text[..80] } else { &f.text };
+                                println!("    F#{}: {}", f.id, trunc);
+                            }
+                        }
+                    }
+                }
                 ExpAction::Update { id, status, result } => {
                     let es = match status.as_str() {
                         "pass" => ExperimentStatus::Pass,

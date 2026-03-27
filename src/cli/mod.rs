@@ -142,6 +142,7 @@ pub enum PhaseAction {
 pub enum ExpAction {
     Add { name: String, #[arg(long)] phase: Option<i64>, #[arg(long)] status: Option<String>, #[arg(long)] result: Option<String> },
     List { #[arg(long)] phase: Option<i64> },
+    Get { id: i64 },
     Update { id: i64, #[arg(long)] status: String, #[arg(long)] result: Option<String> },
 }
 
