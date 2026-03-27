@@ -621,6 +621,39 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     println!("\n## Contradictions: {}", contradictions.len());
                 }
                 
+
+                // Amdahl check
+                let in_progress: Vec<_> = next.iter().filter(|p| p.status == PhaseStatus::InProgress).collect();
+                let top_pending: Vec<_> = next.iter().filter(|p| p.status == PhaseStatus::Pending).collect();
+                if let Some(active) = in_progress.first() {
+                    if let Some(higher) = top_pending.iter().find(|pp| pp.impact > active.impact) {
+                        println!("\n## AMDAHL WARNING: Active phase #{} [impact:{}] but phase #{} [impact:{}] has higher impact!", active.id, active.impact, higher.id, higher.impact);
+                    }
+                }
+
+                // Literature status
+                let lit_count = store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0);
+                println!("\n## Literature: {} entries tracked", lit_count);
+                if lit_count > 0 { println!("  Check for new relevant papers periodically"); }
+
+                // KG connectivity
+                let all_edges = store.list_all_edges()?;
+                let fids_in_edges: std::collections::HashSet<i64> = all_edges.iter()
+                    .filter_map(|e| if format!("{:?}", e.source_type) == "Finding" { Some(e.source_id) } else if format!("{:?}", e.target_type) == "Finding" { Some(e.target_id) } else { None })
+                    .collect();
+                let disconnected: Vec<_> = findings.iter().filter(|f| !fids_in_edges.contains(&f.id)).collect();
+                if !disconnected.is_empty() {
+                    println!("\n## KG: {} disconnected findings (no edges)", disconnected.len());
+                }
+
+                // Open hypotheses
+                if let Ok(hyps) = store.list_hypotheses(None) {
+                    let proposed: Vec<_> = hyps.iter().filter(|h| h.status == HypothesisStatus::Proposed).collect();
+                    if !proposed.is_empty() {
+                        println!("\n## HYPOTHESES: {} untested", proposed.len());
+                        for h in proposed.iter().take(3) { let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text }; println!("  H#{}: {}", h.id, t); }
+                    }
+                }
                 println!("\n## ACTION: Address any warnings above.");
             } else { eprintln!("Project not found: {}", project); }
         }
