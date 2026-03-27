@@ -140,6 +140,26 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                     input_schema: serde_json::json!({"type": "object", "properties": {}}),
                 },
                 ToolDef {
+                    name: "pm_exp_complete".into(),
+                    description: "Complete an experiment: set status + result + optionally create finding. Returns confirmation.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"experiment_id": {"type": "integer"}, "status": {"type": "string", "description": "pass, fail, or inconclusive"}, "result": {"type": "string", "description": "Result summary"}, "finding": {"type": "string", "description": "Optional finding text to create"}}, "required": ["experiment_id", "status", "result"]}),
+                },
+                ToolDef {
+                    name: "pm_log_finding".into(),
+                    description: "Create a finding for an experiment. Returns finding ID + sibling findings for edge suggestions.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"experiment_id": {"type": "integer"}, "text": {"type": "string"}}, "required": ["experiment_id", "text"]}),
+                },
+                ToolDef {
+                    name: "pm_decision".into(),
+                    description: "Record a decision with rationale. Returns decision ID + recent findings for informed-by edges.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"what": {"type": "string"}, "why": {"type": "string"}, "experiment_id": {"type": "integer"}}, "required": ["what"]}),
+                },
+                ToolDef {
+                    name: "pm_add_edge".into(),
+                    description: "Add a KG edge between two nodes.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"source_type": {"type": "string"}, "source_id": {"type": "integer"}, "target_type": {"type": "string"}, "target_id": {"type": "integer"}, "relation": {"type": "string", "description": "supports, contradicts, depends, informed, supersedes, related, produced, cited"}}, "required": ["source_type", "source_id", "target_type", "target_id", "relation"]}),
+                },
+                ToolDef {
                     name: "pm_stats".into(),
                     description: "KG node and edge counts for a project.".into(),
                     input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}}, "required": ["project"]}),
@@ -174,6 +194,32 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                 "pm_kg_traverse" => { let nt = args.get("node_type").and_then(|v| v.as_str()).unwrap_or("finding"); let nid = args.get("node_id").and_then(|v| v.as_i64()).unwrap_or(1); tool_kg_traverse(&store, nt, nid) }
                 "pm_scaffold" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); let pid = args.get("phase_id").and_then(|v| v.as_i64()).unwrap_or(0); tool_scaffold(&store, p, pid) }
                 "pm_session_init" => { tool_session_init(&store) }
+                "pm_exp_complete" => {
+                    let eid = args.get("experiment_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let status = args.get("status").and_then(|v| v.as_str()).unwrap_or("pass");
+                    let result = args.get("result").and_then(|v| v.as_str()).unwrap_or("");
+                    let finding_text = args.get("finding").and_then(|v| v.as_str());
+                    tool_exp_complete(&store, eid, status, result, finding_text)
+                }
+                "pm_log_finding" => {
+                    let eid = args.get("experiment_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    tool_log_finding(&store, eid, text)
+                }
+                "pm_decision" => {
+                    let what = args.get("what").and_then(|v| v.as_str()).unwrap_or("");
+                    let why = args.get("why").and_then(|v| v.as_str());
+                    let eid = args.get("experiment_id").and_then(|v| v.as_i64());
+                    tool_decision(&store, what, why, eid)
+                }
+                "pm_add_edge" => {
+                    let st = args.get("source_type").and_then(|v| v.as_str()).unwrap_or("finding");
+                    let si = args.get("source_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let tt = args.get("target_type").and_then(|v| v.as_str()).unwrap_or("finding");
+                    let ti = args.get("target_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let rel = args.get("relation").and_then(|v| v.as_str()).unwrap_or("related");
+                    tool_add_edge(&store, st, si, tt, ti, rel)
+                }
                 "pm_stats" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); tool_stats(&store, p) }
                 _ => format!("Unknown tool: {}", tool_name),
             };
@@ -371,5 +417,121 @@ fn tool_session_init(store: &SqliteStore) -> String {
         "No pending tasks in actionable phases.".to_string()
     } else {
         format!("=== Session Init: Actionable DAG Tasks ===\n\n{}\nCreate these as task tracker items and work through them.", out)
+    }
+}
+
+fn tool_exp_complete(store: &SqliteStore, eid: i64, status: &str, result: &str, finding_text: Option<&str>) -> String {
+    let es = match status {
+        "pass" => crate::store::ExperimentStatus::Pass,
+        "fail" => crate::store::ExperimentStatus::Fail,
+        "inconclusive" => crate::store::ExperimentStatus::Inconclusive,
+        _ => crate::store::ExperimentStatus::Pending,
+    };
+    if let Err(e) = store.update_experiment_status(eid, es, Some(result)) {
+        return format!("Error updating experiment: {}", e);
+    }
+    let mut out = format!("Experiment #{} updated: status={}, result set.\n", eid, status);
+    if let Some(text) = finding_text {
+        match store.create_finding(Some(eid), text) {
+            Ok(f) => { out += &format!("Finding #{} created.\n", f.id); }
+            Err(e) => { out += &format!("Error creating finding: {}\n", e); }
+        }
+    }
+    out
+}
+
+fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
+    let exp_id = if eid > 0 { Some(eid) } else { None };
+    match store.create_finding(exp_id, text) {
+        Ok(f) => {
+            let mut out = format!("Finding #{} created", f.id);
+            if text.len() < 200 {
+                out += &format!(" (WARNING: {} chars < 200 minimum for lab report format)", text.len());
+            }
+            out += ".\n";
+            // Show siblings for edge suggestions
+            if let Some(eid) = exp_id {
+                if let Ok(siblings) = store.list_findings(Some(eid)) {
+                    let others: Vec<_> = siblings.iter().filter(|s| s.id != f.id).collect();
+                    if !others.is_empty() {
+                        out += "\nSibling findings (same experiment):\n";
+                        for s in others.iter().take(5) {
+                            let t = if s.text.len() > 60 { &s.text[..60] } else { &s.text };
+                            out += &format!("  F#{}: {}\n", s.id, t);
+                        }
+                        out += &format!("\nSuggest: pm_add_edge source_type=finding source_id={} target_type=finding target_id={} relation=supports\n", f.id, others[0].id);
+                    }
+                }
+            }
+            out
+        }
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
+fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experiment_id: Option<i64>) -> String {
+    match store.create_decision(experiment_id, what, why) {
+        Ok(d) => {
+            let mut out = format!("Decision #{} created: {}\n", d.id, d.what);
+            // Suggest informed-by edges from recent findings
+            if let Ok(findings) = store.list_findings(None) {
+                let recent: Vec<_> = findings.iter().rev().take(5).collect();
+                if !recent.is_empty() {
+                    out += "\nRecent findings (suggest informed-by edges):\n";
+                    for f in &recent {
+                        let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
+                        out += &format!("  F#{}: {}\n", f.id, t);
+                    }
+                    out += &format!("\nSuggest: pm_add_edge source_type=finding source_id={} target_type=decision target_id={} relation=informed\n", recent[0].id, d.id);
+                }
+            }
+            out
+        }
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
+fn tool_add_edge(store: &SqliteStore, st: &str, si: i64, tt: &str, ti: i64, rel: &str) -> String {
+    use crate::store::{NodeType, EdgeType};
+    let source_type = match st {
+        "finding" | "f" => NodeType::Finding,
+        "experiment" | "e" => NodeType::Experiment,
+        "decision" | "d" => NodeType::Decision,
+        "phase" | "p" => NodeType::Phase,
+        "research" | "r" => NodeType::Research,
+        "principle" | "pr" => NodeType::Principle,
+        "hypothesis" | "h" => NodeType::Hypothesis,
+        "constraint" | "co" => NodeType::Constraint,
+        "literature" | "l" => NodeType::Literature,
+        "feedback" | "fb" => NodeType::Feedback,
+        _ => return format!("Unknown source type: {}", st),
+    };
+    let target_type = match tt {
+        "finding" | "f" => NodeType::Finding,
+        "experiment" | "e" => NodeType::Experiment,
+        "decision" | "d" => NodeType::Decision,
+        "phase" | "p" => NodeType::Phase,
+        "research" | "r" => NodeType::Research,
+        "principle" | "pr" => NodeType::Principle,
+        "hypothesis" | "h" => NodeType::Hypothesis,
+        "constraint" | "co" => NodeType::Constraint,
+        "literature" | "l" => NodeType::Literature,
+        "feedback" | "fb" => NodeType::Feedback,
+        _ => return format!("Unknown target type: {}", tt),
+    };
+    let relation = match rel {
+        "supports" => EdgeType::Supports,
+        "contradicts" => EdgeType::Contradicts,
+        "depends" => EdgeType::DependsOn,
+        "informed" => EdgeType::Informed,
+        "supersedes" => EdgeType::Supersedes,
+        "related" => EdgeType::RelatedTo,
+        "produced" => EdgeType::ProducedBy,
+        "cited" => EdgeType::CitedIn,
+        _ => return format!("Unknown relation: {}", rel),
+    };
+    match store.create_edge(source_type, si, target_type, ti, relation) {
+        Ok(e) => format!("Edge #{} added: {:?} #{} --{:?}--> {:?} #{}", e.id, e.source_type, si, e.relation, e.target_type, ti),
+        Err(e) => format!("Error: {}", e),
     }
 }
