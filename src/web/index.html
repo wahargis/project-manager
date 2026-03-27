@@ -90,6 +90,8 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 <script>
 let currentProject = null;
 let currentView = 'kg';
+let pinnedNode = null;
+let pinnedNodeEl = null;
 
 const tooltip = document.getElementById('tooltip');
 
@@ -145,6 +147,9 @@ async function loadProjects() {
 
 async function selectProject(id, card) {
   currentProject = id;
+  pinnedNode = null;
+  pinnedNodeEl = null;
+  tooltip.style.display = 'none';
   document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
   if (card) card.classList.add('selected');
   const container = document.getElementById('graph-container');
@@ -465,31 +470,90 @@ function renderForceGraph(nodes, links, nodeMap) {
     }
   });
 
-  // Tooltip handlers
+  // Helper: show tooltip for a node
+  function showTooltipForNode(d, ev) {
+    tooltip.querySelector('.tt-type').textContent = d.type.toUpperCase();
+    tooltip.querySelector('.tt-type').style.color = d.color;
+    tooltip.querySelector('.tt-title').textContent = `#${d.numId}: ${d.label}`;
+    tooltip.querySelector('.tt-body').innerHTML = miniMarkdown(d.text ? d.text.substring(0, 500) : '');
+    tooltip.style.display = 'block';
+    tooltip.style.left = (ev.clientX + 12) + 'px';
+    tooltip.style.top = (ev.clientY - 8) + 'px';
+  }
+
+  // Helper: highlight edges connected to a node
+  function highlightEdgesForNode(d) {
+    linkEls.attr('stroke-opacity', 0.03);
+    linkEls.filter(l => l.source.id === d.id || l.target.id === d.id)
+      .attr('stroke-opacity', 0.8).attr('stroke-width', 2);
+  }
+
+  // Helper: reset all edge highlighting to defaults
+  function resetEdgeHighlight() {
+    linkEls.each(function(l) {
+      const s = edgeStyle[l.relation] || edgeStyle['structural'];
+      d3.select(this).attr('stroke-opacity', s.opacity).attr('stroke-width', s.width);
+    });
+  }
+
+  // Helper: hide tooltip
+  function hideTooltip() {
+    tooltip.style.display = 'none';
+  }
+
+  // Helper: clear pinned node visual indicator
+  function clearPinnedVisual() {
+    if (pinnedNodeEl) {
+      d3.select(pinnedNodeEl).select('.node-shape').attr('stroke', null).attr('stroke-width', 0);
+      pinnedNodeEl = null;
+    }
+  }
+
+  // Click on SVG background to unpin
+  svg.on('click', function() {
+    if (pinnedNode) {
+      clearPinnedVisual();
+      pinnedNode = null;
+      hideTooltip();
+      resetEdgeHighlight();
+    }
+  });
+
+  // Tooltip + click-to-pin handlers
   nodeEls
+    .on('click', function(ev, d) {
+      ev.stopPropagation();
+      if (pinnedNode === d) {
+        // Clicking pinned node unpins it
+        clearPinnedVisual();
+        pinnedNode = null;
+        hideTooltip();
+        resetEdgeHighlight();
+      } else {
+        // Unpin previous
+        clearPinnedVisual();
+        // Pin new node
+        pinnedNode = d;
+        pinnedNodeEl = this;
+        showTooltipForNode(d, ev);
+        highlightEdgesForNode(d);
+        d3.select(this).select('.node-shape').attr('stroke', '#fbbf24').attr('stroke-width', 2.5);
+      }
+    })
     .on('mouseenter', function(ev, d) {
-      tooltip.querySelector('.tt-type').textContent = d.type.toUpperCase();
-      tooltip.querySelector('.tt-type').style.color = d.color;
-      tooltip.querySelector('.tt-title').textContent = `#${d.numId}: ${d.label}`;
-      tooltip.querySelector('.tt-body').innerHTML = miniMarkdown(d.text ? d.text.substring(0, 500) : '');
-      tooltip.style.display = 'block';
-      tooltip.style.left = (ev.clientX + 12) + 'px';
-      tooltip.style.top = (ev.clientY - 8) + 'px';
-      // Dim all edges, highlight connected
-      linkEls.attr('stroke-opacity', 0.03);
-      linkEls.filter(l => l.source.id === d.id || l.target.id === d.id)
-        .attr('stroke-opacity', 0.8).attr('stroke-width', 2);
+      if (pinnedNode) return; // Don't hover when pinned
+      showTooltipForNode(d, ev);
+      highlightEdgesForNode(d);
       d3.select(this).select('.node-shape').attr('stroke', '#fff').attr('stroke-width', 2);
     })
     .on('mouseleave', function(ev, d) {
-      tooltip.style.display = 'none';
-      linkEls.each(function(l) {
-        const s = edgeStyle[l.relation] || edgeStyle['structural'];
-        d3.select(this).attr('stroke-opacity', s.opacity).attr('stroke-width', s.width);
-      });
+      if (pinnedNode) return; // Don't unhover when pinned
+      hideTooltip();
+      resetEdgeHighlight();
       d3.select(this).select('.node-shape').attr('stroke', null).attr('stroke-width', 0);
     })
     .on('mousemove', function(ev) {
+      if (pinnedNode) return; // Don't move tooltip when pinned
       tooltip.style.left = (ev.clientX + 12) + 'px';
       tooltip.style.top = (ev.clientY - 8) + 'px';
     });
