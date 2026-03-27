@@ -213,3 +213,96 @@ fn tool_next(store: &SqliteStore, project: &str) -> String {
     }
     out
 }
+
+fn tool_review(store: &SqliteStore, project: &str) -> serde_json::Value {
+    let proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
+        Some(p) => p,
+        None => return serde_json::json!({"content": [{"type": "text", "text": format!("Project not found: {}", project)}]}),
+    };
+    let kg = crate::kg::KgEngine::new(store);
+    let mut text = format!("=== Research Review: {} ===\n\n", proj.name);
+    let mut total = 0; let mut pass = 0; let mut fail = 0; let mut pending = 0;
+    if let Ok(phases) = store.list_phases(proj.id) {
+        for phase in &phases {
+            if let Ok(exps) = store.list_experiments(Some(phase.id)) {
+                for exp in &exps {
+                    total += 1;
+                    match exp.status {
+                        crate::store::ExperimentStatus::Pass => pass += 1,
+                        crate::store::ExperimentStatus::Fail => fail += 1,
+                        crate::store::ExperimentStatus::Pending => pending += 1,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    text += &format!("## Experiments: {} total, {} pass, {} fail, {} pending\n", total, pass, fail, pending);
+    let dag = DagEngine::new(store, proj.id);
+    if let Ok(Some(n)) = dag.stagnation_check(3) {
+        text += &format!("\n## STAGNATION: {} consecutive fails\n", n);
+    }
+    if let Ok(next) = dag.next_phases() {
+        text += "\n## Top phases by impact:\n";
+        for p in next.iter().take(3) {
+            text += &format!("  #{} [impact:{}] {:?} {}\n", p.id, p.impact, p.status, p.name);
+        }
+    }
+    let findings = store.list_findings(None).unwrap_or_default();
+    let contradictions = kg.find_contradictions(&findings).unwrap_or_default();
+    if !contradictions.is_empty() {
+        text += &format!("\n## Contradictions: {}\n", contradictions.len());
+    }
+    serde_json::json!({"content": [{"type": "text", "text": text}]})
+}
+
+fn tool_kg_traverse(store: &SqliteStore, nt_str: &str, nid: i64) -> serde_json::Value {
+    use crate::store::NodeType;
+    let nt = match nt_str {
+        "finding" | "f" => NodeType::Finding,
+        "experiment" | "e" => NodeType::Experiment,
+        "decision" | "d" => NodeType::Decision,
+        "phase" | "p" => NodeType::Phase,
+        "research" | "r" => NodeType::Research,
+        "principle" | "pr" => NodeType::Principle,
+        _ => return serde_json::json!({"content": [{"type": "text", "text": format!("Unknown node type: {}", nt_str)}]}),
+    };
+    let kg = crate::kg::KgEngine::new(store);
+    match kg.traverse(nt, nid) {
+        Ok(result) => {
+            let mut text = format!("ROOT: {:?} #{}: {}\n", result.root.node_type, result.root.id, &result.root.label[..result.root.label.len().min(100)]);
+            for (edge, target, incoming) in &result.edges {
+                if *incoming {
+                    text += &format!("  <--{:?}-- {:?} #{}: {}\n", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(80)]);
+                } else {
+                    text += &format!("  --{:?}--> {:?} #{}: {}\n", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(80)]);
+                }
+            }
+            serde_json::json!({"content": [{"type": "text", "text": text}]})
+        }
+        Err(e) => serde_json::json!({"content": [{"type": "text", "text": format!("Error: {}", e)}]}),
+    }
+}
+
+fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> serde_json::Value {
+    let _proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
+        Some(p) => p,
+        None => return serde_json::json!({"content": [{"type": "text", "text": format!("Project not found: {}", project)}]}),
+    };
+    let phase = match store.get_phase(phase_id) {
+        Ok(p) => p,
+        Err(e) => return serde_json::json!({"content": [{"type": "text", "text": format!("Phase not found: {}", e)}]}),
+    };
+    let exps = store.list_experiments(Some(phase_id)).unwrap_or_default();
+    let pending: Vec<_> = exps.iter().filter(|e| e.status == crate::store::ExperimentStatus::Pending).collect();
+    let mut text = format!("=== Phase #{} ({}) — {} pending experiments ===\n\n", phase.id, phase.name, pending.len());
+    for e in &pending {
+        text += &format!("TASK: Exp #{}: {}\n", e.id, e.name);
+        if let Some(notes) = &e.notes {
+            text += &format!("  {}\n", &notes[..notes.len().min(200)]);
+        }
+        text += "\n";
+    }
+    serde_json::json!({"content": [{"type": "text", "text": text}]})
+}
+
