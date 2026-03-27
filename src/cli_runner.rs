@@ -260,6 +260,12 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let proj = resolve_project(&store, &project).ok_or("Project not found")?;
             match action {
                 DecAction::Add { what, why, experiment } => {
+                    use pm::validation;
+                    let v = validation::validate_decision(&what, why.as_deref());
+                    if !v.is_ok() {
+                        eprintln!("Validation error:\n{}", v.to_mcp_error());
+                        return Ok(());
+                    }
                     let d = store.create_decision(experiment, &what, why.as_deref(), None)?;
                     println!("Decision #{} added: {}", d.id, d.what);
                 }
@@ -578,84 +584,9 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Review { project } => {
-            if let Some(proj) = resolve_project(&store, &project) {
-                let dag = DagEngine::new(&store, proj.id);
-                let kg = KgEngine::new(&store);
-                let phases = store.list_phases(proj.id)?;
-                
-                println!("=== Research Review: {} ===\n", proj.name);
-                
-                // Experiment velocity
-                let mut total = 0; let mut pass = 0; let mut fail = 0; let mut pending = 0;
-                for phase in &phases {
-                    for exp in store.list_experiments(Some(phase.id))? {
-                        total += 1;
-                        match exp.status {
-                            ExperimentStatus::Pass => pass += 1,
-                            ExperimentStatus::Fail => fail += 1,
-                            ExperimentStatus::Pending => pending += 1,
-                            _ => {}
-                        }
-                    }
-                }
-                println!("## Experiments: {} total, {} pass, {} fail, {} pending", total, pass, fail, pending);
-                
-                // Stagnation
-                if let Some(n) = dag.stagnation_check(3)? {
-                    println!("\n## STAGNATION: {} consecutive fails — REDIRECT needed", n);
-                } else {
-                    println!("\n## Stagnation: OK");
-                }
-                
-                // Impact
-                let next = dag.next_phases()?;
-                println!("\n## Top phases by impact:");
-                for p in next.iter().take(3) {
-                    println!("  #{} [impact:{}] {:?} {}", p.id, p.impact, p.status, p.name);
-                }
-                
-                // Contradictions
-                let findings = store.list_findings(None)?;
-                let contradictions = kg.find_contradictions(&findings)?;
-                if !contradictions.is_empty() {
-                    println!("\n## Contradictions: {}", contradictions.len());
-                }
-                
-
-                // Amdahl check
-                let in_progress: Vec<_> = next.iter().filter(|p| p.status == PhaseStatus::InProgress).collect();
-                let top_pending: Vec<_> = next.iter().filter(|p| p.status == PhaseStatus::Pending).collect();
-                if let Some(active) = in_progress.first() {
-                    if let Some(higher) = top_pending.iter().find(|pp| pp.impact > active.impact) {
-                        println!("\n## AMDAHL WARNING: Active phase #{} [impact:{}] but phase #{} [impact:{}] has higher impact!", active.id, active.impact, higher.id, higher.impact);
-                    }
-                }
-
-                // Literature status
-                let lit_count = store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0);
-                println!("\n## Literature: {} entries tracked", lit_count);
-                if lit_count > 0 { println!("  Check for new relevant papers periodically"); }
-
-                // KG connectivity
-                let all_edges = store.list_all_edges()?;
-                let fids_in_edges: std::collections::HashSet<i64> = all_edges.iter()
-                    .filter_map(|e| if format!("{:?}", e.source_type) == "Finding" { Some(e.source_id) } else if format!("{:?}", e.target_type) == "Finding" { Some(e.target_id) } else { None })
-                    .collect();
-                let disconnected: Vec<_> = findings.iter().filter(|f| !fids_in_edges.contains(&f.id)).collect();
-                if !disconnected.is_empty() {
-                    println!("\n## KG: {} disconnected findings (no edges)", disconnected.len());
-                }
-
-                // Open hypotheses
-                if let Ok(hyps) = store.list_hypotheses(None) {
-                    let proposed: Vec<_> = hyps.iter().filter(|h| h.status == HypothesisStatus::Proposed).collect();
-                    if !proposed.is_empty() {
-                        println!("\n## HYPOTHESES: {} untested", proposed.len());
-                        for h in proposed.iter().take(3) { let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text }; println!("  H#{}: {}", h.id, t); }
-                    }
-                }
-                println!("\n## ACTION: Address any warnings above.");
-            } else { eprintln!("Project not found: {}", project); }
+            // Delegate to MCP review implementation for orphan detection + constraint expiry
+            let output = pm::mcp::review::tool_review(&store, &project);
+            println!("{}", output);
         }
 
         Commands::Scaffold { project, phase, format } => {
