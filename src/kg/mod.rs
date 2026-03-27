@@ -82,7 +82,7 @@ impl<'a, S: Store> KgEngine<'a, S> {
             visited.insert((format!("{:?}", nt.clone()), nid));
 
             let result = self.traverse(nt, nid)?;
-            for (edge, target, _incoming) in &result.edges {
+            for (_edge, target, _incoming) in &result.edges {
                 if !visited.contains(&(format!("{:?}", target.node_type), target.id)) {
                     queue.push((target.node_type.clone(), target.id, depth + 1));
                 }

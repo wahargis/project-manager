@@ -599,9 +599,11 @@ impl Store for SqliteStore {
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
 
-    fn list_decisions(&self, _project_id: i64) -> Result<Vec<Decision>> {
-        let mut stmt = self.conn.prepare("SELECT id, experiment_id, what, why, created_at FROM decisions ORDER BY id")?;
-        let rows = stmt.query_map([], |row| Ok(Decision {
+    fn list_decisions(&self, project_id: i64) -> Result<Vec<Decision>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT d.id, d.experiment_id, d.what, d.why, d.created_at FROM decisions d              LEFT JOIN experiments e ON d.experiment_id = e.id              LEFT JOIN phases p ON e.phase_id = p.id              WHERE d.experiment_id IS NULL OR p.project_id = ?1              ORDER BY d.id"
+        )?;
+        let rows = stmt.query_map([project_id], |row| Ok(Decision {
             id: row.get(0)?,
             experiment_id: row.get(1)?,
             what: row.get(2)?,

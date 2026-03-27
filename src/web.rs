@@ -102,7 +102,7 @@ pub async fn serve(db_path: &str, port: u16) {
 
     let db_hypotheses = db.clone();
     let hypotheses = warp::path!("api" / "projects" / i64 / "hypotheses")
-        .map(move |project_id: i64| {
+        .map(move |_project_id: i64| {
             let store = SqliteStore::new(&db_hypotheses).unwrap();
             warp::reply::json(&store.list_hypotheses(None).unwrap_or_default())
         });

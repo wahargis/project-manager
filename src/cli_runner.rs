@@ -138,7 +138,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Exp { project, action } => {
-            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            let _proj = resolve_project(&store, &project).ok_or("Project not found")?;
             match action {
                 ExpAction::Add { name, phase, status, result } => {
                     let exp = store.create_experiment(phase, &name)?;
@@ -248,7 +248,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     let results = kg.traverse_deep(NodeType::Finding, id, depth)?;
                     for r in results {
                         println!("  {} #{}: {}", format!("{:?}", r.root.node_type), r.root.id, &r.root.label[..r.root.label.len().min(60)]);
-                        for (edge, target, incoming) in &r.edges {
+                        for (edge, target, _incoming) in &r.edges {
                             println!("    --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(50)]);
                         }
                     }
@@ -293,7 +293,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Research { project, action } => {
-            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            let _proj = resolve_project(&store, &project).ok_or("Project not found")?;
             match action {
                 ResearchAction::Add { name, phase, report } => {
                     let r = store.create_research(phase, &name)?;
@@ -442,7 +442,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Kg { project, action } => {
-            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            let _proj = resolve_project(&store, &project).ok_or("Project not found")?;
             let kg = KgEngine::new(&store);
             match action {
                 KgAction::Map => {
@@ -764,7 +764,7 @@ fn import_v2(store: &SqliteStore, path: &str, name: &str) -> Result<(), Box<dyn 
 fn handoff_text(store: &SqliteStore, project: &str) -> Result<String, Box<dyn std::error::Error>> {
     let proj = resolve_project(store, project).ok_or("Project not found")?;
     let dag = pm::dag::DagEngine::new(store, proj.id);
-    let kg = pm::kg::KgEngine::new(store);
+    let _kg = pm::kg::KgEngine::new(store);
     let phases = store.list_phases(proj.id)?;
     
     let mut out = format!("=== Session Handoff: {} ===\n\n", proj.name);

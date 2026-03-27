@@ -14,6 +14,7 @@ use crate::dag::DagEngine;
 use crate::store::PhaseStatus;
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct JsonRpcRequest {
     jsonrpc: String,
     id: serde_json::Value,
@@ -160,6 +161,31 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                     input_schema: serde_json::json!({"type": "object", "properties": {"source_type": {"type": "string"}, "source_id": {"type": "integer"}, "target_type": {"type": "string"}, "target_id": {"type": "integer"}, "relation": {"type": "string", "description": "supports, contradicts, depends, informed, supersedes, related, produced, cited"}}, "required": ["source_type", "source_id", "target_type", "target_id", "relation"]}),
                 },
                 ToolDef {
+                    name: "pm_hyp_update".into(),
+                    description: "Update hypothesis status. Use for manual resolution of hypotheses after experiments.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"hypothesis_id": {"type": "integer"}, "status": {"type": "string", "description": "proposed, testing, confirmed, or refuted"}, "experiment_id": {"type": "integer", "description": "Experiment that tested this"}, "finding_id": {"type": "integer", "description": "Finding with evidence"}}, "required": ["hypothesis_id", "status"]}),
+                },
+                ToolDef {
+                    name: "pm_lit_add".into(),
+                    description: "Add a literature entry (paper, blog, reference). Returns ID for edge linking.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "title": {"type": "string"}, "arxiv_id": {"type": "string"}, "relevance": {"type": "string"}, "key_findings": {"type": "string"}}, "required": ["project", "title"]}),
+                },
+                ToolDef {
+                    name: "pm_constraint_add".into(),
+                    description: "Add a hard constraint (hardware, budget, correctness requirement).".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "hardware, software, or process"}, "text": {"type": "string"}, "source": {"type": "string", "description": "Where this constraint comes from"}}, "required": ["project", "scope", "text"]}),
+                },
+                ToolDef {
+                    name: "pm_research_complete".into(),
+                    description: "Complete a research/reflection action with a report.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"research_id": {"type": "integer"}, "status": {"type": "string", "description": "complete or abandoned"}, "report": {"type": "string", "description": "Research findings report"}}, "required": ["research_id", "status"]}),
+                },
+                ToolDef {
+                    name: "pm_principle_add".into(),
+                    description: "Add a project-level principle or design guideline.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "universal, project, or phase"}, "text": {"type": "string"}}, "required": ["project", "scope", "text"]}),
+                },
+                ToolDef {
                     name: "pm_stats".into(),
                     description: "KG node and edge counts for a project.".into(),
                     input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}}, "required": ["project"]}),
@@ -219,6 +245,85 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                     let ti = args.get("target_id").and_then(|v| v.as_i64()).unwrap_or(0);
                     let rel = args.get("relation").and_then(|v| v.as_str()).unwrap_or("related");
                     tool_add_edge(&store, st, si, tt, ti, rel)
+                }
+                "pm_hyp_update" => {
+                    let hid = args.get("hypothesis_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let status_str = args.get("status").and_then(|v| v.as_str()).unwrap_or("proposed");
+                    let eid = args.get("experiment_id").and_then(|v| v.as_i64());
+                    let fid = args.get("finding_id").and_then(|v| v.as_i64());
+                    let hs = match status_str {
+                        "confirmed" => crate::store::HypothesisStatus::Confirmed,
+                        "refuted" => crate::store::HypothesisStatus::Refuted,
+                        "testing" => crate::store::HypothesisStatus::Testing,
+                        _ => crate::store::HypothesisStatus::Proposed,
+                    };
+                    match store.update_hypothesis(hid, hs.clone(), eid, fid) {
+                        Ok(_) => format!("Hypothesis #{} updated to {:?}", hid, hs),
+                        Err(e) => format!("Error: {}", e),
+                    }
+                }
+                "pm_lit_add" => {
+                    let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
+                    let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                    let arxiv = args.get("arxiv_id").and_then(|v| v.as_str());
+                    let rel = args.get("relevance").and_then(|v| v.as_str());
+                    let kf = args.get("key_findings").and_then(|v| v.as_str());
+                    match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
+                        Some(proj) => match store.create_literature(proj.id, title, arxiv, rel, kf) {
+                            Ok(l) => format!("Literature #{} added: {}", l.id, l.title),
+                            Err(e) => format!("Error: {}", e),
+                        },
+                        None => format!("Project not found: {}", project),
+                    }
+                }
+                "pm_constraint_add" => {
+                    let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
+                    let scope_str = args.get("scope").and_then(|v| v.as_str()).unwrap_or("hardware");
+                    let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    let source = args.get("source").and_then(|v| v.as_str());
+                    let scope = match scope_str {
+                        "software" => crate::store::ConstraintScope::Software,
+                        "process" => crate::store::ConstraintScope::Process,
+                        // hardware is the default
+                        _ => crate::store::ConstraintScope::Hardware,
+                    };
+                    match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
+                        Some(proj) => match store.create_constraint(proj.id, scope, text, source) {
+                            Ok(con) => format!("Constraint #{} added: {}", con.id, &text[..text.len().min(80)]),
+                            Err(e) => format!("Error: {}", e),
+                        },
+                        None => format!("Project not found: {}", project),
+                    }
+                }
+                "pm_research_complete" => {
+                    let rid = args.get("research_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let status_str = args.get("status").and_then(|v| v.as_str()).unwrap_or("complete");
+                    let report = args.get("report").and_then(|v| v.as_str());
+                    let rs = match status_str {
+                        // no abandoned status, just use Complete
+                        _ => crate::store::ResearchStatus::Complete,
+                    };
+                    match store.update_research(rid, rs.clone(), report) {
+                        Ok(_) => format!("Research #{} updated to {:?}", rid, rs),
+                        Err(e) => format!("Error: {}", e),
+                    }
+                }
+                "pm_principle_add" => {
+                    let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
+                    let scope_str = args.get("scope").and_then(|v| v.as_str()).unwrap_or("methodology");
+                    let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    let scope = match scope_str {
+                        "universal" | "architecture" => crate::store::PrincipleScope::Universal,
+                        "phase" | "process" => crate::store::PrincipleScope::Phase,
+                        _ => crate::store::PrincipleScope::Project,
+                    };
+                    match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
+                        Some(proj) => match store.create_principle(proj.id, scope, text) {
+                            Ok(pr) => format!("Principle #{} added: {}", pr.id, &text[..text.len().min(80)]),
+                            Err(e) => format!("Error: {}", e),
+                        },
+                        None => format!("Project not found: {}", project),
+                    }
                 }
                 "pm_stats" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); tool_stats(&store, p) }
                 _ => format!("Unknown tool: {}", tool_name),
@@ -319,8 +424,20 @@ fn tool_review(store: &SqliteStore, project: &str) -> String {
             text += &format!("  #{} [impact:{}] {:?} {}\n", p.id, p.impact, p.status, p.name);
         }
     }
-    let findings = store.list_findings(None).unwrap_or_default();
-    let contradictions = kg.find_contradictions(&findings).unwrap_or_default();
+    // Collect project-scoped findings through phase→experiment chain
+    let mut project_findings = Vec::new();
+    if let Ok(phases) = store.list_phases(proj.id) {
+        for phase in &phases {
+            if let Ok(exps) = store.list_experiments(Some(phase.id)) {
+                for exp in &exps {
+                    if let Ok(fs) = store.list_findings(Some(exp.id)) {
+                        project_findings.extend(fs);
+                    }
+                }
+            }
+        }
+    }
+    let contradictions = kg.find_contradictions(&project_findings).unwrap_or_default();
     if !contradictions.is_empty() {
         text += &format!("\n## Contradictions: {}\n", contradictions.len());
     }
@@ -329,7 +446,17 @@ fn tool_review(store: &SqliteStore, project: &str) -> String {
     text += &format!("
 Literature: {} entries. Check for new papers.
 ", lit_count);
-    if let Ok(hyps) = store.list_hypotheses(None) {
+    // Collect hypotheses scoped to this project's phases
+    let mut project_hyps = Vec::new();
+    if let Ok(phases) = store.list_phases(proj.id) {
+        for phase in &phases {
+            if let Ok(hs) = store.list_hypotheses(Some(phase.id)) {
+                project_hyps.extend(hs);
+            }
+        }
+    }
+    {
+        let hyps = &project_hyps;
         let proposed: Vec<_> = hyps.iter().filter(|h| h.status == crate::store::HypothesisStatus::Proposed).collect();
         if !proposed.is_empty() {
             text += &format!("
@@ -396,7 +523,44 @@ fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> String {
 }
 
 
-fn tool_stats(store: &SqliteStore, project: &str) -> String { let proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) { Some(p) => p, None => return "Not found".to_string() }; let phases = store.list_phases(proj.id).unwrap_or_default(); let mut ec = 0; let mut fc = 0; for p in &phases { ec += store.list_experiments(Some(p.id)).map(|e| e.len()).unwrap_or(0); for e in store.list_experiments(Some(p.id)).unwrap_or_default() { fc += store.list_findings(Some(e.id)).map(|f| f.len()).unwrap_or(0); } } let t = format!("Phases:{} Exp:{} Find:{} Dec:{} Princ:{} Hyp:{} Con:{} Lit:{} Edges:{}", phases.len(), ec, fc, store.list_decisions(proj.id).map(|d| d.len()).unwrap_or(0), store.list_principles(proj.id).map(|p| p.len()).unwrap_or(0), store.list_hypotheses(None).map(|h| h.len()).unwrap_or(0), store.list_constraints(proj.id).map(|c| c.len()).unwrap_or(0), store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0), store.list_all_edges().map(|e| e.len()).unwrap_or(0)); t }
+fn tool_stats(store: &SqliteStore, project: &str) -> String {
+    let proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
+        Some(p) => p,
+        None => return "Not found".to_string(),
+    };
+    let phases = store.list_phases(proj.id).unwrap_or_default();
+    let mut ec = 0;
+    let mut fc = 0;
+    let mut hc = 0;
+    for p in &phases {
+        ec += store.list_experiments(Some(p.id)).map(|e| e.len()).unwrap_or(0);
+        hc += store.list_hypotheses(Some(p.id)).map(|h| h.len()).unwrap_or(0);
+        for e in store.list_experiments(Some(p.id)).unwrap_or_default() {
+            fc += store.list_findings(Some(e.id)).map(|f| f.len()).unwrap_or(0);
+        }
+    }
+    // Count project-scoped edges (where at least one endpoint belongs to this project)
+    let phase_ids: std::collections::HashSet<i64> = phases.iter().map(|p| p.id).collect();
+    let edge_count = store.list_all_edges().map(|edges| {
+        edges.iter().filter(|e| {
+            // Check if edge involves a phase from this project
+            use crate::store::NodeType;
+            match e.source_type {
+                NodeType::Phase => phase_ids.contains(&e.source_id),
+                _ => true, // For non-phase nodes, we can't easily filter — keep for now
+            }
+        }).count()
+    }).unwrap_or(0);
+    let t = format!("Phases:{} Exp:{} Find:{} Dec:{} Princ:{} Hyp:{} Con:{} Lit:{} Edges:{}",
+        phases.len(), ec, fc,
+        store.list_decisions(proj.id).map(|d| d.len()).unwrap_or(0),
+        store.list_principles(proj.id).map(|p| p.len()).unwrap_or(0),
+        hc,
+        store.list_constraints(proj.id).map(|c| c.len()).unwrap_or(0),
+        store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0),
+        edge_count);
+    t
+}
 
 fn tool_session_init(store: &SqliteStore) -> String {
     let mut out = String::new();
