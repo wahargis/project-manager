@@ -23,10 +23,19 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 .progress-fill { height: 100%; background: #3fb950; border-radius: 2px; }
 #graph-container { flex: 1; position: relative; overflow: hidden; }
 #graph-container svg { width: 100%; height: 100%; display: block; }
-#tooltip { position: fixed; background: #1c2128; border: 1px solid #30363d; border-radius: 8px; padding: 12px; max-width: 420px; font-size: 11px; display: none; z-index: 100; pointer-events: none; }
+#tooltip {
+  position: fixed; background: #1c2128; border: 1px solid #30363d; border-radius: 8px;
+  padding: 12px; max-width: 420px; max-height: 300px; overflow-y: auto;
+  font-size: 11px; display: none; z-index: 100; pointer-events: none;
+}
 #tooltip .tt-type { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
 #tooltip .tt-title { color: #f0f6fc; font-weight: bold; font-size: 13px; margin-bottom: 4px; }
 #tooltip .tt-body { color: #8b949e; line-height: 1.4; }
+#tooltip .tt-body strong { color: #c9d1d9; }
+#tooltip .tt-body em { color: #b0b8c0; font-style: italic; }
+#tooltip .tt-body code { background: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 10px; color: #79c0ff; }
+#tooltip .tt-body ul { margin: 4px 0 4px 16px; }
+#tooltip .tt-body li { margin: 2px 0; }
 .legend { position: absolute; bottom: 16px; right: 16px; background: #161b22ee; border: 1px solid #30363d; border-radius: 8px; padding: 12px; font-size: 10px; z-index: 5; }
 .legend-item { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
@@ -52,22 +61,21 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 </div>
 <div id="tooltip"><div class="tt-type"></div><div class="tt-title"></div><div class="tt-body"></div></div>
 <div class="legend" id="legend-kg">
-  <div style="font-weight:bold;margin-bottom:4px;color:#8b949e">BACKBONE</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div>Experiment</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#d29922;border-radius:0;transform:rotate(45deg);width:8px;height:8px"></div>Decision</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#2dd4bf"></div>Research</div>
-  <div style="font-weight:bold;margin:6px 0 4px;color:#8b949e">KNOWLEDGE</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#58a6ff"></div>Finding</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#fbbf24"></div>Principle</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#c084fc"></div>Hypothesis</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#93c5fd;border-radius:2px"></div>Literature</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#9ca3af"></div>Constraint</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#8b949e;border-radius:2px"></div>Phase</div>
+  <div style="font-weight:bold;margin-bottom:4px;color:#8b949e">NODE TYPES</div>
+  <div class="legend-item"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="#3fb950"/></svg>Experiment</div>
+  <div class="legend-item"><svg width="12" height="12"><polygon points="6,1 11,6 6,11 1,6" fill="#e8883a"/></svg>Decision</div>
+  <div class="legend-item"><svg width="12" height="12"><polygon points="6,1 11,4 11,9 6,12 1,9 1,4" fill="#2dd4bf"/></svg>Research</div>
+  <div class="legend-item"><svg width="12" height="12"><circle cx="6" cy="6" r="4" fill="#58a6ff"/></svg>Finding</div>
+  <div class="legend-item"><svg width="12" height="12"><polygon points="6,0 7.8,4.1 12,4.6 8.9,7.4 9.7,11.5 6,9.5 2.3,11.5 3.1,7.4 0,4.6 4.2,4.1" fill="#fbbf24"/></svg>Principle</div>
+  <div class="legend-item"><svg width="12" height="12"><polygon points="6,1 11,10 1,10" fill="#c084fc"/></svg>Hypothesis</div>
+  <div class="legend-item"><svg width="12" height="12"><polygon points="3,0 9,0 12,3 12,9 9,12 3,12 0,9 0,3" fill="#93c5fd"/></svg>Literature</div>
+  <div class="legend-item"><svg width="12" height="12"><polygon points="6,1 10,4 10,8 6,11 2,8 2,4" fill="#f87171"/></svg>Constraint</div>
+  <div class="legend-item"><svg width="12" height="12"><rect x="1" y="1" width="10" height="10" rx="2" fill="#8b949e"/></svg>Phase</div>
   <div style="font-weight:bold;margin:6px 0 4px;color:#8b949e">EDGES</div>
   <div class="legend-item"><div class="legend-line" style="background:#f85149;width:20px"></div>Contradicts</div>
   <div class="legend-item"><div class="legend-line" style="background:#3fb950;width:20px"></div>Supports</div>
   <div class="legend-item"><div class="legend-line" style="background:#79c0ff;width:20px"></div>DependsOn</div>
-  <div class="legend-item"><div class="legend-line" style="background:#d29922;width:20px"></div>Informed</div>
+  <div class="legend-item"><div class="legend-line" style="background:#e8883a;width:20px"></div>Informed</div>
   <div class="legend-item"><div class="legend-line" style="background:#a371f7;width:20px"></div>Supersedes</div>
   <div class="legend-item"><div class="legend-line" style="background:#30363d;width:20px;opacity:0.3"></div>Structural</div>
 </div>
@@ -82,9 +90,35 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 <script>
 let currentProject = null;
 let currentView = 'kg';
-let svgRoot = null;
 
 const tooltip = document.getElementById('tooltip');
+
+// Simple markdown-to-HTML converter (no external deps)
+function miniMarkdown(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`(.+?)`/g, '<code>$1</code>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+    .replace(/\n/g, '<br>');
+}
+
+// Node type color palette (distinct, accessible)
+const TYPE_COLORS = {
+  experiment: '#3fb950',
+  decision: '#e8883a',
+  research: '#2dd4bf',
+  finding: '#58a6ff',
+  principle: '#fbbf24',
+  hypothesis: '#c084fc',
+  literature: '#93c5fd',
+  constraint: '#f87171',
+  phase: '#8b949e',
+  feedback: '#a5b4fc',
+};
 
 async function loadProjects() {
   const res = await fetch('/api/projects');
@@ -131,6 +165,69 @@ function setView(view) {
   }
 }
 
+// D3 symbol generators for different node types
+function drawNodeShape(ng, type, color, size) {
+  const s = size || 8;
+  switch (type) {
+    case 'finding': // circle (smaller)
+      return ng.append('circle').attr('class', 'node-shape').attr('r', s * 0.5).attr('fill', color).attr('fill-opacity', 0.7);
+    case 'experiment': // circle
+      return ng.append('circle').attr('class', 'node-shape').attr('r', s).attr('fill', color).attr('fill-opacity', 0.85);
+    case 'decision': { // diamond
+      const d = s;
+      return ng.append('polygon').attr('class', 'node-shape')
+        .attr('points', `0,${-d} ${d},0 0,${d} ${-d},0`)
+        .attr('fill', color).attr('fill-opacity', 0.9);
+    }
+    case 'phase': // square (larger)
+      return ng.append('rect').attr('class', 'node-shape')
+        .attr('x', -s*2.5).attr('y', -s).attr('width', s*5).attr('height', s*2)
+        .attr('rx', 4).attr('fill', color).attr('fill-opacity', 0.7);
+    case 'hypothesis': // triangle-up
+      return ng.append('polygon').attr('class', 'node-shape')
+        .attr('points', `0,${-s} ${s},${s*0.8} ${-s},${s*0.8}`)
+        .attr('fill', color).attr('fill-opacity', 0.8);
+    case 'literature': { // hexagon
+      const r = s * 0.9;
+      const pts = [0,1,2,3,4,5].map(i => {
+        const a = Math.PI/6 + i * Math.PI/3;
+        return `${r*Math.cos(a)},${r*Math.sin(a)}`;
+      }).join(' ');
+      return ng.append('polygon').attr('class', 'node-shape')
+        .attr('points', pts).attr('fill', color).attr('fill-opacity', 0.7);
+    }
+    case 'principle': { // star (5-point)
+      const outer = s, inner = s * 0.4;
+      const pts = [];
+      for (let i = 0; i < 5; i++) {
+        const ao = -Math.PI/2 + i * 2*Math.PI/5;
+        const ai = -Math.PI/2 + (i+0.5) * 2*Math.PI/5;
+        pts.push(`${outer*Math.cos(ao)},${outer*Math.sin(ao)}`);
+        pts.push(`${inner*Math.cos(ai)},${inner*Math.sin(ai)}`);
+      }
+      return ng.append('polygon').attr('class', 'node-shape')
+        .attr('points', pts.join(' ')).attr('fill', color).attr('fill-opacity', 0.85);
+    }
+    case 'constraint': { // cross / plus
+      const w = s * 0.35, h = s;
+      return ng.append('polygon').attr('class', 'node-shape')
+        .attr('points', `${-w},${-h} ${w},${-h} ${w},${-w} ${h},${-w} ${h},${w} ${w},${w} ${w},${h} ${-w},${h} ${-w},${w} ${-h},${w} ${-h},${-w} ${-w},${-w}`)
+        .attr('fill', color).attr('fill-opacity', 0.8);
+    }
+    case 'research': { // hexagon (teal)
+      const r = s * 0.9;
+      const pts = [0,1,2,3,4,5].map(i => {
+        const a = i * Math.PI/3;
+        return `${r*Math.cos(a)},${r*Math.sin(a)}`;
+      }).join(' ');
+      return ng.append('polygon').attr('class', 'node-shape')
+        .attr('points', pts).attr('fill', color).attr('fill-opacity', 0.85);
+    }
+    default: // fallback circle
+      return ng.append('circle').attr('class', 'node-shape').attr('r', s * 0.5).attr('fill', color).attr('fill-opacity', 0.6);
+  }
+}
+
 async function loadKG(projectId) {
   const [findings, edges, experiments, phases, decisions, research,
          principles, hypotheses, constraints, literature, feedback] = await Promise.all([
@@ -151,16 +248,13 @@ async function loadKG(projectId) {
   const links = [];
   const nodeMap = {};
 
-  // Type prefix map for edge resolution
   const typePrefix = {
     'Finding': 'f', 'Experiment': 'e', 'Phase': 'p', 'Decision': 'd',
     'Research': 'r', 'Principle': 'pr', 'Hypothesis': 'h', 'Constraint': 'co',
     'Literature': 'l', 'Feedback': 'fb'
   };
 
-  // === BACKBONE NODES (chronological chain) ===
-
-  // Experiments — green circles, the primary backbone
+  // Experiments
   for (const e of [...experiments].sort((a, b) => a.id - b.id)) {
     const id = `e-${e.id}`;
     const statusColor = e.status === 'Pass' ? '#3fb950' : e.status === 'Fail' ? '#f85149' : e.status === 'Inconclusive' ? '#d29922' : '#8b949e';
@@ -168,65 +262,62 @@ async function loadKG(projectId) {
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Decisions — orange diamonds, backbone branch points
+  // Decisions
   for (const d of decisions) {
     const id = `d-${d.id}`;
-    const n = { id, numId: d.id, label: `D${d.id}`, text: d.what + (d.why ? ' -- ' + d.why : ''), type: 'decision', color: '#d29922', expId: d.experiment_id, ts: d.created_at };
-    nodes.push(n); nodeMap[id] = n;
+    nodes.push({ id, numId: d.id, label: `D${d.id}`, text: d.what + (d.why ? ' -- ' + d.why : ''), type: 'decision', color: TYPE_COLORS.decision, expId: d.experiment_id, ts: d.created_at });
+    nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Research — teal hexagons, backbone
+  // Research
   for (const r of research) {
     const id = `r-${r.id}`;
-    const n = { id, numId: r.id, label: `R${r.id}`, text: r.name, type: 'research', color: '#2dd4bf', ts: r.created_at };
-    nodes.push(n); nodeMap[id] = n;
+    nodes.push({ id, numId: r.id, label: `R${r.id}`, text: r.name, type: 'research', color: TYPE_COLORS.research, ts: r.created_at });
+    nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // === KNOWLEDGE NODES (hang off backbone) ===
-
-  // Findings — blue dots
+  // Findings
   for (const f of findings) {
     const id = `f-${f.id}`;
-    const n = { id, numId: f.id, label: `F${f.id}`, text: f.text ? f.text.substring(0, 120) : '', type: 'finding', color: '#58a6ff', expId: f.experiment_id };
-    nodes.push(n); nodeMap[id] = n;
-    // Structural edge: experiment → finding (grey, no arrow)
+    nodes.push({ id, numId: f.id, label: `F${f.id}`, text: f.text ? f.text.substring(0, 200) : '', type: 'finding', color: TYPE_COLORS.finding, expId: f.experiment_id });
+    nodeMap[id] = nodes[nodes.length - 1];
     if (f.experiment_id && nodeMap[`e-${f.experiment_id}`]) {
       links.push({ source: `e-${f.experiment_id}`, target: id, relation: 'structural', color: '#30363d' });
     }
   }
 
-  // Principles — warm yellow pentagons
+  // Principles
   for (const p of principles) {
     const id = `pr-${p.id}`;
     const scopeTag = p.scope === 'Universal' ? '[U]' : p.scope === 'Phase' ? '[Ph]' : '[Pr]';
-    const n = { id, numId: p.id, label: `${scopeTag}P${p.id}`, text: p.text ? p.text.substring(0, 120) : '', type: 'principle', color: '#fbbf24' };
-    nodes.push(n); nodeMap[id] = n;
+    nodes.push({ id, numId: p.id, label: `${scopeTag}P${p.id}`, text: p.text ? p.text.substring(0, 200) : '', type: 'principle', color: TYPE_COLORS.principle });
+    nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Hypotheses — purple triangles
+  // Hypotheses
   for (const h of hypotheses) {
     const id = `h-${h.id}`;
-    const statusColor = h.status === 'Confirmed' ? '#3fb950' : h.status === 'Refuted' ? '#f85149' : h.status === 'Testing' ? '#58a6ff' : '#8b949e';
-    const n = { id, numId: h.id, label: `H${h.id}`, text: h.text ? h.text.substring(0, 120) : '', type: 'hypothesis', color: statusColor };
-    nodes.push(n); nodeMap[id] = n;
+    const statusColor = h.status === 'Confirmed' ? '#3fb950' : h.status === 'Refuted' ? '#f85149' : h.status === 'Testing' ? '#58a6ff' : '#c084fc';
+    nodes.push({ id, numId: h.id, label: `H${h.id}`, text: h.text ? h.text.substring(0, 200) : '', type: 'hypothesis', color: statusColor });
+    nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Constraints — grey octagons
+  // Constraints
   for (const c of constraints) {
     const id = `co-${c.id}`;
-    const n = { id, numId: c.id, label: `C${c.id}`, text: c.text ? c.text.substring(0, 120) : '', type: 'constraint', color: '#9ca3af' };
-    nodes.push(n); nodeMap[id] = n;
+    nodes.push({ id, numId: c.id, label: `C${c.id}`, text: c.text ? c.text.substring(0, 200) : '', type: 'constraint', color: TYPE_COLORS.constraint });
+    nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Literature — light blue books
+  // Literature
   for (const l of literature) {
     const id = `l-${l.id}`;
-    const arxiv = l.arxiv_id ? `[${l.arxiv_id}]` : '';
-    const n = { id, numId: l.id, label: `L${l.id}`, text: `${l.title} ${arxiv}`, type: 'literature', color: '#93c5fd' };
-    nodes.push(n); nodeMap[id] = n;
+    const arxiv = l.arxiv_id ? ` [${l.arxiv_id}]` : '';
+    nodes.push({ id, numId: l.id, label: `L${l.id}`, text: `${l.title}${arxiv}`, type: 'literature', color: TYPE_COLORS.literature });
+    nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Phases — status-colored rectangles
+  // Phases
   for (const p of phases) {
     const id = `p-${p.id}`;
     const statusColor = p.status === 'Complete' ? '#3fb950' : p.status === 'InProgress' ? '#58a6ff' : p.status === 'Paused' ? '#f85149' : '#8b949e';
@@ -234,7 +325,14 @@ async function loadKG(projectId) {
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // === KG EDGES (semantic, colored) ===
+  // Feedback
+  for (const f of feedback) {
+    const id = `fb-${f.id}`;
+    nodes.push({ id, numId: f.id, label: `Fb${f.id}`, text: f.text ? f.text.substring(0, 200) : '', type: 'feedback', color: TYPE_COLORS.feedback });
+    nodeMap[id] = nodes[nodes.length - 1];
+  }
+
+  // KG Edges
   for (const edge of edges) {
     const srcP = typePrefix[edge.source_type] || 'x';
     const tgtP = typePrefix[edge.target_type] || 'x';
@@ -244,300 +342,189 @@ async function loadKG(projectId) {
       const rel = edge.relation;
       const color = rel === 'Contradicts' ? '#f85149' :
                     rel === 'Supports' ? '#3fb950' :
-                    rel === 'Informed' ? '#d29922' :
+                    rel === 'Informed' ? '#e8883a' :
                     rel === 'Supersedes' ? '#a371f7' :
                     rel === 'DependsOn' ? '#79c0ff' :
                     rel === 'ProducedBy' ? '#30363d' :
-                    rel === 'CitedIn' ? '#93c5fd' : '#30363d';
+                    rel === 'CitedIn' ? '#93c5fd' :
+                    rel === 'DerivedFrom' ? '#fbbf24' :
+                    rel === 'TestedBy' ? '#2dd4bf' :
+                    rel === 'ViolatedBy' ? '#f87171' : '#30363d';
       links.push({ source: src, target: tgt, relation: rel, color });
     }
   }
 
-  renderKG(nodes, links, nodeMap);
+  renderForceGraph(nodes, links, nodeMap);
 }
 
-function renderKG(nodes, links, nodeMap) {
+function renderForceGraph(nodes, links, nodeMap) {
   const container = document.getElementById('graph-container');
   container.innerHTML = '';
   const W = container.offsetWidth;
   const H = container.offsetHeight;
 
-  // --- LAYOUT COMPUTATION ---
-  // Unified chronological backbone: experiments + decisions + research interleaved
-  // Decisions are branch points. Findings hang below. Phases span across top.
-  // Principles, hypotheses, constraints, literature, feedback in peripheral bands.
-
-  const backbone = nodes.filter(n => ['experiment', 'decision', 'research'].includes(n.type))
-    .sort((a, b) => a.numId - b.numId); // chronological by ID
-  const finds = nodes.filter(n => n.type === 'finding');
-  const phas = nodes.filter(n => n.type === 'phase');
-  const princs = nodes.filter(n => n.type === 'principle');
-  const hyps = nodes.filter(n => n.type === 'hypothesis');
-  const cons = nodes.filter(n => n.type === 'constraint');
-  const lits = nodes.filter(n => n.type === 'literature');
-  const fbs = nodes.filter(n => n.type === 'feedback');
-
-  const XPAD = 100;
-  const bbSpacing = 70;
-  const totalW = backbone.length * bbSpacing + XPAD * 2;
-  const centerY = 0;
-
-  // Backbone X positions (unified timeline)
-  const bbXMap = {}; // maps "type-id" to X position
-  backbone.forEach((n, i) => {
-    n.x = XPAD + i * bbSpacing;
-    n.y = centerY;
-    bbXMap[n.id] = n.x;
-    // Also map by experiment ID for finding lookup
-    if (n.type === 'experiment') bbXMap[`exp-${n.numId}`] = n.x;
-  });
-
-  // Findings: fishbone pattern below/above their parent experiment
-  const findsByExp = {};
-  finds.forEach(f => {
-    const eid = f.expId || 0;
-    if (!findsByExp[eid]) findsByExp[eid] = [];
-    findsByExp[eid].push(f);
-  });
-  for (const [eid, fs] of Object.entries(findsByExp)) {
-    const expX = bbXMap[`exp-${eid}`] !== undefined ? bbXMap[`exp-${eid}`] : XPAD + parseInt(eid) * 12;
-    fs.forEach((f, i) => {
-      const side = (i % 2 === 0) ? 1 : -1;
-      const row = Math.floor(i / 2);
-      f.x = expX + (row % 2 === 0 ? -5 : 5);
-      f.y = centerY + side * (30 + row * 14);
-    });
-  }
-
-  // Phases: top band
-  phas.sort((a, b) => a.numId - b.numId).forEach((p, i) => {
-    p.x = XPAD + (i / Math.max(phas.length - 1, 1)) * (totalW - XPAD * 2);
-    p.y = centerY - 130;
-  });
-
-  // Principles: above phases, spread evenly
-  princs.forEach((p, i) => {
-    p.x = XPAD + (i / Math.max(princs.length - 1, 1)) * (totalW - XPAD * 2);
-    p.y = centerY - 175;
-  });
-
-  // Hypotheses: just above backbone, near their experiment
-  hyps.forEach((h, i) => {
-    h.x = XPAD + (i / Math.max(hyps.length - 1, 1)) * (totalW - XPAD * 2) * 0.7 + totalW * 0.15;
-    h.y = centerY - 55 - (i % 2) * 20;
-  });
-
-  // Constraints: right side, stacked vertically
-  cons.forEach((c, i) => {
-    c.x = totalW + 40;
-    c.y = centerY - 80 + i * 20;
-  });
-
-  // Literature: left side, stacked
-  lits.forEach((l, i) => {
-    l.x = -40;
-    l.y = centerY - 60 + i * 22;
-  });
-
-  // Feedback: bottom right corner
-  fbs.forEach((f, i) => {
-    f.x = totalW + 40;
-    f.y = centerY + 40 + i * 18;
-  });
-
-  // --- SVG RENDERING ---
-  const svg = d3.select(container).append('svg')
-    .attr('width', W)
-    .attr('height', H);
+  const svg = d3.select(container).append('svg').attr('width', W).attr('height', H);
 
   // Defs for arrowheads
   const defs = svg.append('defs');
   const arrowColors = {
     'Contradicts': '#f85149', 'Supports': '#3fb950', 'DependsOn': '#79c0ff',
-    'Informed': '#d29922', 'Supersedes': '#a371f7', 'produces': '#30363d'
+    'Informed': '#e8883a', 'Supersedes': '#a371f7', 'DerivedFrom': '#fbbf24',
+    'TestedBy': '#2dd4bf', 'ViolatedBy': '#f87171', 'CitedIn': '#93c5fd'
   };
   for (const [rel, col] of Object.entries(arrowColors)) {
     defs.append('marker')
       .attr('id', `arrow-${rel}`)
       .attr('viewBox', '0 0 8 5')
-      .attr('refX', 8).attr('refY', 2.5)
+      .attr('refX', 12).attr('refY', 2.5)
       .attr('markerWidth', 4).attr('markerHeight', 3)
       .attr('orient', 'auto')
       .append('path')
       .attr('d', 'M0,0.5 L7,2.5 L0,4.5 Z')
       .attr('fill', col)
-      .attr('fill-opacity', 0.6);
+      .attr('fill-opacity', 0.7);
   }
 
-  // Background rect to capture all pointer events for zoom/pan
-  svg.append('rect')
-    .attr('width', W)
-    .attr('height', H)
-    .attr('fill', '#0d1117');
-
+  svg.append('rect').attr('width', W).attr('height', H).attr('fill', '#0d1117');
   const g = svg.append('g');
 
-  // Zoom + pan
-  const zoom = d3.zoom()
-    .scaleExtent([0.15, 10])
-    .on('zoom', e => g.attr('transform', e.transform));
-  svg.call(zoom)
-    .on('dblclick.zoom', null); // disable double-click zoom
+  const zoom = d3.zoom().scaleExtent([0.1, 10]).on('zoom', e => g.attr('transform', e.transform));
+  svg.call(zoom).on('dblclick.zoom', null);
 
-  // Edge style: structural (grey, no arrow) vs semantic (colored, arrow)
+  // Edge style map
   const edgeStyle = {
-    'Contradicts': { width: 0.8, opacity: 0.45, dash: '', arrow: true },
-    'Supports':    { width: 0.6, opacity: 0.25, dash: '', arrow: true },
-    'DependsOn':   { width: 0.5, opacity: 0.2, dash: '3,2', arrow: true },
-    'Informed':    { width: 0.5, opacity: 0.25, dash: '2,2', arrow: true },
-    'Supersedes':  { width: 0.7, opacity: 0.35, dash: '5,2', arrow: true },
-    'RelatedTo':   { width: 0.3, opacity: 0.12, dash: '1,3', arrow: false },
-    'ProducedBy':  { width: 0.3, opacity: 0.08, dash: '', arrow: false },
-    'CitedIn':     { width: 0.4, opacity: 0.15, dash: '2,2', arrow: true },
-    'structural':  { width: 0.25, opacity: 0.06, dash: '', arrow: false },
+    'Contradicts': { width: 1.2, opacity: 0.6, dash: '', arrow: true },
+    'Supports':    { width: 0.8, opacity: 0.4, dash: '', arrow: true },
+    'DependsOn':   { width: 0.7, opacity: 0.35, dash: '4,2', arrow: true },
+    'Informed':    { width: 0.7, opacity: 0.35, dash: '3,2', arrow: true },
+    'Supersedes':  { width: 0.9, opacity: 0.45, dash: '5,2', arrow: true },
+    'DerivedFrom': { width: 0.6, opacity: 0.3, dash: '3,2', arrow: true },
+    'TestedBy':    { width: 0.6, opacity: 0.3, dash: '2,2', arrow: true },
+    'ViolatedBy':  { width: 0.8, opacity: 0.4, dash: '', arrow: true },
+    'RelatedTo':   { width: 0.4, opacity: 0.15, dash: '1,3', arrow: false },
+    'ProducedBy':  { width: 0.3, opacity: 0.1, dash: '', arrow: false },
+    'CitedIn':     { width: 0.5, opacity: 0.25, dash: '2,2', arrow: true },
+    'structural':  { width: 0.3, opacity: 0.08, dash: '', arrow: false },
   };
 
-  // Draw ALL edges (structural + semantic)
-  const edgeG = g.append('g').attr('class', 'edges');
-  for (const link of links) {
-    const src = nodeMap[link.source];
-    const tgt = nodeMap[link.target];
-    if (!src || !tgt || src.x === undefined || tgt.x === undefined) continue;
+  // Build D3 force simulation with compact layout
+  const simNodes = nodes.map(n => ({...n}));
+  const simLinks = links.map(l => ({source: l.source, target: l.target, relation: l.relation, color: l.color}));
 
-    const rel = link.relation || 'structural';
-    const style = edgeStyle[rel] || edgeStyle['structural'];
-    const col = link.color || '#30363d';
+  const simulation = d3.forceSimulation(simNodes)
+    .force('link', d3.forceLink(simLinks).id(d => d.id).distance(d => {
+      if (d.relation === 'structural') return 25;
+      return 50;
+    }).strength(0.8))
+    .force('charge', d3.forceManyBody().strength(-120).distanceMax(300))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collision', d3.forceCollide().radius(d => {
+      if (d.type === 'phase') return 25;
+      if (d.type === 'finding') return 6;
+      return 12;
+    }))
+    .force('x', d3.forceX(W / 2).strength(0.03))
+    .force('y', d3.forceY(H / 2).strength(0.03));
 
-    const dx = tgt.x - src.x;
-    const dy = tgt.y - src.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
+  // Create link elements
+  const linkG = g.append('g').attr('class', 'links');
+  const linkEls = linkG.selectAll('line').data(simLinks).enter().append('line')
+    .attr('stroke', d => d.color || '#30363d')
+    .attr('stroke-width', d => (edgeStyle[d.relation] || edgeStyle['structural']).width)
+    .attr('stroke-opacity', d => (edgeStyle[d.relation] || edgeStyle['structural']).opacity)
+    .attr('stroke-dasharray', d => (edgeStyle[d.relation] || edgeStyle['structural']).dash || null)
+    .attr('marker-end', d => {
+      const s = edgeStyle[d.relation] || edgeStyle['structural'];
+      return s.arrow ? `url(#arrow-${d.relation})` : null;
+    });
 
-    let path;
-    if (rel === 'Contradicts') {
-      // Gentle arc above the line for contradictions
-      const mx = (src.x + tgt.x) / 2;
-      const my = Math.min(src.y, tgt.y) - Math.min(dist * 0.15, 50);
-      path = `M${src.x},${src.y} Q${mx},${my} ${tgt.x},${tgt.y}`;
-    } else if (rel === 'Supersedes') {
-      // Slight S-curve
-      const mx = (src.x + tgt.x) / 2;
-      const my = (src.y + tgt.y) / 2 - 15;
-      path = `M${src.x},${src.y} Q${mx},${my} ${tgt.x},${tgt.y}`;
-    } else {
-      // Near-straight with minimal curve to disambiguate overlapping edges
-      const mx = (src.x + tgt.x) / 2;
-      const my = (src.y + tgt.y) / 2;
-      const perpX = -dy / (dist || 1) * 6;
-      const perpY = dx / (dist || 1) * 6;
-      path = `M${src.x},${src.y} Q${mx + perpX},${my + perpY} ${tgt.x},${tgt.y}`;
-    }
-
-    edgeG.append('path')
-      .attr('d', path)
-      .attr('fill', 'none')
-      .attr('stroke', col)
-      .attr('stroke-width', style.width)
-      .attr('stroke-opacity', style.opacity)
-      .attr('stroke-dasharray', style.dash || null)
-      .attr('marker-end', style.arrow ? `url(#arrow-${rel})` : null)
-      .style('pointer-events', 'stroke')
-      .on('mouseenter', function() {
-        d3.select(this).attr('stroke-opacity', 0.85).attr('stroke-width', style.width + 0.8);
-      })
-      .on('mouseleave', function() {
-        d3.select(this).attr('stroke-opacity', style.opacity).attr('stroke-width', style.width);
-      });
-  }
-
-  // Draw nodes
+  // Create node groups
   const nodeG = g.append('g').attr('class', 'nodes');
+  const nodeEls = nodeG.selectAll('g').data(simNodes).enter().append('g')
+    .style('cursor', 'pointer')
+    .call(d3.drag()
+      .on('start', (ev, d) => { if (!ev.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+      .on('end', (ev, d) => { if (!ev.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
 
-  for (const n of nodes) {
-    if (n.x === undefined) continue;
-    const ng = nodeG.append('g')
-      .attr('transform', `translate(${n.x}, ${n.y})`)
-      .style('cursor', 'pointer')
-      .on('mouseenter', function(ev) {
-        tooltip.querySelector('.tt-type').textContent = n.type.toUpperCase();
-        tooltip.querySelector('.tt-type').style.color = n.color;
-        tooltip.querySelector('.tt-title').textContent = `#${n.numId}: ${n.label}`;
-        tooltip.querySelector('.tt-body').textContent = n.text ? n.text.substring(0, 300) : '';
-        tooltip.style.display = 'block';
-        tooltip.style.left = (ev.clientX + 12) + 'px';
-        tooltip.style.top = (ev.clientY - 8) + 'px';
-        // Highlight connected edges
-        edgeG.selectAll('path').attr('stroke-opacity', function() { return 0.05; });
-        edgeG.selectAll('path').filter(function() {
-          const d = this.__data__;
-          return false; // edges don't have __data__ in this approach
-        });
-        d3.select(this).select('.node-shape').attr('stroke', '#fff').attr('stroke-width', 2);
-      })
-      .on('mouseleave', function() {
-        tooltip.style.display = 'none';
-        edgeG.selectAll('path').each(function() {
-          const el = d3.select(this);
-          // Restore original opacity from stored attribute
-        });
-        d3.select(this).select('.node-shape').attr('stroke', null).attr('stroke-width', 0);
-      })
-      .on('mousemove', function(ev) {
-        tooltip.style.left = (ev.clientX + 12) + 'px';
-        tooltip.style.top = (ev.clientY - 8) + 'px';
-      });
-
-    // Node shape based on type
-    if (n.type === 'experiment') {
-      ng.append('circle').attr('class', 'node-shape').attr('r', 8).attr('fill', n.color).attr('fill-opacity', 0.85);
-      ng.append('text').attr('x', 0).attr('y', -12).attr('text-anchor', 'middle').attr('fill', '#8b949e').attr('font-size', '8px').text(n.label);
-    } else if (n.type === 'decision') {
-      ng.append('polygon').attr('class', 'node-shape').attr('points', '0,-10 10,0 0,10 -10,0').attr('fill', n.color).attr('fill-opacity', 0.9);
-      ng.append('text').attr('x', 13).attr('y', 3).attr('fill', '#d29922').attr('font-size', '8px').text(n.label);
-    } else if (n.type === 'research') {
-      // Hexagon — teal
-      const hex = '0,-8 7,-4 7,4 0,8 -7,4 -7,-4';
-      ng.append('polygon').attr('class', 'node-shape').attr('points', hex).attr('fill', n.color).attr('fill-opacity', 0.85);
-      ng.append('text').attr('x', 10).attr('y', 3).attr('fill', '#2dd4bf').attr('font-size', '8px').text(n.label);
-    } else if (n.type === 'finding') {
-      ng.append('circle').attr('class', 'node-shape').attr('r', 3.5).attr('fill', n.color).attr('fill-opacity', 0.55);
-    } else if (n.type === 'principle') {
-      // Pentagon — warm yellow
-      const pent = '0,-7 6.7,-2.2 4.1,5.7 -4.1,5.7 -6.7,-2.2';
-      ng.append('polygon').attr('class', 'node-shape').attr('points', pent).attr('fill', n.color).attr('fill-opacity', 0.8);
-      ng.append('text').attr('x', 9).attr('y', 3).attr('fill', '#fbbf24').attr('font-size', '7px').text(n.label);
-    } else if (n.type === 'hypothesis') {
-      // Triangle pointing right
-      ng.append('polygon').attr('class', 'node-shape').attr('points', '-5,-7 8,0 -5,7').attr('fill', n.color).attr('fill-opacity', 0.75);
-      ng.append('text').attr('x', 11).attr('y', 3).attr('fill', n.color).attr('font-size', '7px').text(n.label);
-    } else if (n.type === 'constraint') {
-      // Octagon — grey with red border
-      const oct = '3,-7 7,-3 7,3 3,7 -3,7 -7,3 -7,-3 -3,-7';
-      ng.append('polygon').attr('class', 'node-shape').attr('points', oct).attr('fill', '#1c2128').attr('stroke', '#f85149').attr('stroke-width', 0.8).attr('fill-opacity', 0.7);
-      ng.append('text').attr('x', 10).attr('y', 3).attr('fill', '#9ca3af').attr('font-size', '6px').text(n.label);
-    } else if (n.type === 'literature') {
-      // Rounded square — light blue
-      ng.append('rect').attr('class', 'node-shape').attr('x', -6).attr('y', -6).attr('width', 12).attr('height', 12).attr('rx', 3).attr('fill', n.color).attr('fill-opacity', 0.65);
-      ng.append('text').attr('x', 9).attr('y', 3).attr('fill', '#93c5fd').attr('font-size', '7px').text(n.label);
-    } else if (n.type === 'phase') {
-      ng.append('rect').attr('class', 'node-shape').attr('x', -20).attr('y', -8).attr('width', 40).attr('height', 16).attr('rx', 4).attr('fill', n.color).attr('fill-opacity', 0.7);
-      ng.append('text').attr('x', 0).attr('y', 3).attr('text-anchor', 'middle').attr('fill', '#0d1117').attr('font-size', '7px').attr('font-weight', 'bold').text(n.label);
-    } else if (n.type === 'feedback') {
-      // Small flag
-      ng.append('rect').attr('class', 'node-shape').attr('x', -4).attr('y', -4).attr('width', 8).attr('height', 8).attr('rx', 1).attr('fill', n.color === 'Correction' ? '#f85149' : '#3fb950').attr('fill-opacity', 0.6);
+  // Draw shapes per node
+  nodeEls.each(function(d) {
+    const el = d3.select(this);
+    drawNodeShape(el, d.type, d.color, d.type === 'phase' ? 10 : d.type === 'finding' ? 6 : 8);
+    // Label for non-tiny nodes
+    if (d.type !== 'finding') {
+      el.append('text')
+        .attr('x', d.type === 'phase' ? 0 : 12)
+        .attr('y', d.type === 'phase' ? 3 : 3)
+        .attr('text-anchor', d.type === 'phase' ? 'middle' : 'start')
+        .attr('fill', d.type === 'phase' ? '#0d1117' : d.color)
+        .attr('font-size', d.type === 'phase' ? '7px' : '7px')
+        .attr('font-weight', d.type === 'phase' ? 'bold' : 'normal')
+        .text(d.label);
     }
-  }
+  });
 
-  // Initial zoom to fit
-  const allX = nodes.filter(n => n.x !== undefined).map(n => n.x);
-  const allY = nodes.filter(n => n.y !== undefined).map(n => n.y);
-  if (allX.length) {
-    const minX = Math.min(...allX) - 40;
-    const maxX = Math.max(...allX) + 40;
-    const minY = Math.min(...allY) - 40;
-    const maxY = Math.max(...allY) + 40;
+  // Tooltip handlers
+  nodeEls
+    .on('mouseenter', function(ev, d) {
+      tooltip.querySelector('.tt-type').textContent = d.type.toUpperCase();
+      tooltip.querySelector('.tt-type').style.color = d.color;
+      tooltip.querySelector('.tt-title').textContent = `#${d.numId}: ${d.label}`;
+      tooltip.querySelector('.tt-body').innerHTML = miniMarkdown(d.text ? d.text.substring(0, 500) : '');
+      tooltip.style.display = 'block';
+      tooltip.style.left = (ev.clientX + 12) + 'px';
+      tooltip.style.top = (ev.clientY - 8) + 'px';
+      // Dim all edges, highlight connected
+      linkEls.attr('stroke-opacity', 0.03);
+      linkEls.filter(l => l.source.id === d.id || l.target.id === d.id)
+        .attr('stroke-opacity', 0.8).attr('stroke-width', 2);
+      d3.select(this).select('.node-shape').attr('stroke', '#fff').attr('stroke-width', 2);
+    })
+    .on('mouseleave', function(ev, d) {
+      tooltip.style.display = 'none';
+      linkEls.each(function(l) {
+        const s = edgeStyle[l.relation] || edgeStyle['structural'];
+        d3.select(this).attr('stroke-opacity', s.opacity).attr('stroke-width', s.width);
+      });
+      d3.select(this).select('.node-shape').attr('stroke', null).attr('stroke-width', 0);
+    })
+    .on('mousemove', function(ev) {
+      tooltip.style.left = (ev.clientX + 12) + 'px';
+      tooltip.style.top = (ev.clientY - 8) + 'px';
+    });
+
+  // Tick function
+  simulation.on('tick', () => {
+    linkEls
+      .attr('x1', d => d.source.x)
+      .attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x)
+      .attr('y2', d => d.target.y);
+    nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  // Run simulation for 300 ticks then stop (performance)
+  simulation.alpha(1).restart();
+  for (let i = 0; i < 300; i++) simulation.tick();
+  simulation.alpha(0.01);
+  // Trigger final position update
+  linkEls
+    .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+  nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+
+  // Zoom to fit
+  const allX = simNodes.map(n => n.x);
+  const allY = simNodes.map(n => n.y);
+  if (allX.length > 1) {
+    const minX = Math.min(...allX) - 60;
+    const maxX = Math.max(...allX) + 60;
+    const minY = Math.min(...allY) - 60;
+    const maxY = Math.max(...allY) + 60;
     const bw = maxX - minX;
     const bh = maxY - minY;
-    const scale = Math.min(W / bw, H / bh, 3) * 0.9;
+    const scale = Math.min(W / bw, H / bh, 3) * 0.85;
     const tx = W / 2 - (minX + bw / 2) * scale;
     const ty = H / 2 - (minY + bh / 2) * scale;
     svg.call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
@@ -554,7 +541,6 @@ async function loadDAG(projectId) {
   // Topological layering
   const pMap = {};
   phases.forEach(p => { pMap[p.id] = p; p.layer = 0; });
-  // Iterative layering
   let changed = true;
   while (changed) {
     changed = false;
@@ -568,7 +554,6 @@ async function loadDAG(projectId) {
     }
   }
 
-  const maxLayer = Math.max(...phases.map(p => p.layer), 0);
   const layerGroups = {};
   phases.forEach(p => {
     if (!layerGroups[p.layer]) layerGroups[p.layer] = [];
@@ -577,14 +562,12 @@ async function loadDAG(projectId) {
 
   const layerSpacing = 160;
   const nodeSpacing = 70;
-  const startX = 80;
-  const startY = 60;
 
   phases.forEach(p => {
     const group = layerGroups[p.layer];
     const idx = group.indexOf(p);
-    p.x = startX + p.layer * layerSpacing;
-    p.y = startY + idx * nodeSpacing + (H / 2 - group.length * nodeSpacing / 2);
+    p.x = 80 + p.layer * layerSpacing;
+    p.y = 60 + idx * nodeSpacing + (H / 2 - group.length * nodeSpacing / 2);
   });
 
   const svg = d3.select(container).append('svg').attr('width', W).attr('height', H);
@@ -592,6 +575,18 @@ async function loadDAG(projectId) {
   const gMain = svg.append('g');
   const zoom = d3.zoom().scaleExtent([0.2, 5]).on('zoom', e => gMain.attr('transform', e.transform));
   svg.call(zoom).on('dblclick.zoom', null);
+
+  // Defs for DAG arrows
+  const defs = svg.append('defs');
+  defs.append('marker')
+    .attr('id', 'arrow-dag')
+    .attr('viewBox', '0 0 10 6')
+    .attr('refX', 10).attr('refY', 3)
+    .attr('markerWidth', 6).attr('markerHeight', 4)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,0 L10,3 L0,6 Z')
+    .attr('fill', '#79c0ff');
 
   // Edges
   for (const p of phases) {
@@ -604,14 +599,33 @@ async function loadDAG(projectId) {
         .attr('stroke', '#30363d')
         .attr('stroke-width', 0.8)
         .attr('stroke-opacity', 0.4)
-        .attr('marker-end', 'url(#arrow-DependsOn)');
+        .attr('marker-end', 'url(#arrow-dag)');
     }
   }
 
   // Nodes
   for (const p of phases) {
     const color = p.status === 'Complete' ? '#3fb950' : p.status === 'InProgress' ? '#58a6ff' : p.status === 'Paused' ? '#f85149' : '#8b949e';
-    const ng = gMain.append('g').attr('transform', `translate(${p.x}, ${p.y})`);
+    const ng = gMain.append('g').attr('transform', `translate(${p.x}, ${p.y})`)
+      .style('cursor', 'pointer')
+      .on('mouseenter', function(ev) {
+        tooltip.querySelector('.tt-type').textContent = 'PHASE';
+        tooltip.querySelector('.tt-type').style.color = color;
+        tooltip.querySelector('.tt-title').textContent = `#${p.id}: ${p.name}`;
+        tooltip.querySelector('.tt-body').innerHTML = miniMarkdown(
+          `**Impact:** ${p.impact}\n**Status:** ${p.status}\n` +
+          (p.description ? `\n${p.description}` : '') +
+          (p.goals ? `\n**Goals:** ${p.goals}` : '')
+        );
+        tooltip.style.display = 'block';
+        tooltip.style.left = (ev.clientX + 12) + 'px';
+        tooltip.style.top = (ev.clientY - 8) + 'px';
+      })
+      .on('mouseleave', () => { tooltip.style.display = 'none'; })
+      .on('mousemove', (ev) => {
+        tooltip.style.left = (ev.clientX + 12) + 'px';
+        tooltip.style.top = (ev.clientY - 8) + 'px';
+      });
     ng.append('rect')
       .attr('x', -30).attr('y', -14)
       .attr('width', 60).attr('height', 28)
@@ -632,18 +646,6 @@ async function loadDAG(projectId) {
       .attr('font-size', '7px')
       .text(p.name ? p.name.substring(0, 25) : '');
   }
-
-  // Defs for DAG arrows too
-  const defs = svg.append('defs');
-  defs.append('marker')
-    .attr('id', 'arrow-DependsOn')
-    .attr('viewBox', '0 0 10 6')
-    .attr('refX', 10).attr('refY', 3)
-    .attr('markerWidth', 6).attr('markerHeight', 4)
-    .attr('orient', 'auto')
-    .append('path')
-    .attr('d', 'M0,0 L10,3 L0,6 Z')
-    .attr('fill', '#79c0ff');
 
   // Zoom to fit
   const allX = phases.map(p => p.x);

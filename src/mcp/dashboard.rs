@@ -1,10 +1,20 @@
 //! MCP tool implementations for dashboard/session/scaffold operations.
 //!
 //! Contains: pm_dashboard, pm_next, pm_session_init, pm_scaffold
+//! Sprint 4: DAG→TaskTracker scaffold (#16) — structured, actionable output
+//! with TaskCreate guidance and stale hypothesis / orphaned finding detection.
 
 use crate::store::sqlite::SqliteStore;
-use crate::store::{Store, PhaseStatus, ExperimentStatus};
+use crate::store::{Store, PhaseStatus, ExperimentStatus, HypothesisStatus};
 use crate::dag::DagEngine;
+use chrono::{NaiveDateTime, Utc};
+
+/// Check if a timestamp is older than `days` from now.
+fn is_stale(ts: &NaiveDateTime, days: i64) -> bool {
+    let now = Utc::now().naive_utc();
+    let diff = now.signed_duration_since(*ts);
+    diff.num_days() >= days
+}
 
 pub fn tool_dashboard(store: &SqliteStore) -> String {
     let mut out = String::from("=== Cross-Project Dashboard ===\n\n");
@@ -40,12 +50,41 @@ pub fn tool_next(store: &SqliteStore, project: &str) -> String {
                         let dep_strs: Vec<String> = phase.depends_on.iter().map(|d| format!("#{}", d)).collect();
                         out += &format!("    Depends on: {}\n", dep_strs.join(", "));
                     }
+
+                    // Experiment summary per phase
+                    if let Ok(exps) = store.list_experiments(Some(phase.id)) {
+                        let pending = exps.iter().filter(|e| e.status == ExperimentStatus::Pending).count();
+                        let pass = exps.iter().filter(|e| e.status == ExperimentStatus::Pass).count();
+                        let fail = exps.iter().filter(|e| e.status == ExperimentStatus::Fail).count();
+                        if !exps.is_empty() {
+                            out += &format!("    Experiments: {} pending, {} pass, {} fail\n", pending, pass, fail);
+                        }
+                    }
                 }
+
+                // Stagnation warning with suggested action
+                if let Ok(Some(n)) = dag.stagnation_check(3) {
+                    out += &format!("\n  WARNING: STAGNATION \u{2014} {} consecutive failed experiments\n", n);
+                    out += "    Suggested actions:\n";
+                    out += "    1. Review recent experiment hypotheses \u{2014} are assumptions valid?\n";
+                    out += "    2. Check if constraints have changed since experiments were designed\n";
+                    out += "    3. Consider pivoting to a different approach within this phase\n";
+                }
+
+                // TaskCreate format for top recommended action
+                if let Some(top) = next.first() {
+                    if let Ok(exps) = store.list_experiments(Some(top.id)) {
+                        let pending: Vec<_> = exps.iter().filter(|e| e.status == ExperimentStatus::Pending).collect();
+                        if let Some(exp) = pending.first() {
+                            out += &format!("\n## Top Recommended Action:\n");
+                            out += &format!("  -> TaskCreate: subject=\"{} Exp #{}: {}\" description=\"Phase #{} ({}), impact:{}\"\n",
+                                project, exp.id, exp.name, top.id, top.name, top.impact);
+                        }
+                    }
+                }
+
+                out += "\n## ACTION: Execute the top phase.";
             }
-            if let Ok(Some(n)) = dag.stagnation_check(3) {
-                out += &format!("\n  WARNING: STAGNATION \u{2014} {} consecutive failed experiments\n", n);
-            }
-            out += "\n## ACTION: Execute the top phase.";
         } else {
             out += &format!("Project not found: {}", project);
         }
@@ -54,7 +93,7 @@ pub fn tool_next(store: &SqliteStore, project: &str) -> String {
 }
 
 pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> String {
-    let _proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
+    let proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
         Some(p) => p,
         None => return format!("Project not found: {}", project),
     };
@@ -82,10 +121,10 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
     text += &format!("Findings: {}\n", finding_count);
 
     // Open hypotheses count (scoped to this phase)
-    let hyp_count = store.list_hypotheses(Some(phase_id)).map(|hs| {
-        hs.iter().filter(|h| h.status == crate::store::HypothesisStatus::Proposed || h.status == crate::store::HypothesisStatus::Testing).count()
-    }).unwrap_or(0);
-    text += &format!("Open hypotheses: {}\n\n", hyp_count);
+    let open_hyps: Vec<_> = store.list_hypotheses(Some(phase_id)).map(|hs| {
+        hs.into_iter().filter(|h| h.status == HypothesisStatus::Proposed || h.status == HypothesisStatus::Testing).collect()
+    }).unwrap_or_default();
+    text += &format!("Open hypotheses: {}\n\n", open_hyps.len());
 
     // Phase description/goals if available
     if let Some(ref desc) = phase.description {
@@ -112,20 +151,25 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
         text += &format!("Dependencies: {}\n\n", dep_strs.join(", "));
     }
 
-    // Pending experiments as tasks
+    // Pending experiments as TaskCreate-ready items
     if !pending.is_empty() {
         text += &format!("--- {} Pending Experiments ---\n\n", pending.len());
-        for e in &pending {
-            text += &format!("TASK: Exp #{}: {}\n", e.id, e.name);
+        for (i, e) in pending.iter().enumerate() {
+            text += &format!("TASK {}: Exp #{} \u{2014} {}\n", i + 1, e.id, e.name);
+            text += &format!("  Status: pending | Phase: #{} ({})\n", phase.id, phase.name);
             if let Some(notes) = &e.notes {
-                text += &format!("  {}\n", &notes[..notes.len().min(200)]);
+                text += &format!("  Notes: {}\n", &notes[..notes.len().min(200)]);
             }
-            text += "\n";
+            // TaskCreate-ready format
+            let desc = format!("Phase #{} ({}). {}", phase.id, phase.name,
+                e.notes.as_deref().unwrap_or("Execute this experiment and record findings."));
+            text += &format!("  -> TaskCreate: subject=\"{} Exp #{}: {}\" description=\"{}\"\n\n",
+                project, e.id, e.name, &desc[..desc.len().min(200)]);
         }
     }
 
     // Active constraints (#13)
-    if let Ok(constraints) = store.list_constraints(phase.project_id) {
+    if let Ok(constraints) = store.list_constraints(proj.id) {
         if !constraints.is_empty() {
             text += "--- Active Constraints ---\n\n";
             for c in &constraints {
@@ -138,11 +182,36 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
         }
     }
 
+    // Active principles that apply
+    if let Ok(principles) = store.list_principles(proj.id) {
+        let active: Vec<_> = principles.iter()
+            .filter(|p| p.status == crate::store::PrincipleStatus::Active)
+            .collect();
+        if !active.is_empty() {
+            text += "--- Active Principles ---\n\n";
+            for p in &active {
+                let scope = match p.scope {
+                    crate::store::PrincipleScope::Universal => "universal",
+                    crate::store::PrincipleScope::Project => "project",
+                    crate::store::PrincipleScope::Phase => "phase",
+                };
+                let enforcement = p.enforcement_level.as_deref().unwrap_or("advisory");
+                let t = if p.text.len() > 100 { &p.text[..100] } else { &p.text };
+                text += &format!("  P#{} [{}|{}]: {}\n", p.id, scope, enforcement, t);
+            }
+            text += "\n";
+        }
+    }
+
     text
 }
 
 pub fn tool_session_init(store: &SqliteStore) -> String {
     let mut out = String::new();
+    let mut task_num = 0usize;
+    let mut stale_hyps: Vec<String> = Vec::new();
+    let mut orphaned_findings: Vec<String> = Vec::new();
+
     if let Ok(projects) = store.list_projects() {
         for proj in &projects {
             if proj.status != crate::store::ProjectStatus::Active { continue; }
@@ -158,24 +227,87 @@ pub fn tool_session_init(store: &SqliteStore) -> String {
                         let pending: Vec<_> = exps.iter()
                             .filter(|e| e.status == ExperimentStatus::Pending)
                             .collect();
-                        if !pending.is_empty() {
-                            out += &format!("## [{}] Phase #{} [impact:{}]: {}\n", proj.name, phase.id, phase.impact, phase.name);
+                        let pass_count = exps.iter().filter(|e| e.status == ExperimentStatus::Pass).count();
+                        let fail_count = exps.iter().filter(|e| e.status == ExperimentStatus::Fail).count();
+
+                        let status_str = if phase.status == PhaseStatus::InProgress { "IN-PROGRESS" }
+                            else if phase.status == PhaseStatus::Paused { "PAUSED" }
+                            else { "NEXT" };
+
+                        out += &format!("## [{}] Phase #{} [impact:{}] {}\n", proj.name, phase.id, phase.impact, phase.name);
+                        out += &format!("  Status: {} | Experiments: {} pending, {} pass, {} fail\n\n",
+                            status_str, pending.len(), pass_count, fail_count);
+
+                        if pending.is_empty() {
+                            out += &format!("  -> This phase has no pending experiments. Use pm_scaffold to create tasks.\n\n");
+                        } else {
                             for exp in pending.iter().take(5) {
-                                out += &format!("TASK: [{}] Exp #{}: {}\n", proj.name, exp.id, exp.name);
+                                task_num += 1;
+                                out += &format!("  TASK {}: Exp #{} \u{2014} {}\n", task_num, exp.id, exp.name);
+                                out += &format!("    Status: pending | Phase: #{} ({})\n", phase.id, phase.name);
                                 if let Some(notes) = &exp.notes {
-                                    out += &format!("  {}\n", &notes[..notes.len().min(150)]);
+                                    out += &format!("    {}\n", &notes[..notes.len().min(150)]);
                                 }
+                                // TaskCreate-ready format
+                                let desc = format!("Phase #{} ({}). {}",
+                                    phase.id, phase.name,
+                                    exp.notes.as_deref().unwrap_or("Execute experiment and record findings."));
+                                out += &format!("    -> TaskCreate: subject=\"{} Exp #{}: {}\" description=\"{}\"\n\n",
+                                    proj.name, exp.id, exp.name, &desc[..desc.len().min(200)]);
                             }
-                            out += "\n";
+                        }
+                    }
+
+                    // Check for stale hypotheses (proposed > 7 days without testing)
+                    if let Ok(hyps) = store.list_hypotheses(Some(phase.id)) {
+                        for h in &hyps {
+                            if h.status == HypothesisStatus::Proposed && is_stale(&h.created_at, 7) {
+                                stale_hyps.push(format!("  H#{}: {} (proposed {} days ago, phase #{})",
+                                    h.id,
+                                    if h.text.len() > 80 { &h.text[..80] } else { &h.text },
+                                    Utc::now().naive_utc().signed_duration_since(h.created_at).num_days(),
+                                    phase.id));
+                            }
+                        }
+                    }
+                }
+
+                // Check for orphaned findings (no edges)
+                if let Ok(orphan_ids) = store.get_orphaned_nodes("finding", proj.id) {
+                    for fid in orphan_ids.iter().take(5) {
+                        if let Ok(f) = store.get_finding(*fid) {
+                            orphaned_findings.push(format!("  F#{}: {}",
+                                f.id,
+                                if f.text.len() > 80 { &f.text[..80] } else { &f.text }));
                         }
                     }
                 }
             }
         }
     }
+
+    // Append cleanup tasks
+    if !stale_hyps.is_empty() {
+        out += "--- Stale Hypotheses (proposed >7 days, untested) ---\n\n";
+        for h in &stale_hyps {
+            out += h;
+            out += "\n";
+        }
+        out += "\n  -> Review these: test, refine, or close them.\n\n";
+    }
+
+    if !orphaned_findings.is_empty() {
+        out += "--- Orphaned Findings (no KG edges) ---\n\n";
+        for f in &orphaned_findings {
+            out += f;
+            out += "\n";
+        }
+        out += "\n  -> Link these to experiments/hypotheses with pm_add_edge.\n\n";
+    }
+
     if out.is_empty() {
         "No pending tasks in actionable phases.".to_string()
     } else {
-        format!("=== Session Init: Actionable DAG Tasks ===\n\n{}\nCreate these as task tracker items and work through them.", out)
+        format!("=== Session Init: Actionable Tasks ===\n\n{}Create these as task tracker items and work through them.", out)
     }
 }

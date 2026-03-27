@@ -6,6 +6,8 @@
 //! - edges: KG edge tools (add_edge, kg_traverse)
 //! - dashboard: dashboard, next, scaffold, session_init
 //! - review: review, stats
+//!
+//! Sprint 4 (#16): Auto-starts web dashboard on port 9090 in background thread.
 
 pub mod nodes;
 pub mod edges;
@@ -67,6 +69,19 @@ pub fn run_mcp_server() {
 
     let db_path = std::env::var("PM_DB").unwrap_or_else(|_| default_db_path());
 
+    // Sprint 4 (#16): Auto-start web dashboard in background thread
+    let web_port: u16 = std::env::var("PM_WEB_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9090);
+    let db_path_for_web = db_path.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            crate::web::serve(&db_path_for_web, web_port).await;
+        });
+    });
+
     for line in stdin.lock().lines() {
         let line = match line {
             Ok(l) => l,
@@ -104,7 +119,7 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
             result: Some(serde_json::json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "pm", "version": "3.2.0" }
+                "serverInfo": { "name": "pm", "version": "4.0.0" }
             })),
             error: None,
         },
@@ -274,7 +289,7 @@ fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "pm_next".into(),
-            description: "Next actions for a project, impact-weighted with stagnation warning.".into(),
+            description: "Next actions for a project with experiment summary, stagnation warning, and TaskCreate-ready top action.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": { "project": { "type": "string", "description": "Project name or alias" } },
@@ -297,12 +312,12 @@ fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "pm_scaffold".into(),
-            description: "Phase detail view with experiment roll-up, finding counts, open hypotheses, and pending task list.".into(),
+            description: "Phase detail with experiment roll-up, TaskCreate-ready pending experiments, active constraints, and active principles.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "phase_id": {"type": "integer"}}, "required": ["project", "phase_id"]}),
         },
         ToolDef {
             name: "pm_session_init".into(),
-            description: "Returns actionable tasks from the DAG for all active projects. Call at session start to populate task tracker.".into(),
+            description: "Returns TaskCreate-ready actionable tasks from DAG for all active projects. Detects stale hypotheses and orphaned findings. Call at session start.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {}}),
         },
         ToolDef {
@@ -343,7 +358,7 @@ fn tool_definitions() -> Vec<ToolDef> {
         ToolDef {
             name: "pm_constraint_add".into(),
             description: "Add a hard constraint (hardware, budget, correctness requirement). Returns ID + phase/experiment edge suggestions.".into(),
-            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "hardware, software, or process"}, "text": {"type": "string"}, "source": {"type": "string", "description": "Where this constraint comes from (REQUIRED)"}, "severity": {"type": "string", "description": "hard (default) or soft"}, "resource": {"type": "string", "description": "Resource being constrained (e.g., GPU VRAM, context window)"}, "measured_value": {"type": "string", "description": "Current measured value"}, "expires_at": {"type": "string", "description": "Expiry date (YYYY-MM-DD) — pm_review flags expired constraints"}}, "required": ["project", "scope", "text"]}),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "hardware, software, or process"}, "text": {"type": "string"}, "source": {"type": "string", "description": "Where this constraint comes from (REQUIRED)"}, "severity": {"type": "string", "description": "hard (default) or soft"}, "resource": {"type": "string", "description": "Resource being constrained (e.g., GPU VRAM, context window)"}, "measured_value": {"type": "string", "description": "Current measured value"}, "expires_at": {"type": "string", "description": "Expiry date (YYYY-MM-DD) -- pm_review flags expired constraints"}}, "required": ["project", "scope", "text"]}),
         },
         ToolDef {
             name: "pm_research_complete".into(),
