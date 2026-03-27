@@ -324,6 +324,24 @@ fn tool_review(store: &SqliteStore, project: &str) -> String {
     if !contradictions.is_empty() {
         text += &format!("\n## Contradictions: {}\n", contradictions.len());
     }
+    // Enhanced checks
+    let lit_count = store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0);
+    text += &format!("
+Literature: {} entries. Check for new papers.
+", lit_count);
+    if let Ok(hyps) = store.list_hypotheses(None) {
+        let proposed: Vec<_> = hyps.iter().filter(|h| h.status == crate::store::HypothesisStatus::Proposed).collect();
+        if !proposed.is_empty() {
+            text += &format!("
+Hypotheses: {} untested
+", proposed.len());
+            for h in proposed.iter().take(3) {
+                let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text };
+                text += &format!("  H#{}: {}
+", h.id, t);
+            }
+        }
+    }
     text
 }
 
