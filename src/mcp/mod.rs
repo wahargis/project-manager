@@ -124,6 +124,21 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                         "required": ["project"]
                     }),
                 },
+                ToolDef {
+                    name: "pm_kg_traverse".into(),
+                    description: "Traverse KG from a node. Shows connected edges and nodes with direction.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"node_type": {"type": "string"}, "node_id": {"type": "integer"}}, "required": ["node_type", "node_id"]}),
+                },
+                ToolDef {
+                    name: "pm_scaffold".into(),
+                    description: "List pending experiments in a phase as task items.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "phase_id": {"type": "integer"}}, "required": ["project", "phase_id"]}),
+                },
+                ToolDef {
+                    name: "pm_stats".into(),
+                    description: "KG node and edge counts for a project.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}}, "required": ["project"]}),
+                },
             ];
             JsonRpcResponse {
                 jsonrpc: "2.0".into(),
@@ -150,6 +165,10 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                     let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
                     tool_next(&store, project)
                 },
+                "pm_review" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); tool_review(&store, p) }
+                "pm_kg_traverse" => { let nt = args.get("node_type").and_then(|v| v.as_str()).unwrap_or("finding"); let nid = args.get("node_id").and_then(|v| v.as_i64()).unwrap_or(1); tool_kg_traverse(&store, nt, nid) }
+                "pm_scaffold" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); let pid = args.get("phase_id").and_then(|v| v.as_i64()).unwrap_or(0); tool_scaffold(&store, p, pid) }
+                "pm_stats" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); tool_stats(&store, p) }
                 _ => format!("Unknown tool: {}", tool_name),
             };
 
@@ -214,10 +233,10 @@ fn tool_next(store: &SqliteStore, project: &str) -> String {
     out
 }
 
-fn tool_review(store: &SqliteStore, project: &str) -> serde_json::Value {
+fn tool_review(store: &SqliteStore, project: &str) -> String {
     let proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
         Some(p) => p,
-        None => return serde_json::json!({"content": [{"type": "text", "text": format!("Project not found: {}", project)}]}),
+        None => return format!("Project not found: {}", project),
     };
     let kg = crate::kg::KgEngine::new(store);
     let mut text = format!("=== Research Review: {} ===\n\n", proj.name);
@@ -253,10 +272,10 @@ fn tool_review(store: &SqliteStore, project: &str) -> serde_json::Value {
     if !contradictions.is_empty() {
         text += &format!("\n## Contradictions: {}\n", contradictions.len());
     }
-    serde_json::json!({"content": [{"type": "text", "text": text}]})
+    text
 }
 
-fn tool_kg_traverse(store: &SqliteStore, nt_str: &str, nid: i64) -> serde_json::Value {
+fn tool_kg_traverse(store: &SqliteStore, nt_str: &str, nid: i64) -> String {
     use crate::store::NodeType;
     let nt = match nt_str {
         "finding" | "f" => NodeType::Finding,
@@ -265,7 +284,7 @@ fn tool_kg_traverse(store: &SqliteStore, nt_str: &str, nid: i64) -> serde_json::
         "phase" | "p" => NodeType::Phase,
         "research" | "r" => NodeType::Research,
         "principle" | "pr" => NodeType::Principle,
-        _ => return serde_json::json!({"content": [{"type": "text", "text": format!("Unknown node type: {}", nt_str)}]}),
+        _ => return format!("Unknown node type: {}", nt_str),
     };
     let kg = crate::kg::KgEngine::new(store);
     match kg.traverse(nt, nid) {
@@ -278,20 +297,20 @@ fn tool_kg_traverse(store: &SqliteStore, nt_str: &str, nid: i64) -> serde_json::
                     text += &format!("  --{:?}--> {:?} #{}: {}\n", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(80)]);
                 }
             }
-            serde_json::json!({"content": [{"type": "text", "text": text}]})
+            text
         }
-        Err(e) => serde_json::json!({"content": [{"type": "text", "text": format!("Error: {}", e)}]}),
+        Err(e) => format!("Error: {}", e),
     }
 }
 
-fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> serde_json::Value {
+fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> String {
     let _proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
         Some(p) => p,
-        None => return serde_json::json!({"content": [{"type": "text", "text": format!("Project not found: {}", project)}]}),
+        None => return format!("Project not found: {}", project),
     };
     let phase = match store.get_phase(phase_id) {
         Ok(p) => p,
-        Err(e) => return serde_json::json!({"content": [{"type": "text", "text": format!("Phase not found: {}", e)}]}),
+        Err(e) => return format!("Phase not found: {}", e),
     };
     let exps = store.list_experiments(Some(phase_id)).unwrap_or_default();
     let pending: Vec<_> = exps.iter().filter(|e| e.status == crate::store::ExperimentStatus::Pending).collect();
@@ -303,6 +322,8 @@ fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> serde_jso
         }
         text += "\n";
     }
-    serde_json::json!({"content": [{"type": "text", "text": text}]})
+    text
 }
 
+
+fn tool_stats(store: &SqliteStore, project: &str) -> String { let proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) { Some(p) => p, None => return "Not found".to_string() }; let phases = store.list_phases(proj.id).unwrap_or_default(); let mut ec = 0; let mut fc = 0; for p in &phases { ec += store.list_experiments(Some(p.id)).map(|e| e.len()).unwrap_or(0); for e in store.list_experiments(Some(p.id)).unwrap_or_default() { fc += store.list_findings(Some(e.id)).map(|f| f.len()).unwrap_or(0); } } let t = format!("Phases:{} Exp:{} Find:{} Dec:{} Princ:{} Hyp:{} Con:{} Lit:{} Edges:{}", phases.len(), ec, fc, store.list_decisions(proj.id).map(|d| d.len()).unwrap_or(0), store.list_principles(proj.id).map(|p| p.len()).unwrap_or(0), store.list_hypotheses(None).map(|h| h.len()).unwrap_or(0), store.list_constraints(proj.id).map(|c| c.len()).unwrap_or(0), store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0), store.list_all_edges().map(|e| e.len()).unwrap_or(0)); t }
