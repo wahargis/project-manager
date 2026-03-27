@@ -142,7 +142,7 @@ fn create_decision_with_rationale() {
     let proj = store.create_project("test", None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
-    let dec = store.create_decision(Some(exp.id), "Use Rust", Some("Type safety for KG")).unwrap();
+    let dec = store.create_decision(Some(exp.id), "Use Rust", Some("Type safety for KG"), None).unwrap();
     assert_eq!(dec.what, "Use Rust");
     assert_eq!(dec.why, Some("Type safety for KG".to_string()));
 }
@@ -242,7 +242,7 @@ fn test_store_migration_creates_new_columns() {
     assert!(proj.parent_id.is_none());
 
     // Verify decision project_id defaults to None
-    let dec = store.create_decision(None, "test decision", None).unwrap();
+    let dec = store.create_decision(None, "test decision", None, None).unwrap();
     assert!(dec.project_id.is_none());
 
     // Verify literature new fields default to None
@@ -418,7 +418,7 @@ fn test_edge_cross_node_types_with_integrity() {
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let finding = store.create_finding(Some(exp.id), "finding").unwrap();
-    let dec = store.create_decision(Some(exp.id), "Use Rust", Some("Type safety")).unwrap();
+    let dec = store.create_decision(Some(exp.id), "Use Rust", Some("Type safety"), None).unwrap();
     // Finding -> Decision edge should work
     let edge = store.create_edge(
         NodeType::Finding, finding.id,
@@ -442,7 +442,7 @@ fn test_node_exists_for_all_types() {
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "finding").unwrap();
-    let dec = store.create_decision(Some(exp.id), "decision", None).unwrap();
+    let dec = store.create_decision(Some(exp.id), "decision", None, None).unwrap();
     let research = store.create_research(Some(phase.id), "research").unwrap();
     let principle = store.create_principle(proj.id, PrincipleScope::Project, "principle").unwrap();
     let hyp = store.create_hypothesis(Some(phase.id), "hypothesis").unwrap();
@@ -519,7 +519,7 @@ fn test_kg_decision_label_resolved() {
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "A finding for testing").unwrap();
-    let dec = store.create_decision(Some(exp.id), "Use direct get_decision for label resolution", None).unwrap();
+    let dec = store.create_decision(Some(exp.id), "Use direct get_decision for label resolution", None, None).unwrap();
     store.create_edge(NodeType::Finding, finding.id, NodeType::Decision, dec.id, EdgeType::Informed).unwrap();
 
     let kg = KgEngine::new(&store);
@@ -598,7 +598,7 @@ fn test_kg_principle_label_resolved_directly() {
 #[test]
 fn test_get_decision_by_id() {
     let store = test_store();
-    let dec = store.create_decision(None, "Test decision", Some("Because testing")).unwrap();
+    let dec = store.create_decision(None, "Test decision", Some("Because testing"), None).unwrap();
     let fetched = store.get_decision(dec.id).unwrap();
     assert_eq!(fetched.what, "Test decision");
     assert_eq!(fetched.why, Some("Because testing".to_string()));

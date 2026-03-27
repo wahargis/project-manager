@@ -294,7 +294,7 @@ pub trait Store {
     fn delete_edge(&self, id: i64) -> Result<()>;
 
     // Decisions
-    fn create_decision(&self, experiment_id: Option<i64>, what: &str, why: Option<&str>) -> Result<Decision>;
+    fn create_decision(&self, experiment_id: Option<i64>, what: &str, why: Option<&str>, project_id: Option<i64>) -> Result<Decision>;
     fn list_decisions(&self, project_id: i64) -> Result<Vec<Decision>>;
 
     // Research
@@ -334,6 +334,14 @@ pub trait Store {
     fn get_constraint(&self, id: i64) -> Result<Constraint>;
     fn get_literature(&self, id: i64) -> Result<LiteratureEntry>;
     fn get_feedback_entry(&self, id: i64) -> Result<FeedbackEntry>;
+
+    // Phase field updates (#8)
+    fn update_phase_fields(&self, id: i64, description: Option<&str>, goals: Option<&str>, success_criteria: Option<&str>) -> Result<()>;
+    fn set_phase_started(&self, id: i64) -> Result<()>;
+    fn set_phase_completed(&self, id: i64) -> Result<()>;
+
+    // Hypothesis field updates (#9)
+    fn update_hypothesis_fields(&self, id: i64, prediction: Option<&str>, criteria: Option<&str>, confidence: Option<f64>) -> Result<()>;
 }
 
 #[cfg(test)]

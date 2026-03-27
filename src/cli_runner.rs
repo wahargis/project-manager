@@ -260,7 +260,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let proj = resolve_project(&store, &project).ok_or("Project not found")?;
             match action {
                 DecAction::Add { what, why, experiment } => {
-                    let d = store.create_decision(experiment, &what, why.as_deref())?;
+                    let d = store.create_decision(experiment, &what, why.as_deref(), None)?;
                     println!("Decision #{} added: {}", d.id, d.what);
                 }
                 DecAction::List => {
@@ -752,7 +752,7 @@ fn import_v2(store: &SqliteStore, path: &str, name: &str) -> Result<(), Box<dyn 
             let what = d["what"].as_str().unwrap_or("");
             let why = d["why"].as_str();
             let new_exp = d["experiment"].as_i64().and_then(|oe| exp_map.get(&oe).copied());
-            store.create_decision(new_exp, what, why)?;
+            store.create_decision(new_exp, what, why, None)?;
         }
         println!("  {} decisions", decs.len());
     }

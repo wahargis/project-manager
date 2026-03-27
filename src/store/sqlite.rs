@@ -546,11 +546,11 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn create_decision(&self, experiment_id: Option<i64>, what: &str, why: Option<&str>) -> Result<Decision> {
+    fn create_decision(&self, experiment_id: Option<i64>, what: &str, why: Option<&str>, project_id: Option<i64>) -> Result<Decision> {
         let now = Self::now();
         self.conn.execute(
-            "INSERT INTO decisions (experiment_id, what, why, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![experiment_id, what, why, now],
+            "INSERT INTO decisions (experiment_id, what, why, created_at, project_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![experiment_id, what, why, now, project_id],
         )?;
         let id = self.conn.last_insert_rowid();
         Ok(Decision {
@@ -668,7 +668,7 @@ impl Store for SqliteStore {
 
     fn list_decisions(&self, project_id: i64) -> Result<Vec<Decision>> {
         let mut stmt = self.conn.prepare(
-            "SELECT d.id, d.experiment_id, d.what, d.why, d.created_at, d.project_id FROM decisions d              LEFT JOIN experiments e ON d.experiment_id = e.id              LEFT JOIN phases p ON e.phase_id = p.id              WHERE d.project_id = ?1 OR (d.project_id IS NULL AND (d.experiment_id IS NULL OR p.project_id = ?1))              ORDER BY d.id"
+            "SELECT d.id, d.experiment_id, d.what, d.why, d.created_at, d.project_id FROM decisions d WHERE d.project_id = ?1 OR d.project_id IS NULL ORDER BY d.id"
         )?;
         let rows = stmt.query_map([project_id], |row| Ok(Decision {
             id: row.get(0)?,
@@ -821,4 +821,46 @@ impl Store for SqliteStore {
             o => StoreError::Db(o),
         })
     }
+    // --- Phase field updates (#8) ---
+
+    fn update_phase_fields(&self, id: i64, description: Option<&str>, goals: Option<&str>, success_criteria: Option<&str>) -> Result<()> {
+        if let Some(desc) = description {
+            self.conn.execute("UPDATE phases SET description = ?1 WHERE id = ?2", params![desc, id])?;
+        }
+        if let Some(g) = goals {
+            self.conn.execute("UPDATE phases SET goals = ?1 WHERE id = ?2", params![g, id])?;
+        }
+        if let Some(sc) = success_criteria {
+            self.conn.execute("UPDATE phases SET success_criteria = ?1 WHERE id = ?2", params![sc, id])?;
+        }
+        Ok(())
+    }
+
+    fn set_phase_started(&self, id: i64) -> Result<()> {
+        let now = Self::now();
+        self.conn.execute("UPDATE phases SET started_at = ?1 WHERE id = ?2", params![now, id])?;
+        Ok(())
+    }
+
+    fn set_phase_completed(&self, id: i64) -> Result<()> {
+        let now = Self::now();
+        self.conn.execute("UPDATE phases SET completed_at = ?1 WHERE id = ?2", params![now, id])?;
+        Ok(())
+    }
+
+    // --- Hypothesis field updates (#9) ---
+
+    fn update_hypothesis_fields(&self, id: i64, prediction: Option<&str>, criteria: Option<&str>, confidence: Option<f64>) -> Result<()> {
+        if let Some(p) = prediction {
+            self.conn.execute("UPDATE hypotheses SET prediction = ?1 WHERE id = ?2", params![p, id])?;
+        }
+        if let Some(c) = criteria {
+            self.conn.execute("UPDATE hypotheses SET criteria = ?1 WHERE id = ?2", params![c, id])?;
+        }
+        if let Some(conf) = confidence {
+            self.conn.execute("UPDATE hypotheses SET confidence = ?1 WHERE id = ?2", params![conf, id])?;
+        }
+        Ok(())
+    }
+
 }
