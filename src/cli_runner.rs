@@ -28,9 +28,16 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 if proj.status != pm::store::ProjectStatus::Active { continue; }
                 let dag = DagEngine::new(&store, proj.id);
                 if let Ok(next) = dag.next_phases() {
-                    if let Some(top) = next.first() {
+                    // Prefer: InProgress > Pending > Paused
+                    let top = next.iter().find(|p| p.status == PhaseStatus::InProgress)
+                        .or_else(|| next.iter().find(|p| p.status == PhaseStatus::Pending));
+                    if let Some(top) = top {
                         let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
                         println!("  [{}] {} #{} [impact:{}] {}", proj.name, s, top.id, top.impact, top.name);
+                    }
+                    // Show paused as secondary
+                    if let Some(p) = next.iter().find(|p| p.status == PhaseStatus::Paused) {
+                        println!("  [{}] PAUSED #{} [impact:{}] {}", proj.name, p.id, p.impact, p.name);
                     }
                 }
             }
@@ -127,15 +134,14 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     store.update_experiment_status(id, es.clone(), result.as_deref())?;
                     println!("Experiment #{} updated: status={}", id, status);
 
-                    // Auto-resolve linked hypotheses
+                    // Suggest hypothesis resolution (do not auto-apply)
                     if es == ExperimentStatus::Pass || es == ExperimentStatus::Fail {
                         if let Ok(hyps) = store.list_hypotheses(None) {
                             for h in &hyps {
                                 if h.experiment_id == Some(id) && h.status != HypothesisStatus::Confirmed && h.status != HypothesisStatus::Refuted {
-                                    let new_status = if es == ExperimentStatus::Pass { HypothesisStatus::Confirmed } else { HypothesisStatus::Refuted };
                                     let label = if es == ExperimentStatus::Pass { "confirmed" } else { "refuted" };
-                                    store.update_hypothesis(h.id, new_status, Some(id), None).ok();
-                                    println!("  -> Hypothesis #{} auto-{} by experiment #{}", h.id, label, id);
+                                    println!("  -> Hypothesis #{} may be {} by this result. Review and resolve:", h.id, label);
+                                    println!("    pm hyp {} resolve {} --status {}", proj.name, h.id, label);
                                 }
                             }
                         }
