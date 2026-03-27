@@ -148,7 +148,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     let results = kg.traverse_deep(NodeType::Finding, id, depth)?;
                     for r in results {
                         println!("  {} #{}: {}", format!("{:?}", r.root.node_type), r.root.id, &r.root.label[..r.root.label.len().min(60)]);
-                        for (edge, target) in &r.edges {
+                        for (edge, target, incoming) in &r.edges {
                             println!("    --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(50)]);
                         }
                     }
@@ -347,8 +347,12 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         let id: i64 = parts[1].parse()?;
                         let result = kg.traverse(nt, id)?;
                         println!("ROOT: {:?} #{}: {}", result.root.node_type, result.root.id, &result.root.label[..result.root.label.len().min(80)]);
-                        for (edge, target) in &result.edges {
-                            println!("  --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                        for (edge, target, incoming) in &result.edges {
+                            if *incoming {
+                                println!("  <--{:?}-- {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                            } else {
+                                println!("  --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                            }
                         }
                     }
                 }

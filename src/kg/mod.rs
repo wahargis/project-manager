@@ -16,7 +16,7 @@ pub struct KgNode {
 #[derive(Debug, Clone)]
 pub struct TraversalResult {
     pub root: KgNode,
-    pub edges: Vec<(Edge, KgNode)>,
+    pub edges: Vec<(Edge, KgNode, bool)>, // bool = is_incoming
 }
 
 impl<'a, S: Store> KgEngine<'a, S> {
@@ -24,12 +24,31 @@ impl<'a, S: Store> KgEngine<'a, S> {
         Self { store }
     }
 
+    fn resolve_label(&self, nt: &NodeType, id: i64) -> String {
+        match nt {
+            NodeType::Finding => self.store.get_finding(id).map(|f| {
+                let t = &f.text; if t.len() > 80 { format!("{}...", &t[..80]) } else { t.clone() }
+            }).unwrap_or_default(),
+            NodeType::Experiment => self.store.get_experiment(id).map(|e| e.name).unwrap_or_default(),
+            NodeType::Decision => self.store.list_decisions(0).ok()
+                .and_then(|ds| ds.into_iter().find(|d| d.id == id))
+                .map(|d| d.what).unwrap_or_default(),
+            NodeType::Phase => self.store.get_phase(id).map(|p| p.name).unwrap_or_default(),
+            NodeType::Research => self.store.get_research(id).map(|r| r.name).unwrap_or_default(),
+            NodeType::Principle => self.store.list_principles(0).ok()
+                .and_then(|ps| ps.into_iter().find(|p| p.id == id))
+                .map(|p| { let t = &p.text; if t.len() > 80 { format!("{}...", &t[..80]) } else { t.clone() } })
+                .unwrap_or_default(),
+            _ => format!("{:?} #{}", nt, id),
+        }
+    }
+
     /// Single-hop traversal from a node — returns all directly connected nodes.
+    /// Edges are tagged with direction: outgoing edges have the target node,
+    /// incoming edges have the source node. The `is_incoming` field on the edge
+    /// distinguishes them for display.
     pub fn traverse(&self, node_type: NodeType, node_id: i64) -> crate::store::Result<TraversalResult> {
-        let label = match &node_type {
-            NodeType::Finding => self.store.get_finding(node_id).map(|f| f.text)?,
-            _ => format!("{:?} #{}", node_type, node_id),
-        };
+        let label = self.resolve_label(&node_type, node_id);
         let root = KgNode { node_type: node_type.clone(), id: node_id, label };
 
         let outgoing = self.store.get_edges_from(node_type.clone(), node_id)?;
@@ -37,20 +56,14 @@ impl<'a, S: Store> KgEngine<'a, S> {
 
         let mut edges = Vec::new();
         for edge in outgoing {
-            let target_label = match &edge.target_type {
-                NodeType::Finding => self.store.get_finding(edge.target_id).map(|f| f.text).unwrap_or_default(),
-                _ => format!("{:?} #{}", edge.target_type, edge.target_id),
-            };
+            let target_label = self.resolve_label(&edge.target_type, edge.target_id);
             let target = KgNode { node_type: edge.target_type.clone(), id: edge.target_id, label: target_label };
-            edges.push((edge, target));
+            edges.push((edge, target, false)); // false = outgoing
         }
         for edge in incoming {
-            let source_label = match &edge.source_type {
-                NodeType::Finding => self.store.get_finding(edge.source_id).map(|f| f.text).unwrap_or_default(),
-                _ => format!("{:?} #{}", edge.source_type, edge.source_id),
-            };
+            let source_label = self.resolve_label(&edge.source_type, edge.source_id);
             let source = KgNode { node_type: edge.source_type.clone(), id: edge.source_id, label: source_label };
-            edges.push((edge, source));
+            edges.push((edge, source, true)); // true = incoming
         }
 
         Ok(TraversalResult { root, edges })
@@ -69,7 +82,7 @@ impl<'a, S: Store> KgEngine<'a, S> {
             visited.insert((format!("{:?}", nt.clone()), nid));
 
             let result = self.traverse(nt, nid)?;
-            for (edge, target) in &result.edges {
+            for (edge, target, _incoming) in &result.edges {
                 if !visited.contains(&(format!("{:?}", target.node_type), target.id)) {
                     queue.push((target.node_type.clone(), target.id, depth + 1));
                 }
@@ -125,6 +138,7 @@ mod tests {
         assert_eq!(result.root.label, "Finding A");
         assert_eq!(result.edges.len(), 1); // outgoing: supports F2
         assert_eq!(result.edges[0].0.relation, EdgeType::Supports);
+        // Third element is is_incoming flag
     }
 
     #[test]
