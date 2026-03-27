@@ -158,6 +158,7 @@ pub enum FindingAction {
 pub enum DecAction {
     Add { what: String, #[arg(long)] why: Option<String>, #[arg(long)] experiment: Option<i64> },
     List,
+    Get { id: i64 },
 }
 
 #[derive(Subcommand)]

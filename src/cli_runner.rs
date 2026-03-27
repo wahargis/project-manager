@@ -233,6 +233,27 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         println!("  #{}: {} (exp: {:?})", d.id, d.what, d.experiment_id);
                     }
                 }
+                DecAction::Get { id } => {
+                    let decs = store.list_decisions(proj.id)?;
+                    if let Some(d) = decs.iter().find(|d| d.id == id) {
+                        println!("Decision #{}: {}", d.id, d.what);
+                        if let Some(w) = &d.why { println!("  Why: {}", w); }
+                        if let Some(eid) = d.experiment_id { println!("  Experiment: #{}", eid); }
+                        // Show edges
+                        let kg = KgEngine::new(&store);
+                        if let Ok(result) = kg.traverse(NodeType::Decision, d.id) {
+                            for (edge, target, incoming) in &result.edges {
+                                if *incoming {
+                                    println!("  <--{:?}-- {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                                } else {
+                                    println!("  --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                                }
+                            }
+                        }
+                    } else {
+                        eprintln!("Decision #{} not found", id);
+                    }
+                }
             }
         }
 
