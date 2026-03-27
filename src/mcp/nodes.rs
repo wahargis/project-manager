@@ -18,6 +18,13 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
     match store.create_finding(exp_id, text) {
         Ok(f) => {
             let mut out = format!("Finding #{} created", f.id);
+            // Auto-create Experiment --Produced--> Finding edge
+            if let Some(eid_val) = exp_id {
+                match store.create_edge(NodeType::Experiment, eid_val, NodeType::Finding, f.id, EdgeType::ProducedBy) {
+                    Ok(_) => out += &format!(" + auto-edge Experiment#{} --Produced--> Finding#{}", eid_val, f.id),
+                    Err(e) => out += &format!(" (edge auto-create note: {})", e),
+                }
+            }
             // Warn about orphaned findings (no experiment)
             if exp_id.is_none() {
                 out += " (WARNING: no experiment_id — orphaned findings are less useful for traceability)";
@@ -199,8 +206,24 @@ pub fn tool_exp_complete(store: &SqliteStore, eid: i64, status: &str, result: &s
     let mut out = format!("Experiment #{} updated: status={}, result set.\n", eid, status);
     if let Some(text) = finding_text {
         match store.create_finding(Some(eid), text) {
-            Ok(f) => { out += &format!("Finding #{} created.\n", f.id); }
+            Ok(f) => {
+                out += &format!("Finding #{} created.\n", f.id);
+                // Auto-create Experiment --ProducedBy--> Finding edge
+                match store.create_edge(NodeType::Experiment, eid, NodeType::Finding, f.id, EdgeType::ProducedBy) {
+                    Ok(_) => out += &format!("Auto-edge: Experiment#{} --Produced--> Finding#{}\n", eid, f.id),
+                    Err(e) => out += &format!("(edge auto-create note: {})\n", e),
+                }
+            }
             Err(e) => { out += &format!("Error creating finding: {}\n", e); }
+        }
+    } else {
+        // No finding_text provided — check if experiment has ANY existing findings
+        let has_findings = match store.list_findings(Some(eid)) {
+            Ok(findings) => !findings.is_empty(),
+            Err(_) => false,
+        };
+        if !has_findings {
+            out += "\nWARNING: Completing experiment with no findings logged.\n                    Findings capture what was observed. Use pm_log_finding to record observations.\n";
         }
     }
     out
