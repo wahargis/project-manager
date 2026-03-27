@@ -403,6 +403,38 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     store.delete_edge(id)?;
                     println!("Edge #{} deleted", id);
                 }
+                KgAction::From { node_type, node_id } => {
+                    let nt = match node_type.as_str() {
+                        "Finding" | "finding" | "f" => NodeType::Finding,
+                        "Experiment" | "experiment" | "e" => NodeType::Experiment,
+                        "Decision" | "decision" | "d" => NodeType::Decision,
+                        "Phase" | "phase" | "p" => NodeType::Phase,
+                        "Research" | "research" | "r" => NodeType::Research,
+                        "Literature" | "literature" | "l" => NodeType::Literature,
+                        _ => return Err(format!("Unknown node type: {}", node_type).into()),
+                    };
+                    let edges = store.get_edges_from(nt.clone(), node_id)?;
+                    for e in &edges {
+                        println!("  #{}: {:?} #{} --{:?}--> {:?} #{}", e.id, e.source_type, e.source_id, e.relation, e.target_type, e.target_id);
+                    }
+                    println!("\n{} edges from {:?} #{}", edges.len(), nt, node_id);
+                }
+                KgAction::To { node_type, node_id } => {
+                    let nt = match node_type.as_str() {
+                        "Finding" | "finding" | "f" => NodeType::Finding,
+                        "Experiment" | "experiment" | "e" => NodeType::Experiment,
+                        "Decision" | "decision" | "d" => NodeType::Decision,
+                        "Phase" | "phase" | "p" => NodeType::Phase,
+                        "Research" | "research" | "r" => NodeType::Research,
+                        "Literature" | "literature" | "l" => NodeType::Literature,
+                        _ => return Err(format!("Unknown node type: {}", node_type).into()),
+                    };
+                    let edges = store.get_edges_to(nt.clone(), node_id)?;
+                    for e in &edges {
+                        println!("  #{}: {:?} #{} --{:?}--> {:?} #{}", e.id, e.source_type, e.source_id, e.relation, e.target_type, e.target_id);
+                    }
+                    println!("\n{} edges to {:?} #{}", edges.len(), nt, node_id);
+                }
             }
         }
 

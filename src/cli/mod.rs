@@ -178,6 +178,20 @@ pub enum KgAction {
     },
     /// List all KG edges
     Edges,
+    /// List edges FROM a specific node
+    From {
+        /// Source node type (f/e/d/p/r/l)
+        node_type: String,
+        /// Source node ID
+        node_id: i64,
+    },
+    /// List edges TO a specific node
+    To {
+        /// Target node type (f/e/d/p/r/l)
+        node_type: String,
+        /// Target node ID
+        node_id: i64,
+    },
     /// Delete a KG edge by ID
     Rm {
         /// Edge ID to delete
