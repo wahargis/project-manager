@@ -85,6 +85,10 @@ pub enum Commands {
         #[command(subcommand)]
         action: KgAction,
     },
+    /// Project statistics — KG node and edge counts
+    Stats {
+        project: String,
+    },
     /// Cross-project dashboard
     Dashboard,
     /// Next actions for a project

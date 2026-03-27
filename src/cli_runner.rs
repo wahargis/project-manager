@@ -21,6 +21,41 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let store = SqliteStore::new(&db_path)?;
 
     match cli.command {
+        Commands::Stats { project } => {
+            let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+            let phases = store.list_phases(proj.id)?;
+            let mut exp_count = 0;
+            let mut finding_count = 0;
+            for p in &phases {
+                exp_count += store.list_experiments(Some(p.id)).map(|e| e.len()).unwrap_or(0);
+                for e in store.list_experiments(Some(p.id)).unwrap_or_default() {
+                    finding_count += store.list_findings(Some(e.id)).map(|f| f.len()).unwrap_or(0);
+                }
+            }
+            let decisions = store.list_decisions(proj.id).map(|d| d.len()).unwrap_or(0);
+            let research = store.list_research(None).map(|r| r.len()).unwrap_or(0);
+            let principles = store.list_principles(proj.id).map(|p| p.len()).unwrap_or(0);
+            let hypotheses = store.list_hypotheses(None).map(|h| h.len()).unwrap_or(0);
+            let constraints = store.list_constraints(proj.id).map(|c| c.len()).unwrap_or(0);
+            let literature = store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0);
+            let feedback_count = store.list_feedback(proj.id).map(|f| f.len()).unwrap_or(0);
+            let edges = store.list_all_edges().map(|e| e.len()).unwrap_or(0);
+
+            println!("=== {} KG Stats ===", proj.name);
+            println!("  Phases:      {}", phases.len());
+            println!("  Experiments: {}", exp_count);
+            println!("  Findings:    {}", finding_count);
+            println!("  Decisions:   {}", decisions);
+            println!("  Research:    {}", research);
+            println!("  Principles:  {}", principles);
+            println!("  Hypotheses:  {}", hypotheses);
+            println!("  Constraints: {}", constraints);
+            println!("  Literature:  {}", literature);
+            println!("  Feedback:    {}", feedback_count);
+            println!("  Edges:       {}", edges);
+            println!("  Total nodes: {}", phases.len() + exp_count + finding_count + decisions + research + principles + hypotheses + constraints + literature + feedback_count);
+        }
+
         Commands::Dashboard => {
             let projects = store.list_projects()?;
             println!("=== Cross-Project Dashboard ===\n");
