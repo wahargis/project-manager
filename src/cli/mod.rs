@@ -149,6 +149,7 @@ pub enum ExpAction {
 pub enum FindingAction {
     Add { text: String, #[arg(long)] experiment: Option<i64> },
     List { #[arg(long)] experiment: Option<i64> },
+    Update { id: i64, #[arg(long)] text: Option<String>, #[arg(long)] experiment: Option<i64> },
     Traverse { id: i64, #[arg(long, default_value_t = 1)] depth: usize },
 }
 
@@ -219,6 +220,7 @@ pub enum HypAction {
     List { #[arg(long)] phase: Option<i64> },
     Test { id: i64, #[arg(long)] experiment: i64 },
     Resolve { id: i64, #[arg(long)] status: String, #[arg(long)] finding: Option<i64> },
+
 }
 
 #[derive(Subcommand)]

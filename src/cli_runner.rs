@@ -176,6 +176,21 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         println!("  #{}: {} (exp: {:?})", f.id, &f.text[..f.text.len().min(80)], f.experiment_id);
                     }
                 }
+                FindingAction::Update { id, text, experiment } => {
+                    // Update finding text and/or experiment
+                    let sqlite = "/home/atari2036/gen-ai/RAG/kotaemon-app/kotaemon-app/install_dir/conda/bin/sqlite3";
+                    let db = format!("{}/.local/share/pm/pm.db", std::env::var("HOME").unwrap_or_default());
+                    if let Some(t) = &text {
+                        let escaped = t.replace("'", "''");
+                        let sql = format!("UPDATE findings SET text='{}' WHERE id={}", escaped, id);
+                        std::process::Command::new(sqlite).args([&db, &sql]).status().ok();
+                    }
+                    if let Some(eid) = experiment {
+                        let sql = format!("UPDATE findings SET experiment_id={} WHERE id={}", eid, id);
+                        std::process::Command::new(sqlite).args([&db, &sql]).status().ok();
+                    }
+                    println!("Finding #{} updated", id);
+                }
                 FindingAction::Traverse { id, depth } => {
                     let kg = KgEngine::new(&store);
                     let results = kg.traverse_deep(NodeType::Finding, id, depth)?;
@@ -286,7 +301,9 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     let s = match status.as_str() {
                         "confirmed" => HypothesisStatus::Confirmed,
                         "refuted" => HypothesisStatus::Refuted,
-                        _ => return Err(format!("Invalid status: {} (use confirmed/refuted)", status).into()),
+                        "proposed" => HypothesisStatus::Proposed,
+                        "testing" => HypothesisStatus::Testing,
+                        _ => return Err(format!("Invalid status: {} (use confirmed/refuted/proposed/testing)", status).into()),
                     };
                     store.update_hypothesis(id, s, None, finding)?;
                     println!("Hypothesis #{} resolved: {}", id, status);
