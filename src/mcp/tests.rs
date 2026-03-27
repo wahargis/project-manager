@@ -92,7 +92,7 @@ fn test_decision_with_project_name() {
     let _ = setup_project(&store);
     let why_text = "a".repeat(60);
     let what_text = "b".repeat(60);
-    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, Some("test-project"));
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None, Some("test-project"));
     assert!(result.contains("Decision #"));
     // Verify project_id was stored
     let decisions = store.list_decisions(1).unwrap();
@@ -106,7 +106,7 @@ fn test_decision_with_project_alias() {
     let _ = setup_project(&store);
     let why_text = "a".repeat(60);
     let what_text = "b".repeat(60);
-    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, Some("tp"));
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None, Some("tp"));
     assert!(result.contains("Decision #"));
 }
 
@@ -116,7 +116,7 @@ fn test_decision_with_invalid_project() {
     let _ = setup_project(&store);
     let why_text = "a".repeat(60);
     let what_text = "b".repeat(60);
-    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, Some("nonexistent"));
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None, Some("nonexistent"));
     assert!(result.contains("Project not found"));
 }
 
@@ -125,7 +125,7 @@ fn test_decision_why_required_validation() {
     let store = test_store();
     let _ = setup_project(&store);
     let what_text = "b".repeat(60);
-    let result = super::nodes::tool_decision(&store, &what_text, None, None, None);
+    let result = super::nodes::tool_decision(&store, &what_text, None, None, None, None);
     assert!(result.contains("VALIDATION ERROR"));
     assert!(result.contains("why"));
 }
@@ -136,7 +136,7 @@ fn test_decision_without_project_still_works() {
     let _ = setup_project(&store);
     let why_text = "a".repeat(60);
     let what_text = "b".repeat(60);
-    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None);
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None, None);
     assert!(result.contains("Decision #"));
 }
 
@@ -308,7 +308,7 @@ fn test_hyp_testing_to_refuted_creates_contradiction_edge() {
     let disproving = store.create_finding(Some(exp_id), "Disproving evidence").unwrap();
     let result = super::nodes::tool_hyp_update(&store, hyp.id, "refuted", None, Some(disproving.id), None, None, None);
     assert!(result.contains("Refuted"));
-    assert!(result.contains("Auto-created edge"));
+    assert!(result.contains("Contradicts"), "Expected Contradicts in: {}", result);
     // Verify the contradiction edge was created
     let edges = store.get_edges_to(NodeType::Hypothesis, hyp.id).unwrap();
     let contradicts: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Contradicts).collect();
@@ -795,8 +795,10 @@ fn test_finding_suggests_experiment_and_literature_edges() {
     let text = "a".repeat(150);
     let result = super::nodes::tool_log_finding(&store, exp_id, &text);
     assert!(result.contains("Finding #"));
-    // Should suggest edge to experiment
-    assert!(result.contains("target_type=experiment"), "Expected experiment edge suggestion in: {}", result);
+    // Should have causal guidance section
+    assert!(result.contains("Causal Links"), "Expected causal links section in: {}", result);
+    // Should suggest downstream edges (findings inform decisions/hypotheses)
+    assert!(result.contains("target_type=Decision") || result.contains("target_type=Hypothesis"), "Expected downstream suggestions in: {}", result);
     // Should suggest edge to literature
     assert!(result.contains("Recent literature"), "Expected literature suggestion in: {}", result);
 }
@@ -902,4 +904,411 @@ fn test_create_subproject_invalid_parent_rejected() {
     let store = test_store();
     let result = store.create_project("orphan", None, Some(9999));
     assert!(result.is_err(), "Should reject invalid parent_id");
+}
+
+// === Issue #19: Causal Backbone Edge Enforcement ===
+
+#[test]
+fn test_log_finding_auto_creates_phase_contains_edge() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    let text = "a".repeat(150);
+    let result = super::nodes::tool_log_finding(&store, exp_id, &text);
+    assert!(result.contains("Finding #"));
+    // Should auto-create Phase --Contains--> Finding
+    assert!(result.contains("Phase#") && result.contains("--Contains-->") && result.contains("Finding#"),
+        "Expected Phase --Contains--> Finding auto-edge in: {}", result);
+    // Verify both auto-edges exist
+    let findings = store.list_findings(Some(exp_id)).unwrap();
+    let fid = findings.last().unwrap().id;
+    let edges = store.get_edges_to(NodeType::Finding, fid).unwrap();
+    let contains: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Contains && e.source_type == NodeType::Phase).collect();
+    assert_eq!(contains.len(), 1, "Expected exactly 1 Phase --Contains--> Finding edge");
+    assert_eq!(contains[0].source_id, phase_id);
+    let produced: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::ProducedBy).collect();
+    assert_eq!(produced.len(), 1, "Expected exactly 1 Experiment --ProducedBy--> Finding edge");
+}
+
+#[test]
+fn test_log_finding_no_phase_edge_without_experiment() {
+    let store = test_store();
+    let _ = setup_project(&store);
+    let text = "a".repeat(150);
+    // eid=0 means no experiment
+    let result = super::nodes::tool_log_finding(&store, 0, &text);
+    assert!(result.contains("Finding #"));
+    // Should NOT contain Phase --Contains-->
+    assert!(!result.contains("--Contains-->"), "Should not auto-create phase edge without experiment: {}", result);
+}
+
+#[test]
+fn test_log_finding_causal_guidance_section() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    let text = "a".repeat(150);
+    let result = super::nodes::tool_log_finding(&store, exp_id, &text);
+    assert!(result.contains("=== Causal Links ==="), "Expected causal links section in: {}", result);
+    assert!(result.contains("Auto-created:"), "Expected auto-created section in: {}", result);
+    assert!(result.contains("Suggested (specify if applicable):"), "Expected suggestions in: {}", result);
+    // Should suggest decision and hypothesis edges
+    assert!(result.contains("informs a decision"), "Expected decision suggestion: {}", result);
+    assert!(result.contains("supports a hypothesis"), "Expected hypothesis suggestion: {}", result);
+}
+
+#[test]
+fn test_decision_warns_no_causal_upstream() {
+    let store = test_store();
+    let _ = setup_project(&store);
+    let why_text = "a".repeat(60);
+    let what_text = "b".repeat(60);
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None, None);
+    assert!(result.contains("Decision #"));
+    assert!(result.contains("WARNING"), "Expected warning about no causal upstream: {}", result);
+    assert!(result.contains("experiment_id") && result.contains("finding_ids"),
+        "Expected guidance to provide causal upstream: {}", result);
+}
+
+#[test]
+fn test_decision_auto_creates_experiment_informed_edge() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    let why_text = "a".repeat(60);
+    let what_text = "b".repeat(60);
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), Some(exp_id), None, None);
+    assert!(result.contains("Decision #"));
+    // Should auto-create Experiment --Informed--> Decision
+    assert!(result.contains("Experiment#") && result.contains("--Informed-->") && result.contains("Decision#"),
+        "Expected Experiment --Informed--> Decision auto-edge in: {}", result);
+    // No warning since experiment_id was provided
+    assert!(!result.contains("WARNING"), "Should not warn when experiment_id provided: {}", result);
+    // Verify edge in DB
+    let decisions = store.list_decisions(0).unwrap();
+    let did = decisions.last().unwrap().id;
+    let edges = store.get_edges_to(NodeType::Decision, did).unwrap();
+    let informed: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Informed && e.source_type == NodeType::Experiment).collect();
+    assert_eq!(informed.len(), 1);
+    assert_eq!(informed[0].source_id, exp_id);
+}
+
+#[test]
+fn test_decision_auto_creates_finding_informed_edges() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    let text = "a".repeat(150);
+    let f1 = store.create_finding(Some(exp_id), &text).unwrap();
+    let f2 = store.create_finding(Some(exp_id), &text).unwrap();
+    let why_text = "a".repeat(60);
+    let what_text = "b".repeat(60);
+    let fids = format!("{},{}", f1.id, f2.id);
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, Some(&fids), None);
+    assert!(result.contains("Decision #"));
+    // Should auto-create Finding --Informed--> Decision for each
+    assert!(result.contains(&format!("Finding#{}", f1.id)), "Expected finding #{} edge: {}", f1.id, result);
+    assert!(result.contains(&format!("Finding#{}", f2.id)), "Expected finding #{} edge: {}", f2.id, result);
+    // No warning since finding_ids was provided
+    assert!(!result.contains("WARNING"), "Should not warn when finding_ids provided: {}", result);
+}
+
+#[test]
+fn test_decision_causal_guidance_suggests_downstream() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    let why_text = "a".repeat(60);
+    let what_text = "b".repeat(60);
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), Some(exp_id), None, None);
+    assert!(result.contains("=== Causal Links ==="), "Expected causal links: {}", result);
+    assert!(result.contains("spawns a new experiment"), "Expected experiment downstream suggestion: {}", result);
+    assert!(result.contains("updates a hypothesis"), "Expected hypothesis downstream suggestion: {}", result);
+    assert!(result.contains("derives a principle"), "Expected principle downstream suggestion: {}", result);
+}
+
+#[test]
+fn test_exp_complete_auto_creates_phase_contains_experiment_edge() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    let result = super::nodes::tool_exp_complete(&store, exp_id, "pass", "result text", None);
+    assert!(result.contains("Experiment #"));
+    // Should auto-create Phase --Contains--> Experiment
+    assert!(result.contains(&format!("Phase#{}", phase_id)) && result.contains("--Contains-->") && result.contains(&format!("Experiment#{}", exp_id)),
+        "Expected Phase --Contains--> Experiment auto-edge in: {}", result);
+}
+
+#[test]
+fn test_exp_complete_auto_creates_phase_finding_edges() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    let result = super::nodes::tool_exp_complete(&store, exp_id, "pass", "result text", Some("A finding from the experiment"));
+    assert!(result.contains("Finding #"));
+    // Should auto-create Phase --Contains--> Finding
+    assert!(result.contains(&format!("Phase#{}", phase_id)) && result.contains("--Contains--> Finding"),
+        "Expected Phase --Contains--> Finding auto-edge in: {}", result);
+    // Should auto-create Experiment --ProducedBy--> Finding
+    assert!(result.contains(&format!("Experiment#{}", exp_id)) && result.contains("--ProducedBy-->"),
+        "Expected Experiment --ProducedBy--> Finding auto-edge in: {}", result);
+}
+
+#[test]
+fn test_exp_complete_causal_guidance() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    let result = super::nodes::tool_exp_complete(&store, exp_id, "pass", "result text", None);
+    assert!(result.contains("=== Causal Links ==="), "Expected causal links: {}", result);
+    assert!(result.contains("tested a hypothesis"), "Expected hypothesis suggestion: {}", result);
+    assert!(result.contains("warrants a decision"), "Expected decision suggestion: {}", result);
+}
+
+#[test]
+fn test_hyp_update_testing_auto_creates_tested_by_edge() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    let hyp = store.create_hypothesis(Some(phase_id), "Test hypothesis").unwrap();
+    let finding = store.create_finding(Some(exp_id), "Supporting evidence").unwrap();
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Hypothesis, hyp.id, EdgeType::Supports).unwrap();
+    // Transition to testing with experiment_id
+    let result = super::nodes::tool_hyp_update(&store, hyp.id, "testing", Some(exp_id), None, None, None, None);
+    assert!(result.contains("Testing"), "Expected Testing status: {}", result);
+    // Should auto-create Experiment --TestedBy--> Hypothesis
+    assert!(result.contains("TestedBy"), "Expected TestedBy auto-edge in: {}", result);
+    // Verify edge in DB
+    let edges = store.get_edges_to(NodeType::Hypothesis, hyp.id).unwrap();
+    let tested: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::TestedBy).collect();
+    assert_eq!(tested.len(), 1, "Expected 1 TestedBy edge, got {}", tested.len());
+    assert_eq!(tested[0].source_id, exp_id);
+}
+
+#[test]
+fn test_hyp_update_confirmed_auto_creates_supports_edge() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    let hyp = store.create_hypothesis(Some(phase_id), "Test hypothesis").unwrap();
+    let finding = store.create_finding(Some(exp_id), "Supporting evidence").unwrap();
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Hypothesis, hyp.id, EdgeType::Supports).unwrap();
+    store.update_hypothesis(hyp.id, HypothesisStatus::Testing, None, None).unwrap();
+    // Confirm with finding_id
+    let confirming = store.create_finding(Some(exp_id), "Confirming evidence").unwrap();
+    let result = super::nodes::tool_hyp_update(&store, hyp.id, "confirmed", None, Some(confirming.id), None, None, None);
+    assert!(result.contains("Confirmed"), "Expected Confirmed status: {}", result);
+    // Should auto-create Finding --Supports--> Hypothesis
+    let edges = store.get_edges_to(NodeType::Hypothesis, hyp.id).unwrap();
+    let supports: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Supports).collect();
+    // Should have 2 supports edges: original + confirmation
+    assert_eq!(supports.len(), 2, "Expected 2 Supports edges (original + confirmation), got {}: {:?}", supports.len(), supports);
+}
+
+#[test]
+fn test_hyp_update_testing_causal_guidance() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    let hyp = store.create_hypothesis(Some(phase_id), "Test hypothesis").unwrap();
+    let finding = store.create_finding(Some(exp_id), "Supporting evidence").unwrap();
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Hypothesis, hyp.id, EdgeType::Supports).unwrap();
+    let result = super::nodes::tool_hyp_update(&store, hyp.id, "testing", Some(exp_id), None, None, None, None);
+    assert!(result.contains("=== Causal Links ==="), "Expected causal links: {}", result);
+    assert!(result.contains("Log findings"), "Expected finding logging suggestion: {}", result);
+    assert!(result.contains("confirms or refutes"), "Expected confirm/refute suggestion: {}", result);
+}
+
+#[test]
+fn test_hyp_update_refuted_causal_guidance() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    let hyp = store.create_hypothesis(Some(phase_id), "Test hypothesis").unwrap();
+    let finding = store.create_finding(Some(exp_id), "Supporting evidence").unwrap();
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Hypothesis, hyp.id, EdgeType::Supports).unwrap();
+    store.update_hypothesis(hyp.id, HypothesisStatus::Testing, None, None).unwrap();
+    let disproving = store.create_finding(Some(exp_id), "Disproving evidence").unwrap();
+    let result = super::nodes::tool_hyp_update(&store, hyp.id, "refuted", None, Some(disproving.id), None, None, None);
+    assert!(result.contains("Refuted"), "Expected Refuted status: {}", result);
+    assert!(result.contains("Contradicts"), "Expected Contradicts in auto-edges: {}", result);
+    assert!(result.contains("new hypothesis"), "Expected new hypothesis suggestion: {}", result);
+}
+
+#[test]
+fn test_research_complete_auto_creates_phase_contains_edge() {
+    let store = test_store();
+    let (_, phase_id, _) = setup_project(&store);
+    let research = store.create_research(Some(phase_id), "Research task").unwrap();
+    let result = super::nodes::tool_research_complete(&store, research.id, "complete", Some("Report text"), Some(phase_id), None);
+    assert!(result.contains("Research #"));
+    // Should auto-create Phase --Contains--> Research
+    assert!(result.contains("Phase#") && result.contains("--Contains-->") && result.contains("Research#"),
+        "Expected Phase --Contains--> Research auto-edge in: {}", result);
+    // Verify edge in DB
+    let edges = store.get_edges_to(NodeType::Research, research.id).unwrap();
+    let contains: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Contains).collect();
+    assert_eq!(contains.len(), 1);
+    assert_eq!(contains[0].source_id, phase_id);
+}
+
+#[test]
+fn test_research_complete_auto_derives_phase_from_record() {
+    let store = test_store();
+    let (_, phase_id, _) = setup_project(&store);
+    let research = store.create_research(Some(phase_id), "Research task").unwrap();
+    // Don't pass phase_id — should auto-derive from research.phase_id
+    let result = super::nodes::tool_research_complete(&store, research.id, "complete", Some("Report text"), None, None);
+    assert!(result.contains("Research #"));
+    // Should still auto-create Phase --Contains--> Research from the record's phase_id
+    let edges = store.get_edges_to(NodeType::Research, research.id).unwrap();
+    let contains: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Contains).collect();
+    assert_eq!(contains.len(), 1, "Expected phase edge derived from research record");
+}
+
+#[test]
+fn test_research_complete_auto_creates_finding_informed_edges() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    let text = "a".repeat(150);
+    let f1 = store.create_finding(Some(exp_id), &text).unwrap();
+    let f2 = store.create_finding(Some(exp_id), &text).unwrap();
+    let research = store.create_research(Some(phase_id), "Research task").unwrap();
+    let fids = format!("{},{}", f1.id, f2.id);
+    let result = super::nodes::tool_research_complete(&store, research.id, "complete", Some("Report"), Some(phase_id), Some(&fids));
+    // Should auto-create Finding --Informed--> Research for each
+    assert!(result.contains(&format!("Finding#{}", f1.id)), "Expected finding #{} edge: {}", f1.id, result);
+    assert!(result.contains(&format!("Finding#{}", f2.id)), "Expected finding #{} edge: {}", f2.id, result);
+    // Verify edges in DB
+    let edges = store.get_edges_to(NodeType::Research, research.id).unwrap();
+    let informed: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Informed).collect();
+    assert_eq!(informed.len(), 2, "Expected 2 Finding --Informed--> Research edges");
+}
+
+#[test]
+fn test_research_complete_causal_guidance() {
+    let store = test_store();
+    let (_, phase_id, _) = setup_project(&store);
+    let research = store.create_research(Some(phase_id), "Research task").unwrap();
+    let result = super::nodes::tool_research_complete(&store, research.id, "complete", Some("Report"), None, None);
+    assert!(result.contains("=== Causal Links ==="), "Expected causal links: {}", result);
+    assert!(result.contains("produced findings"), "Expected findings suggestion: {}", result);
+    assert!(result.contains("informs a decision"), "Expected decision suggestion: {}", result);
+}
+
+#[test]
+fn test_constraint_add_auto_creates_tested_by_edge() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    let args = serde_json::json!({
+        "project": "test-project",
+        "scope": "hardware",
+        "text": &"a".repeat(60),
+        "source": "benchmark",
+        "experiment_id": exp_id
+    });
+    let result = super::nodes::tool_constraint_add(&store, &args);
+    assert!(result.contains("Constraint #"));
+    // Should auto-create Experiment --TestedBy--> Constraint
+    assert!(result.contains("TestedBy"), "Expected TestedBy auto-edge in: {}", result);
+    // Verify edge in DB
+    let constraints = store.list_constraints(1).unwrap();
+    let cid = constraints.last().unwrap().id;
+    let edges = store.get_edges_to(NodeType::Constraint, cid).unwrap();
+    let tested: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::TestedBy).collect();
+    assert_eq!(tested.len(), 1);
+    assert_eq!(tested[0].source_id, exp_id);
+}
+
+#[test]
+fn test_constraint_add_causal_guidance() {
+    let store = test_store();
+    let _ = setup_project(&store);
+    let args = serde_json::json!({
+        "project": "test-project",
+        "scope": "hardware",
+        "text": &"a".repeat(60),
+        "source": "test"
+    });
+    let result = super::nodes::tool_constraint_add(&store, &args);
+    assert!(result.contains("Constraint #"));
+    // Causal guidance section should be present even without auto-edges
+    // (suggestions for pending experiments exist from setup_project)
+    assert!(result.contains("=== Causal Links ===") || result.contains("Suggest:"),
+        "Expected some edge guidance in: {}", result);
+}
+
+#[test]
+fn test_decision_with_both_experiment_and_findings() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    let text = "a".repeat(150);
+    let f1 = store.create_finding(Some(exp_id), &text).unwrap();
+    let why_text = "a".repeat(60);
+    let what_text = "b".repeat(60);
+    let fids = format!("{}", f1.id);
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), Some(exp_id), Some(&fids), None);
+    assert!(result.contains("Decision #"));
+    // Both edges should be auto-created
+    assert!(result.contains("Experiment#") && result.contains("--Informed-->"),
+        "Expected experiment informed edge: {}", result);
+    assert!(result.contains(&format!("Finding#{}", f1.id)),
+        "Expected finding informed edge: {}", result);
+    // Should not warn since we have causal upstream
+    assert!(!result.contains("WARNING"), "Should not warn: {}", result);
+}
+
+#[test]
+fn test_parse_ids_helper() {
+    // Verify comma-separated parsing works correctly
+    let ids = super::nodes::parse_ids("1,2,3");
+    assert_eq!(ids, vec![1, 2, 3]);
+    let ids = super::nodes::parse_ids("42");
+    assert_eq!(ids, vec![42]);
+    let ids = super::nodes::parse_ids("");
+    assert!(ids.is_empty());
+    let ids = super::nodes::parse_ids("1, 2 , 3");
+    assert_eq!(ids, vec![1, 2, 3]);
+    let ids = super::nodes::parse_ids("abc,1,xyz");
+    assert_eq!(ids, vec![1]);
+}
+
+#[test]
+fn test_dispatch_decision_with_finding_ids() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    let text = "a".repeat(150);
+    let f1 = store.create_finding(Some(exp_id), &text).unwrap();
+    let args = serde_json::json!({
+        "what": "b".repeat(60),
+        "why": "c".repeat(60),
+        "finding_ids": format!("{}", f1.id)
+    });
+    let result = super::dispatch_tool(&store, "pm_decision", &args);
+    assert!(result.contains("Decision #"), "result: {}", result);
+    assert!(result.contains(&format!("Finding#{}", f1.id)), "Expected finding edge in dispatch: {}", result);
+}
+
+#[test]
+fn test_dispatch_research_complete_with_phase_and_findings() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    let text = "a".repeat(150);
+    let f1 = store.create_finding(Some(exp_id), &text).unwrap();
+    let research = store.create_research(Some(phase_id), "Research task").unwrap();
+    let args = serde_json::json!({
+        "research_id": research.id,
+        "status": "complete",
+        "report": "Done",
+        "phase_id": phase_id,
+        "finding_ids": format!("{}", f1.id)
+    });
+    let result = super::dispatch_tool(&store, "pm_research_complete", &args);
+    assert!(result.contains("Research #"), "result: {}", result);
+    assert!(result.contains("Phase#") && result.contains("--Contains-->"), "Expected phase edge in dispatch: {}", result);
+    assert!(result.contains(&format!("Finding#{}", f1.id)), "Expected finding edge in dispatch: {}", result);
+}
+
+#[test]
+fn test_dispatch_constraint_with_experiment_id() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    let args = serde_json::json!({
+        "project": "test-project",
+        "scope": "hardware",
+        "text": &"a".repeat(60),
+        "source": "benchmark",
+        "experiment_id": exp_id
+    });
+    let result = super::dispatch_tool(&store, "pm_constraint_add", &args);
+    assert!(result.contains("Constraint #"), "result: {}", result);
+    assert!(result.contains("TestedBy"), "Expected TestedBy edge in dispatch: {}", result);
 }

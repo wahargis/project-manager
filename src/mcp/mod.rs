@@ -217,8 +217,9 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             let what = args.get("what").and_then(|v| v.as_str()).unwrap_or("");
             let why = args.get("why").and_then(|v| v.as_str());
             let eid = args.get("experiment_id").and_then(|v| v.as_i64());
+            let finding_ids = args.get("finding_ids").and_then(|v| v.as_str());
             let project = args.get("project").and_then(|v| v.as_str());
-            nodes::tool_decision(store, what, why, eid, project)
+            nodes::tool_decision(store, what, why, eid, finding_ids, project)
         },
         "pm_exp_complete" => {
             let eid = args.get("experiment_id").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -262,7 +263,9 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             if !rv.is_ok() {
                 format!("\u{274c} VALIDATION ERROR:\n{}", rv.to_mcp_error())
             } else {
-                nodes::tool_research_complete(store, rid, status_str, report)
+                let phase_id = args.get("phase_id").and_then(|v| v.as_i64());
+                let finding_ids = args.get("finding_ids").and_then(|v| v.as_str());
+                nodes::tool_research_complete(store, rid, status_str, report, phase_id, finding_ids)
             }
         },
         "pm_principle_add" => nodes::tool_principle_add(store, args),
@@ -333,7 +336,7 @@ fn tool_definitions() -> Vec<ToolDef> {
         ToolDef {
             name: "pm_decision".into(),
             description: "Record a decision with rationale. 'why' is REQUIRED. Returns decision ID + recent findings for informed-by edges.".into(),
-            input_schema: serde_json::json!({"type": "object", "properties": {"what": {"type": "string", "description": "The decision made (min 50 chars)"}, "why": {"type": "string", "description": "Rationale, alternatives considered, evidence (REQUIRED, min 50 chars)"}, "experiment_id": {"type": "integer"}, "project": {"type": "string", "description": "Project name to associate this decision with"}}, "required": ["what", "why"]}),
+            input_schema: serde_json::json!({"type": "object", "properties": {"what": {"type": "string", "description": "The decision made (min 50 chars)"}, "why": {"type": "string", "description": "Rationale, alternatives considered, evidence (REQUIRED, min 50 chars)"}, "experiment_id": {"type": "integer", "description": "Experiment that led to this decision (causal upstream)"}, "finding_ids": {"type": "string", "description": "Comma-separated finding IDs that informed this decision (causal upstream)"}, "project": {"type": "string", "description": "Project name to associate this decision with"}}, "required": ["what", "why"]}),
         },
         ToolDef {
             name: "pm_add_edge".into(),
@@ -358,12 +361,12 @@ fn tool_definitions() -> Vec<ToolDef> {
         ToolDef {
             name: "pm_constraint_add".into(),
             description: "Add a hard constraint (hardware, budget, correctness requirement). Returns ID + phase/experiment edge suggestions.".into(),
-            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "hardware, software, or process"}, "text": {"type": "string"}, "source": {"type": "string", "description": "Where this constraint comes from (REQUIRED)"}, "severity": {"type": "string", "description": "hard (default) or soft"}, "resource": {"type": "string", "description": "Resource being constrained (e.g., GPU VRAM, context window)"}, "measured_value": {"type": "string", "description": "Current measured value"}, "expires_at": {"type": "string", "description": "Expiry date (YYYY-MM-DD) -- pm_review flags expired constraints"}}, "required": ["project", "scope", "text"]}),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "hardware, software, or process"}, "text": {"type": "string"}, "source": {"type": "string", "description": "Where this constraint comes from (REQUIRED)"}, "severity": {"type": "string", "description": "hard (default) or soft"}, "resource": {"type": "string", "description": "Resource being constrained (e.g., GPU VRAM, context window)"}, "measured_value": {"type": "string", "description": "Current measured value"}, "expires_at": {"type": "string", "description": "Expiry date (YYYY-MM-DD) -- pm_review flags expired constraints"}, "experiment_id": {"type": "integer", "description": "Experiment that tested/discovered this constraint (auto-creates TestedBy edge)"}}, "required": ["project", "scope", "text"]}),
         },
         ToolDef {
             name: "pm_research_complete".into(),
             description: "Complete a research/reflection action with a report.".into(),
-            input_schema: serde_json::json!({"type": "object", "properties": {"research_id": {"type": "integer"}, "status": {"type": "string", "description": "complete or abandoned"}, "report": {"type": "string", "description": "Research findings report"}}, "required": ["research_id", "status"]}),
+            input_schema: serde_json::json!({"type": "object", "properties": {"research_id": {"type": "integer"}, "status": {"type": "string", "description": "complete or abandoned"}, "report": {"type": "string", "description": "Research findings report"}, "phase_id": {"type": "integer", "description": "Phase this research belongs to (auto-creates Contains edge)"}, "finding_ids": {"type": "string", "description": "Comma-separated finding IDs that informed this research"}}, "required": ["research_id", "status"]}),
         },
         ToolDef {
             name: "pm_principle_add".into(),

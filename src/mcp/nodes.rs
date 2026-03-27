@@ -3,11 +3,45 @@
 //! Contains: pm_log_finding, pm_decision, pm_lit_add, pm_lit_status,
 //!           pm_exp_complete, pm_hyp_update, pm_research_complete,
 //!           pm_principle_add, pm_constraint_add
+//!
+//! Issue #19: Causal backbone edge enforcement — auto-creates edges
+//! based on node type's position in the causal chain:
+//!   Phase → Experiment → Finding → Decision → Hypothesis/Research
 
 use crate::store::sqlite::SqliteStore;
 use crate::store::{Store, NodeType, EdgeType, HypothesisStatus, ExperimentStatus};
 use crate::validation;
 use std::collections::HashSet;
+
+/// Helper: build the causal guidance section for a response.
+/// `auto_created` — list of auto-created edge descriptions.
+/// `suggestions` — list of (description, pm_add_edge command) tuples.
+fn causal_guidance(auto_created: &[String], suggestions: &[(String, String)]) -> String {
+    if auto_created.is_empty() && suggestions.is_empty() {
+        return String::new();
+    }
+    let mut out = "\n\n=== Causal Links ===\n".to_string();
+    if !auto_created.is_empty() {
+        out += "Auto-created:\n";
+        for ac in auto_created {
+            out += &format!("  + {}\n", ac);
+        }
+    }
+    if !suggestions.is_empty() {
+        out += "Suggested (specify if applicable):\n";
+        for (desc, cmd) in suggestions {
+            out += &format!("  → {}: {}\n", desc, cmd);
+        }
+    }
+    out
+}
+
+/// Parse comma-separated IDs from a string.
+pub fn parse_ids(s: &str) -> Vec<i64> {
+    s.split(',')
+        .filter_map(|part| part.trim().parse::<i64>().ok())
+        .collect()
+}
 
 pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
     let v = validation::validate_finding(text);
@@ -18,13 +52,27 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
     match store.create_finding(exp_id, text) {
         Ok(f) => {
             let mut out = format!("Finding #{} created", f.id);
+            let mut auto_edges: Vec<String> = Vec::new();
+            let mut suggestions: Vec<(String, String)> = Vec::new();
+
             // Auto-create Experiment --Produced--> Finding edge
             if let Some(eid_val) = exp_id {
                 match store.create_edge(NodeType::Experiment, eid_val, NodeType::Finding, f.id, EdgeType::ProducedBy) {
-                    Ok(_) => out += &format!(" + auto-edge Experiment#{} --Produced--> Finding#{}", eid_val, f.id),
+                    Ok(_) => auto_edges.push(format!("Experiment#{} --ProducedBy--> Finding#{}", eid_val, f.id)),
                     Err(e) => out += &format!(" (edge auto-create note: {})", e),
                 }
+
+                // #19: Auto-create Phase --Contains--> Finding if experiment has phase_id
+                if let Ok(exp) = store.get_experiment(eid_val) {
+                    if let Some(phase_id) = exp.phase_id {
+                        match store.create_edge(NodeType::Phase, phase_id, NodeType::Finding, f.id, EdgeType::Contains) {
+                            Ok(_) => auto_edges.push(format!("Phase#{} --Contains--> Finding#{}", phase_id, f.id)),
+                            Err(e) => out += &format!(" (phase edge note: {})", e),
+                        }
+                    }
+                }
             }
+
             // Warn about orphaned findings (no experiment)
             if exp_id.is_none() {
                 out += " (WARNING: no experiment_id — orphaned findings are less useful for traceability)";
@@ -33,6 +81,7 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                 out += &format!(" (WARNING: {} chars < 200 minimum for lab report format)", text.len());
             }
             out += ".\n";
+
             // Show siblings for edge suggestions
             if let Some(eid) = exp_id {
                 if let Ok(siblings) = store.list_findings(Some(eid)) {
@@ -43,14 +92,11 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                             let t = if s.text.len() > 60 { &s.text[..60] } else { &s.text };
                             out += &format!("  F#{}: {}\n", s.id, t);
                         }
-                        out += &format!("\nSuggest: pm_add_edge source_type=finding source_id={} target_type=finding target_id={} relation=supports\n", f.id, others[0].id);
                     }
                 }
-                // Suggest edges to the experiment
-                out += &format!("\nSuggest: pm_add_edge source_type=finding source_id={} target_type=experiment target_id={} relation=produced\n", f.id, eid);
             }
+
             // Suggest edges to recent literature
-            // We need a project_id to list literature — derive from experiment -> phase -> project
             if let Some(eid_val) = exp_id {
                 if let Ok(exp) = store.get_experiment(eid_val) {
                     if let Some(phase_id) = exp.phase_id {
@@ -63,13 +109,13 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                                         let t = if l.title.len() > 60 { &l.title[..60] } else { &l.title };
                                         out += &format!("  L#{}: {}\n", l.id, t);
                                     }
-                                    out += &format!("\nSuggest: pm_add_edge source_type=finding source_id={} target_type=literature target_id={} relation=cited\n", f.id, recent[0].id);
                                 }
                             }
                         }
                     }
                 }
             }
+
             // Surface active principles for the project (#12)
             if let Some(eid_val) = exp_id {
                 if let Ok(exp) = store.get_experiment(eid_val) {
@@ -91,13 +137,29 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                     }
                 }
             }
+
+            // #19: Causal guidance — Finding is produced by experiments, informs decisions/hypotheses
+            suggestions.push((
+                "If this finding informs a decision".to_string(),
+                format!("pm_add_edge source_type=Finding source_id={} target_type=Decision target_id=? relation=Informed", f.id),
+            ));
+            suggestions.push((
+                "If this finding supports a hypothesis".to_string(),
+                format!("pm_add_edge source_type=Finding source_id={} target_type=Hypothesis target_id=? relation=Supports", f.id),
+            ));
+            suggestions.push((
+                "If this finding contradicts a hypothesis".to_string(),
+                format!("pm_add_edge source_type=Finding source_id={} target_type=Hypothesis target_id=? relation=Contradicts", f.id),
+            ));
+
+            out += &causal_guidance(&auto_edges, &suggestions);
             out
         }
         Err(e) => format!("Error: {}", e),
     }
 }
 
-pub fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experiment_id: Option<i64>, project_name: Option<&str>) -> String {
+pub fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experiment_id: Option<i64>, finding_ids_str: Option<&str>, project_name: Option<&str>) -> String {
     let v = validation::validate_decision(what, why);
     if !v.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", v.to_mcp_error());
@@ -111,21 +173,57 @@ pub fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experim
     } else {
         None
     };
+
+    // Parse finding_ids from comma-separated string
+    let finding_ids: Vec<i64> = finding_ids_str
+        .map(|s| parse_ids(s))
+        .unwrap_or_default();
+
     match store.create_decision(experiment_id, what, why, project_id) {
         Ok(d) => {
             let mut out = format!("Decision #{} created: {}\n", d.id, d.what);
-            // Suggest informed-by edges from recent findings
-            if let Ok(findings) = store.list_findings(None) {
-                let recent: Vec<_> = findings.iter().rev().take(5).collect();
-                if !recent.is_empty() {
-                    out += "\nRecent findings (suggest informed-by edges):\n";
-                    for f in &recent {
-                        let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
-                        out += &format!("  F#{}: {}\n", f.id, t);
-                    }
-                    out += &format!("\nSuggest: pm_add_edge source_type=finding source_id={} target_type=decision target_id={} relation=informed\n", recent[0].id, d.id);
+            let mut auto_edges: Vec<String> = Vec::new();
+            let mut suggestions: Vec<(String, String)> = Vec::new();
+
+            // #19: Warn if no causal upstream provided
+            if experiment_id.is_none() && finding_ids.is_empty() {
+                out += "\n\u{26a0} WARNING: No causal upstream (experiment_id or finding_ids) provided.\n";
+                out += "Decisions should be traceable to evidence. Specify:\n";
+                out += "  - experiment_id: the experiment that led to this decision\n";
+                out += "  - finding_ids: comma-separated finding IDs that informed this decision\n";
+            }
+
+            // #19: Auto-create Experiment --Informed--> Decision edge
+            if let Some(eid) = experiment_id {
+                match store.create_edge(NodeType::Experiment, eid, NodeType::Decision, d.id, EdgeType::Informed) {
+                    Ok(_) => auto_edges.push(format!("Experiment#{} --Informed--> Decision#{}", eid, d.id)),
+                    Err(e) => out += &format!("(edge note: {})\n", e),
                 }
             }
+
+            // #19: Auto-create Finding --Informed--> Decision edges for each finding_id
+            for fid in &finding_ids {
+                match store.create_edge(NodeType::Finding, *fid, NodeType::Decision, d.id, EdgeType::Informed) {
+                    Ok(_) => auto_edges.push(format!("Finding#{} --Informed--> Decision#{}", fid, d.id)),
+                    Err(e) => out += &format!("(edge note for Finding#{}:  {})\n", fid, e),
+                }
+            }
+
+            // Suggest downstream edges
+            suggestions.push((
+                "If this decision spawns a new experiment".to_string(),
+                format!("pm_add_edge source_type=Decision source_id={} target_type=Experiment target_id=? relation=Informed", d.id),
+            ));
+            suggestions.push((
+                "If this decision updates a hypothesis".to_string(),
+                format!("pm_add_edge source_type=Decision source_id={} target_type=Hypothesis target_id=? relation=Informed", d.id),
+            ));
+            suggestions.push((
+                "If this decision derives a principle".to_string(),
+                format!("pm_principle_add project=<project> scope=project text=\"...\" decision_id={}", d.id),
+            ));
+
+            out += &causal_guidance(&auto_edges, &suggestions);
             out
         }
         Err(e) => format!("Error: {}", e),
@@ -204,15 +302,47 @@ pub fn tool_exp_complete(store: &SqliteStore, eid: i64, status: &str, result: &s
         return format!("Error updating experiment: {}", e);
     }
     let mut out = format!("Experiment #{} updated: status={}, result set.\n", eid, status);
+    let mut auto_edges: Vec<String> = Vec::new();
+    let mut suggestions: Vec<(String, String)> = Vec::new();
+
+    // #19: Auto-create Phase --Contains--> Experiment edge if experiment has phase_id
+    if let Ok(exp) = store.get_experiment(eid) {
+        if let Some(phase_id) = exp.phase_id {
+            match store.create_edge(NodeType::Phase, phase_id, NodeType::Experiment, eid, EdgeType::Contains) {
+                Ok(_) => auto_edges.push(format!("Phase#{} --Contains--> Experiment#{}", phase_id, eid)),
+                Err(e) => out += &format!("(phase-experiment edge note: {})\n", e),
+            }
+        }
+    }
+
     if let Some(text) = finding_text {
         match store.create_finding(Some(eid), text) {
             Ok(f) => {
                 out += &format!("Finding #{} created.\n", f.id);
                 // Auto-create Experiment --ProducedBy--> Finding edge
                 match store.create_edge(NodeType::Experiment, eid, NodeType::Finding, f.id, EdgeType::ProducedBy) {
-                    Ok(_) => out += &format!("Auto-edge: Experiment#{} --Produced--> Finding#{}\n", eid, f.id),
+                    Ok(_) => auto_edges.push(format!("Experiment#{} --ProducedBy--> Finding#{}", eid, f.id)),
                     Err(e) => out += &format!("(edge auto-create note: {})\n", e),
                 }
+                // #19: Auto-create Phase --Contains--> Finding edge
+                if let Ok(exp) = store.get_experiment(eid) {
+                    if let Some(phase_id) = exp.phase_id {
+                        match store.create_edge(NodeType::Phase, phase_id, NodeType::Finding, f.id, EdgeType::Contains) {
+                            Ok(_) => auto_edges.push(format!("Phase#{} --Contains--> Finding#{}", phase_id, f.id)),
+                            Err(e) => out += &format!("(phase-finding edge note: {})\n", e),
+                        }
+                    }
+                }
+
+                // #19: Suggest downstream edges for the finding
+                suggestions.push((
+                    "If this finding informs a decision".to_string(),
+                    format!("pm_add_edge source_type=Finding source_id={} target_type=Decision target_id=? relation=Informed", f.id),
+                ));
+                suggestions.push((
+                    "If this finding supports/contradicts a hypothesis".to_string(),
+                    format!("pm_add_edge source_type=Finding source_id={} target_type=Hypothesis target_id=? relation=Supports", f.id),
+                ));
             }
             Err(e) => { out += &format!("Error creating finding: {}\n", e); }
         }
@@ -226,6 +356,18 @@ pub fn tool_exp_complete(store: &SqliteStore, eid: i64, status: &str, result: &s
             out += "\nWARNING: Completing experiment with no findings logged.\n                    Findings capture what was observed. Use pm_log_finding to record observations.\n";
         }
     }
+
+    // #19: Suggest downstream edges for completed experiment
+    suggestions.push((
+        "If this experiment tested a hypothesis".to_string(),
+        format!("pm_hyp_update hypothesis_id=? status=<confirmed|refuted> experiment_id={}", eid),
+    ));
+    suggestions.push((
+        "If this result warrants a decision".to_string(),
+        format!("pm_decision what=\"...\" why=\"...\" experiment_id={}", eid),
+    ));
+
+    out += &causal_guidance(&auto_edges, &suggestions);
     out
 }
 
@@ -274,7 +416,6 @@ pub fn tool_hyp_update(store: &SqliteStore, hid: i64, status_str: &str, experime
         if let Some(fid) = finding_id {
             match store.create_edge(NodeType::Finding, fid, NodeType::Hypothesis, hid, EdgeType::Contradicts) {
                 Ok(edge) => {
-                    // Edge created successfully, will report below
                     let _ = edge;
                 }
                 Err(e) => return format!("Error creating contradiction edge: {}", e),
@@ -289,6 +430,29 @@ pub fn tool_hyp_update(store: &SqliteStore, hid: i64, status_str: &str, experime
         }
     }
 
+    let mut auto_edges: Vec<String> = Vec::new();
+    let mut suggestions: Vec<(String, String)> = Vec::new();
+
+    // #19: Auto-create Experiment --TestedBy--> Hypothesis when transitioning to testing
+    if hs == HypothesisStatus::Testing {
+        if let Some(eid) = experiment_id {
+            match store.create_edge(NodeType::Experiment, eid, NodeType::Hypothesis, hid, EdgeType::TestedBy) {
+                Ok(_) => auto_edges.push(format!("Experiment#{} --TestedBy--> Hypothesis#{}", eid, hid)),
+                Err(e) => { let _ = e; } // duplicate is fine
+            }
+        }
+    }
+
+    // #19: Auto-create Finding --Supports--> Hypothesis when confirming
+    if hs == HypothesisStatus::Confirmed {
+        if let Some(fid) = finding_id {
+            match store.create_edge(NodeType::Finding, fid, NodeType::Hypothesis, hid, EdgeType::Supports) {
+                Ok(_) => auto_edges.push(format!("Finding#{} --Supports--> Hypothesis#{}", fid, hid)),
+                Err(e) => { let _ = e; }
+            }
+        }
+    }
+
     match store.update_hypothesis(hid, hs.clone(), experiment_id, finding_id) {
         Ok(_) => {
             let mut out = format!("Hypothesis #{} updated to {:?}", hid, hs);
@@ -299,27 +463,98 @@ pub fn tool_hyp_update(store: &SqliteStore, hid: i64, status_str: &str, experime
                     "\n\nHypothesis confirmed. Consider creating a principle:\n  pm_principle_add project=<project> scope=project text=\"<principle derived from hypothesis #{}>\"\n",
                     hid
                 );
+                suggestions.push((
+                    "If confirmation warrants a decision".to_string(),
+                    format!("pm_decision what=\"...\" why=\"Based on confirmed hypothesis #{}\"", hid),
+                ));
             }
 
             // Auto-suggestion for refuted: mention the contradiction edge
             if hs == HypothesisStatus::Refuted {
                 if let Some(fid) = finding_id {
-                    out += &format!("\nAuto-created edge: Finding #{} --Contradicts--> Hypothesis #{}\n", fid, hid);
+                    auto_edges.push(format!("Finding#{} --Contradicts--> Hypothesis#{}", fid, hid));
                 }
+                suggestions.push((
+                    "If refutation warrants a new hypothesis".to_string(),
+                    format!("pm_add_edge source_type=Hypothesis source_id={} target_type=Hypothesis target_id=? relation=Supersedes", hid),
+                ));
             }
 
+            // Testing: suggest experiment and finding edges
+            if hs == HypothesisStatus::Testing {
+                suggestions.push((
+                    "Log findings from the testing experiment".to_string(),
+                    "pm_log_finding experiment_id=? text=\"...\"".to_string(),
+                ));
+                suggestions.push((
+                    "When evidence confirms or refutes".to_string(),
+                    format!("pm_hyp_update hypothesis_id={} status=<confirmed|refuted> finding_id=?", hid),
+                ));
+            }
+
+            out += &causal_guidance(&auto_edges, &suggestions);
             out
         }
         Err(e) => format!("Error: {}", e),
     }
 }
 
-pub fn tool_research_complete(store: &SqliteStore, rid: i64, status_str: &str, report: Option<&str>) -> String {
+pub fn tool_research_complete(store: &SqliteStore, rid: i64, status_str: &str, report: Option<&str>, phase_id: Option<i64>, finding_ids_str: Option<&str>) -> String {
     let rs = match status_str {
         _ => crate::store::ResearchStatus::Complete,
     };
     match store.update_research(rid, rs.clone(), report) {
-        Ok(_) => format!("Research #{} updated to {:?}", rid, rs),
+        Ok(_) => {
+            let mut out = format!("Research #{} updated to {:?}", rid, rs);
+            let mut auto_edges: Vec<String> = Vec::new();
+            let mut suggestions: Vec<(String, String)> = Vec::new();
+
+            // #19: Auto-create Phase --Contains--> Research if phase_id provided
+            if let Some(pid) = phase_id {
+                match store.create_edge(NodeType::Phase, pid, NodeType::Research, rid, EdgeType::Contains) {
+                    Ok(_) => auto_edges.push(format!("Phase#{} --Contains--> Research#{}", pid, rid)),
+                    Err(e) => out += &format!(" (phase edge note: {})", e),
+                }
+            } else {
+                // Try to derive phase_id from the research record itself
+                if let Ok(research) = store.get_research(rid) {
+                    if let Some(pid) = research.phase_id {
+                        match store.create_edge(NodeType::Phase, pid, NodeType::Research, rid, EdgeType::Contains) {
+                            Ok(_) => auto_edges.push(format!("Phase#{} --Contains--> Research#{}", pid, rid)),
+                            Err(e) => { let _ = e; }
+                        }
+                    }
+                }
+            }
+
+            // #19: Auto-create Finding --Informed--> Research for each finding_id
+            let finding_ids: Vec<i64> = finding_ids_str
+                .map(|s| parse_ids(s))
+                .unwrap_or_default();
+            for fid in &finding_ids {
+                match store.create_edge(NodeType::Finding, *fid, NodeType::Research, rid, EdgeType::Informed) {
+                    Ok(_) => auto_edges.push(format!("Finding#{} --Informed--> Research#{}", fid, rid)),
+                    Err(e) => out += &format!(" (finding edge note: {})", e),
+                }
+            }
+
+            // Suggest downstream edges
+            suggestions.push((
+                "If research produced findings".to_string(),
+                format!("pm_log_finding experiment_id=? text=\"Research #{} found: ...\"", rid),
+            ));
+            suggestions.push((
+                "If research informs a decision".to_string(),
+                format!("pm_add_edge source_type=Research source_id={} target_type=Decision target_id=? relation=Informed", rid),
+            ));
+            suggestions.push((
+                "If research supports/contradicts a hypothesis".to_string(),
+                format!("pm_add_edge source_type=Research source_id={} target_type=Hypothesis target_id=? relation=Supports", rid),
+            ));
+
+            out += &causal_guidance(&auto_edges, &suggestions);
+            out
+        }
         Err(e) => format!("Error: {}", e),
     }
 }
@@ -393,6 +628,7 @@ pub fn tool_constraint_add(store: &SqliteStore, args: &serde_json::Value) -> Str
     let resource = args.get("resource").and_then(|v| v.as_str());
     let measured_value = args.get("measured_value").and_then(|v| v.as_str());
     let expires_at = args.get("expires_at").and_then(|v| v.as_str());
+    let experiment_id = args.get("experiment_id").and_then(|v| v.as_i64());
 
     let cv = validation::validate_constraint(text, source);
     if !cv.is_ok() {
@@ -407,6 +643,16 @@ pub fn tool_constraint_add(store: &SqliteStore, args: &serde_json::Value) -> Str
         Some(proj) => match store.create_constraint(proj.id, scope, text, source, severity, resource, measured_value, expires_at) {
             Ok(con) => {
                 let mut out = format!("Constraint #{} added: {}", con.id, &text[..text.len().min(80)]);
+                let mut auto_edges: Vec<String> = Vec::new();
+                let mut suggestions: Vec<(String, String)> = Vec::new();
+
+                // #19: Auto-create Experiment --TestedBy--> Constraint if experiment_id provided
+                if let Some(eid) = experiment_id {
+                    match store.create_edge(NodeType::Experiment, eid, NodeType::Constraint, con.id, EdgeType::TestedBy) {
+                        Ok(_) => auto_edges.push(format!("Experiment#{} --TestedBy--> Constraint#{}", eid, con.id)),
+                        Err(e) => out += &format!(" (experiment edge note: {})", e),
+                    }
+                }
 
                 // Suggest edges to relevant phases and experiments (#15)
                 if let Ok(phases) = store.list_phases(proj.id) {
@@ -423,7 +669,10 @@ pub fn tool_constraint_add(store: &SqliteStore, args: &serde_json::Value) -> Str
                             .collect();
                         let overlap: Vec<&&str> = text_words.intersection(&phase_words).collect();
                         if !overlap.is_empty() {
-                            out += &format!("\nSuggest: pm_add_edge source_type=constraint source_id={} target_type=phase target_id={} relation=related", con.id, phase.id);
+                            suggestions.push((
+                                format!("Constraint overlaps with Phase#{} ({})", phase.id, phase.name),
+                                format!("pm_add_edge source_type=constraint source_id={} target_type=phase target_id={} relation=related", con.id, phase.id),
+                            ));
                         }
                     }
                     // Also suggest edges to pending experiments in matching phases
@@ -431,12 +680,16 @@ pub fn tool_constraint_add(store: &SqliteStore, args: &serde_json::Value) -> Str
                         if let Ok(exps) = store.list_experiments(Some(phase.id)) {
                             let pending: Vec<_> = exps.iter().filter(|e| e.status == ExperimentStatus::Pending).collect();
                             for exp in pending.iter().take(3) {
-                                out += &format!("\nSuggest: pm_add_edge source_type=constraint source_id={} target_type=experiment target_id={} relation=related", con.id, exp.id);
+                                suggestions.push((
+                                    format!("Pending Experiment#{} may be affected", exp.id),
+                                    format!("pm_add_edge source_type=constraint source_id={} target_type=experiment target_id={} relation=related", con.id, exp.id),
+                                ));
                             }
                         }
                     }
                 }
 
+                out += &causal_guidance(&auto_edges, &suggestions);
                 out
             }
             Err(e) => format!("Error: {}", e),
