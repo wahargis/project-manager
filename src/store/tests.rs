@@ -245,13 +245,13 @@ fn test_store_migration_creates_new_columns() {
     let dec = store.create_decision(None, "test decision", None, None).unwrap();
     assert!(dec.project_id.is_none());
 
-    // Verify literature new fields default to None
-    let lit = store.create_literature(proj.id, "Paper", None, None, None).unwrap();
+    // Verify literature new fields default to None (except status which defaults to 'unread')
+    let lit = store.create_literature(proj.id, "Paper", None, None, None, None, None, None, None, None, None).unwrap();
     assert!(lit.venue.is_none());
     assert!(lit.year.is_none());
     assert!(lit.code_url.is_none());
     assert!(lit.file_path.is_none());
-    assert!(lit.status.is_none());
+    assert_eq!(lit.status, Some("unread".to_string()));
     assert!(lit.summary.is_none());
 
     // Verify hypothesis new fields default to None
@@ -260,17 +260,17 @@ fn test_store_migration_creates_new_columns() {
     assert!(hyp.criteria.is_none());
     assert!(hyp.confidence.is_none());
 
-    // Verify constraint new fields default to None
-    let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "32GB VRAM", None).unwrap();
-    assert!(con.severity.is_none());
+    // Verify constraint new fields default to "hard" severity, rest None
+    let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "32GB VRAM", None, None, None, None, None).unwrap();
+    assert_eq!(con.severity, Some("hard".to_string()));
     assert!(con.resource.is_none());
     assert!(con.measured_value.is_none());
     assert!(con.expires_at.is_none());
 
-    // Verify principle new fields default to None
-    let prin = store.create_principle(proj.id, PrincipleScope::Project, "No force kills").unwrap();
+    // Verify principle new fields: rationale None, enforcement_level defaults to "advisory"
+    let prin = store.create_principle(proj.id, PrincipleScope::Project, "No force kills", None, None).unwrap();
     assert!(prin.rationale.is_none());
-    assert!(prin.enforcement_level.is_none());
+    assert_eq!(prin.enforcement_level, Some("advisory".to_string()));
 }
 
 #[test]
@@ -294,21 +294,21 @@ fn test_store_new_fields_round_trip_via_raw_sql() {
     let lits = store.list_literature(proj.id).unwrap();
     assert_eq!(lits.len(), 0);
 
-    store.create_literature(proj.id, "Test Paper", Some("2301.12345"), Some("High"), Some("Key finding")).unwrap();
+    store.create_literature(proj.id, "Test Paper", Some("2301.12345"), Some("High"), Some("Key finding"), None, None, None, None, None, None).unwrap();
     let lits = store.list_literature(proj.id).unwrap();
     assert_eq!(lits.len(), 1);
     assert_eq!(lits[0].title, "Test Paper");
     assert_eq!(lits[0].arxiv_id, Some("2301.12345".to_string()));
 
     // Verify constraints round-trip with new fields
-    store.create_constraint(proj.id, ConstraintScope::Software, "Max 4 GPUs", Some("nvidia-smi")).unwrap();
+    store.create_constraint(proj.id, ConstraintScope::Software, "Max 4 GPUs", Some("nvidia-smi"), None, None, None, None).unwrap();
     let cons = store.list_constraints(proj.id).unwrap();
     assert_eq!(cons.len(), 1);
     assert_eq!(cons[0].text, "Max 4 GPUs");
     assert_eq!(cons[0].source, Some("nvidia-smi".to_string()));
 
     // Verify principles round-trip with new fields
-    store.create_principle(proj.id, PrincipleScope::Universal, "Always use safe-reboot").unwrap();
+    store.create_principle(proj.id, PrincipleScope::Universal, "Always use safe-reboot", None, None).unwrap();
     let prins = store.list_principles(proj.id).unwrap();
     assert_eq!(prins.len(), 1);
     assert_eq!(prins[0].text, "Always use safe-reboot");
@@ -444,10 +444,10 @@ fn test_node_exists_for_all_types() {
     let finding = store.create_finding(Some(exp.id), "finding").unwrap();
     let dec = store.create_decision(Some(exp.id), "decision", None, None).unwrap();
     let research = store.create_research(Some(phase.id), "research").unwrap();
-    let principle = store.create_principle(proj.id, PrincipleScope::Project, "principle").unwrap();
+    let principle = store.create_principle(proj.id, PrincipleScope::Project, "principle", None, None).unwrap();
     let hyp = store.create_hypothesis(Some(phase.id), "hypothesis").unwrap();
-    let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "constraint", None).unwrap();
-    let lit = store.create_literature(proj.id, "literature", None, None, None).unwrap();
+    let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "constraint", None, None, None, None, None).unwrap();
+    let lit = store.create_literature(proj.id, "literature", None, None, None, None, None, None, None, None, None).unwrap();
     let fb = store.create_feedback(proj.id, "feedback", FeedbackCategory::Correction).unwrap();
 
     assert!(store.node_exists("Finding", finding.id).unwrap());
@@ -476,8 +476,8 @@ fn test_new_edge_types_round_trip() {
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let f1 = store.create_finding(Some(exp.id), "finding 1").unwrap();
     let f2 = store.create_finding(Some(exp.id), "finding 2").unwrap();
-    let principle = store.create_principle(proj.id, PrincipleScope::Project, "principle").unwrap();
-    let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "constraint", None).unwrap();
+    let principle = store.create_principle(proj.id, PrincipleScope::Project, "principle", None, None).unwrap();
+    let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "constraint", None, None, None, None, None).unwrap();
 
     // Contains: phase contains experiment
     let e1 = store.create_edge(NodeType::Phase, phase.id, NodeType::Experiment, exp.id, EdgeType::Contains).unwrap();
@@ -553,7 +553,7 @@ fn test_kg_constraint_label_resolved() {
     let proj = store.create_project("test", None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
-    let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "32GB VRAM limit per GPU for model loading", None).unwrap();
+    let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "32GB VRAM limit per GPU for model loading", None, None, None, None, None).unwrap();
     store.create_edge(NodeType::Constraint, con.id, NodeType::Experiment, exp.id, EdgeType::TestedBy).unwrap();
 
     let kg = KgEngine::new(&store);
@@ -569,7 +569,7 @@ fn test_kg_literature_label_resolved() {
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "A finding").unwrap();
-    let lit = store.create_literature(proj.id, "Attention Is All You Need", Some("1706.03762"), None, None).unwrap();
+    let lit = store.create_literature(proj.id, "Attention Is All You Need", Some("1706.03762"), None, None, None, None, None, None, None, None).unwrap();
     store.create_edge(NodeType::Literature, lit.id, NodeType::Finding, finding.id, EdgeType::CitedIn).unwrap();
 
     let kg = KgEngine::new(&store);
@@ -585,7 +585,7 @@ fn test_kg_principle_label_resolved_directly() {
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "finding").unwrap();
-    let principle = store.create_principle(proj.id, PrincipleScope::Universal, "Never force-kill GPU processes under any circumstances").unwrap();
+    let principle = store.create_principle(proj.id, PrincipleScope::Universal, "Never force-kill GPU processes under any circumstances", None, None).unwrap();
     store.create_edge(NodeType::Principle, principle.id, NodeType::Finding, finding.id, EdgeType::DerivedFrom).unwrap();
 
     let kg = KgEngine::new(&store);
@@ -608,7 +608,7 @@ fn test_get_decision_by_id() {
 fn test_get_principle_by_id() {
     let store = test_store();
     let proj = store.create_project("test", None).unwrap();
-    let p = store.create_principle(proj.id, PrincipleScope::Universal, "Test principle").unwrap();
+    let p = store.create_principle(proj.id, PrincipleScope::Universal, "Test principle", None, None).unwrap();
     let fetched = store.get_principle(p.id).unwrap();
     assert_eq!(fetched.text, "Test principle");
     assert_eq!(fetched.scope, PrincipleScope::Universal);
@@ -627,7 +627,7 @@ fn test_get_hypothesis_by_id() {
 fn test_get_constraint_by_id() {
     let store = test_store();
     let proj = store.create_project("test", None).unwrap();
-    let c = store.create_constraint(proj.id, ConstraintScope::Hardware, "32GB VRAM", Some("nvidia-smi")).unwrap();
+    let c = store.create_constraint(proj.id, ConstraintScope::Hardware, "32GB VRAM", Some("nvidia-smi"), None, None, None, None).unwrap();
     let fetched = store.get_constraint(c.id).unwrap();
     assert_eq!(fetched.text, "32GB VRAM");
     assert_eq!(fetched.source, Some("nvidia-smi".to_string()));
@@ -637,7 +637,7 @@ fn test_get_constraint_by_id() {
 fn test_get_literature_by_id() {
     let store = test_store();
     let proj = store.create_project("test", None).unwrap();
-    let l = store.create_literature(proj.id, "Test Paper", Some("2301.00001"), Some("High"), Some("Key findings")).unwrap();
+    let l = store.create_literature(proj.id, "Test Paper", Some("2301.00001"), Some("High"), Some("Key findings"), None, None, None, None, None, None).unwrap();
     let fetched = store.get_literature(l.id).unwrap();
     assert_eq!(fetched.title, "Test Paper");
     assert_eq!(fetched.arxiv_id, Some("2301.00001".to_string()));

@@ -104,7 +104,7 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
             result: Some(serde_json::json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "pm", "version": "3.1.0" }
+                "serverInfo": { "name": "pm", "version": "3.2.0" }
             })),
             error: None,
         },
@@ -233,6 +233,11 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             }
         },
         "pm_lit_add" => nodes::tool_lit_add(store, args),
+        "pm_lit_status" => {
+            let lid = args.get("literature_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let status = args.get("status").and_then(|v| v.as_str()).unwrap_or("read");
+            nodes::tool_lit_status(store, lid, status)
+        },
         "pm_constraint_add" => nodes::tool_constraint_add(store, args),
         "pm_research_complete" => {
             let rid = args.get("research_id").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -278,7 +283,7 @@ fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "pm_review".into(),
-            description: "Research health check: experiment velocity, stagnation, impact assessment, contradictions, orphaned hypotheses.".into(),
+            description: "Research health check: experiment velocity, stagnation, impact assessment, contradictions, orphaned nodes (all types), expired constraints.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": { "project": { "type": "string" } },
@@ -327,13 +332,18 @@ fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "pm_lit_add".into(),
-            description: "Add a literature entry (paper, blog, reference). Returns ID for edge linking.".into(),
-            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "title": {"type": "string"}, "arxiv_id": {"type": "string"}, "relevance": {"type": "string"}, "key_findings": {"type": "string"}}, "required": ["project", "title"]}),
+            description: "Add a literature entry (paper, blog, reference). Requires authors + arxiv_id or url. Returns ID + phase edge suggestions.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "title": {"type": "string"}, "authors": {"type": "string", "description": "Author names (REQUIRED)"}, "arxiv_id": {"type": "string"}, "url": {"type": "string"}, "venue": {"type": "string", "description": "Publication venue (e.g., NeurIPS, ICML)"}, "year": {"type": "integer", "description": "Publication year"}, "code_url": {"type": "string", "description": "URL to code repository"}, "summary": {"type": "string", "description": "Brief summary of the paper"}, "relevance": {"type": "string", "description": "Relevance to project (min 100 chars)"}, "key_findings": {"type": "string", "description": "Key findings (min 200 chars)"}}, "required": ["project", "title"]}),
+        },
+        ToolDef {
+            name: "pm_lit_status".into(),
+            description: "Update literature status lifecycle: unread -> read -> cited -> tested -> dead_end/promising/integrated.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"literature_id": {"type": "integer"}, "status": {"type": "string", "description": "unread, read, cited, tested, dead_end, promising, or integrated"}}, "required": ["literature_id", "status"]}),
         },
         ToolDef {
             name: "pm_constraint_add".into(),
-            description: "Add a hard constraint (hardware, budget, correctness requirement).".into(),
-            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "hardware, software, or process"}, "text": {"type": "string"}, "source": {"type": "string", "description": "Where this constraint comes from"}}, "required": ["project", "scope", "text"]}),
+            description: "Add a hard constraint (hardware, budget, correctness requirement). Returns ID + phase/experiment edge suggestions.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "hardware, software, or process"}, "text": {"type": "string"}, "source": {"type": "string", "description": "Where this constraint comes from (REQUIRED)"}, "severity": {"type": "string", "description": "hard (default) or soft"}, "resource": {"type": "string", "description": "Resource being constrained (e.g., GPU VRAM, context window)"}, "measured_value": {"type": "string", "description": "Current measured value"}, "expires_at": {"type": "string", "description": "Expiry date (YYYY-MM-DD) — pm_review flags expired constraints"}}, "required": ["project", "scope", "text"]}),
         },
         ToolDef {
             name: "pm_research_complete".into(),
@@ -342,8 +352,8 @@ fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "pm_principle_add".into(),
-            description: "Add a project-level principle or design guideline.".into(),
-            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "universal, project, or phase"}, "text": {"type": "string"}}, "required": ["project", "scope", "text"]}),
+            description: "Add a project-level principle or design guideline. Auto-creates DerivedFrom edges if finding_id or decision_id provided.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "scope": {"type": "string", "description": "universal, project, or phase"}, "text": {"type": "string"}, "rationale": {"type": "string", "description": "Why this principle matters"}, "enforcement_level": {"type": "string", "description": "advisory (default), recommended, or mandatory"}, "finding_id": {"type": "integer", "description": "Auto-create DerivedFrom edge to this finding"}, "decision_id": {"type": "integer", "description": "Auto-create DerivedFrom edge to this decision"}}, "required": ["project", "scope", "text"]}),
         },
         ToolDef {
             name: "pm_stats".into(),

@@ -123,6 +123,21 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
             text += "\n";
         }
     }
+
+    // Active constraints (#13)
+    if let Ok(constraints) = store.list_constraints(phase.project_id) {
+        if !constraints.is_empty() {
+            text += "--- Active Constraints ---\n\n";
+            for c in &constraints {
+                let sev = c.severity.as_deref().unwrap_or("hard");
+                let src = c.source.as_deref().unwrap_or("unknown");
+                let t = if c.text.len() > 80 { &c.text[..80] } else { &c.text };
+                text += &format!("  C#{} [{}]: {} (source: {})\n", c.id, sev, t, src);
+            }
+            text += "\n";
+        }
+    }
+
     text
 }
 

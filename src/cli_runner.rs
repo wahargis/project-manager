@@ -337,7 +337,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         "phase" => PrincipleScope::Phase,
                         _ => PrincipleScope::Project,
                     };
-                    let p = store.create_principle(proj.id, s, &text)?;
+                    let p = store.create_principle(proj.id, s, &text, None, None)?;
                     println!("Principle #{} added [{:?}]: {}", p.id, p.scope, &p.text[..p.text.len().min(80)]);
                 }
                 PrincipleAction::List => {
@@ -393,7 +393,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         "process" => ConstraintScope::Process,
                         _ => ConstraintScope::Hardware,
                     };
-                    let c = store.create_constraint(proj.id, s, &text, source.as_deref())?;
+                    let c = store.create_constraint(proj.id, s, &text, source.as_deref(), None, None, None, None)?;
                     println!("Constraint #{} added [{:?}]: {}", c.id, c.scope, &c.text[..c.text.len().min(80)]);
                 }
                 ConAction::List => {
@@ -409,7 +409,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let proj = resolve_project(&store, &project).ok_or("Project not found")?;
             match action {
                 LitAction::Add { title, arxiv, relevance, findings } => {
-                    let l = store.create_literature(proj.id, &title, arxiv.as_deref(), relevance.as_deref(), findings.as_deref())?;
+                    let l = store.create_literature(proj.id, &title, arxiv.as_deref(), relevance.as_deref(), findings.as_deref(), None, None, None, None, None, None)?;
                     let aid = l.arxiv_id.as_deref().unwrap_or("-");
                     println!("Literature #{} added: {} [{}]", l.id, l.title, aid);
                 }

@@ -94,7 +94,65 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
         text += &format!("\n## WARNING: {} orphaned hypothesis/hypotheses (no edges). Link them with pm_add_edge.\n", orphan_count);
     }
 
+    // === Orphan detection across ALL node types (#14) ===
+    let node_types = ["finding", "decision", "hypothesis", "literature", "principle", "constraint"];
+    let mut orphan_sections = Vec::new();
+    let mut total_orphans = 0;
+    for nt in &node_types {
+        if let Ok(orphaned_ids) = store.get_orphaned_nodes(nt, proj.id) {
+            if !orphaned_ids.is_empty() {
+                total_orphans += orphaned_ids.len();
+                let prefix = match *nt {
+                    "finding" => "F",
+                    "decision" => "D",
+                    "hypothesis" => "H",
+                    "literature" => "L",
+                    "principle" => "P",
+                    "constraint" => "C",
+                    _ => "?",
+                };
+                let ids_str: Vec<String> = orphaned_ids.iter().map(|id| format!("{}#{}", prefix, id)).collect();
+                let cap = capitalize(nt);
+                orphan_sections.push(format!("  {}: {} orphaned ({})", cap, orphaned_ids.len(), ids_str.join(", ")));
+            }
+        }
+    }
+    if total_orphans > 0 {
+        text += &format!("\n## Orphaned nodes: {}\n", total_orphans);
+        for section in &orphan_sections {
+            text += &format!("{}\n", section);
+        }
+    }
+
+    // === Constraint expiry checking (#13) ===
+    if let Ok(constraints) = store.list_constraints(proj.id) {
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let mut expired = Vec::new();
+        for c in &constraints {
+            if let Some(ref expires) = c.expires_at {
+                if !expires.is_empty() && expires.as_str() <= today.as_str() {
+                    let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
+                    expired.push(format!("  C#{}: {} (expired {})", c.id, t, expires));
+                }
+            }
+        }
+        if !expired.is_empty() {
+            text += &format!("\n## Expired constraints: {}\n", expired.len());
+            for e in &expired {
+                text += &format!("{}\n", e);
+            }
+        }
+    }
+
     text
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+    }
 }
 
 pub fn tool_stats(store: &SqliteStore, project: &str) -> String {

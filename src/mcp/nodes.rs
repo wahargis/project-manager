@@ -1,11 +1,13 @@
 //! MCP tool implementations for node CRUD operations.
 //!
-//! Contains: pm_log_finding, pm_decision, pm_lit_add, pm_exp_complete,
-//!           pm_hyp_update, pm_research_complete, pm_principle_add, pm_constraint_add
+//! Contains: pm_log_finding, pm_decision, pm_lit_add, pm_lit_status,
+//!           pm_exp_complete, pm_hyp_update, pm_research_complete,
+//!           pm_principle_add, pm_constraint_add
 
 use crate::store::sqlite::SqliteStore;
 use crate::store::{Store, NodeType, EdgeType, HypothesisStatus, ExperimentStatus};
 use crate::validation;
+use std::collections::HashSet;
 
 pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
     let v = validation::validate_finding(text);
@@ -35,6 +37,50 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                             out += &format!("  F#{}: {}\n", s.id, t);
                         }
                         out += &format!("\nSuggest: pm_add_edge source_type=finding source_id={} target_type=finding target_id={} relation=supports\n", f.id, others[0].id);
+                    }
+                }
+                // Suggest edges to the experiment
+                out += &format!("\nSuggest: pm_add_edge source_type=finding source_id={} target_type=experiment target_id={} relation=produced\n", f.id, eid);
+            }
+            // Suggest edges to recent literature
+            // We need a project_id to list literature — derive from experiment -> phase -> project
+            if let Some(eid_val) = exp_id {
+                if let Ok(exp) = store.get_experiment(eid_val) {
+                    if let Some(phase_id) = exp.phase_id {
+                        if let Ok(phase) = store.get_phase(phase_id) {
+                            if let Ok(lit_entries) = store.list_literature(phase.project_id) {
+                                let recent: Vec<_> = lit_entries.iter().rev().take(3).collect();
+                                if !recent.is_empty() {
+                                    out += "\nRecent literature (suggest cited edges):\n";
+                                    for l in &recent {
+                                        let t = if l.title.len() > 60 { &l.title[..60] } else { &l.title };
+                                        out += &format!("  L#{}: {}\n", l.id, t);
+                                    }
+                                    out += &format!("\nSuggest: pm_add_edge source_type=finding source_id={} target_type=literature target_id={} relation=cited\n", f.id, recent[0].id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Surface active principles for the project (#12)
+            if let Some(eid_val) = exp_id {
+                if let Ok(exp) = store.get_experiment(eid_val) {
+                    if let Some(phase_id) = exp.phase_id {
+                        if let Ok(phase) = store.get_phase(phase_id) {
+                            if let Ok(principles) = store.list_principles(phase.project_id) {
+                                let active: Vec<_> = principles.iter()
+                                    .filter(|p| p.status == crate::store::PrincipleStatus::Active)
+                                    .collect();
+                                if !active.is_empty() {
+                                    out += "\nActive principles for this project:\n";
+                                    for p in active.iter().take(5) {
+                                        let t = if p.text.len() > 80 { &p.text[..80] } else { &p.text };
+                                        out += &format!("  P#{}: {}\n", p.id, t);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -87,16 +133,56 @@ pub fn tool_lit_add(store: &SqliteStore, args: &serde_json::Value) -> String {
     let url = args.get("url").and_then(|v| v.as_str());
     let rel = args.get("relevance").and_then(|v| v.as_str());
     let kf = args.get("key_findings").and_then(|v| v.as_str());
+    let venue = args.get("venue").and_then(|v| v.as_str());
+    let year = args.get("year").and_then(|v| v.as_i64()).map(|y| y as i32);
+    let code_url = args.get("code_url").and_then(|v| v.as_str());
+    let summary = args.get("summary").and_then(|v| v.as_str());
+
     let lv = validation::validate_literature(title, authors, arxiv, url, kf, rel);
     if !lv.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", lv.to_mcp_error());
     }
     match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
-        Some(proj) => match store.create_literature(proj.id, title, arxiv, rel, kf) {
-            Ok(l) => format!("Literature #{} added: {}", l.id, l.title),
+        Some(proj) => match store.create_literature(proj.id, title, arxiv, rel, kf, authors, venue, year, url, code_url, summary) {
+            Ok(l) => {
+                let mut out = format!("Literature #{} added: {}", l.id, l.title);
+
+                // Edge suggestions: find phases with overlapping keywords (#15)
+                if let Ok(phases) = store.list_phases(proj.id) {
+                    let title_words: HashSet<&str> = title.split_whitespace()
+                        .filter(|w| w.len() > 3)
+                        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+                        .filter(|w| !w.is_empty())
+                        .collect();
+                    for phase in &phases {
+                        let phase_words: HashSet<&str> = phase.name.split_whitespace()
+                            .filter(|w| w.len() > 3)
+                            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+                            .filter(|w| !w.is_empty())
+                            .collect();
+                        let overlap: Vec<&&str> = title_words.intersection(&phase_words).collect();
+                        if !overlap.is_empty() {
+                            out += &format!("\nSuggest: pm_add_edge source_type=literature source_id={} target_type=phase target_id={} relation=informed", l.id, phase.id);
+                        }
+                    }
+                }
+
+                out
+            }
             Err(e) => format!("Error: {}", e),
         },
         None => format!("Project not found: {}", project),
+    }
+}
+
+pub fn tool_lit_status(store: &SqliteStore, literature_id: i64, status: &str) -> String {
+    let sv = validation::validate_status("literature", status);
+    if !sv.is_ok() {
+        return format!("\u{274c} VALIDATION ERROR:\n{}", sv.to_mcp_error());
+    }
+    match store.update_literature_status(literature_id, status) {
+        Ok(_) => format!("Literature #{} status updated to '{}'", literature_id, status),
+        Err(e) => format!("Error: {}", e),
     }
 }
 
@@ -220,6 +306,10 @@ pub fn tool_principle_add(store: &SqliteStore, args: &serde_json::Value) -> Stri
     let scope_str = args.get("scope").and_then(|v| v.as_str()).unwrap_or("methodology");
     let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
     let rationale = args.get("rationale").and_then(|v| v.as_str());
+    let enforcement_level = args.get("enforcement_level").and_then(|v| v.as_str());
+    let finding_id = args.get("finding_id").and_then(|v| v.as_i64());
+    let decision_id = args.get("decision_id").and_then(|v| v.as_i64());
+
     let pv = validation::validate_principle(text, rationale);
     if !pv.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", pv.to_mcp_error());
@@ -230,8 +320,41 @@ pub fn tool_principle_add(store: &SqliteStore, args: &serde_json::Value) -> Stri
         _ => crate::store::PrincipleScope::Project,
     };
     match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
-        Some(proj) => match store.create_principle(proj.id, scope, text) {
-            Ok(pr) => format!("Principle #{} added: {}", pr.id, &text[..text.len().min(80)]),
+        Some(proj) => match store.create_principle(proj.id, scope, text, rationale, enforcement_level) {
+            Ok(pr) => {
+                let mut out = format!("Principle #{} added: {}", pr.id, &text[..text.len().min(80)]);
+
+                // Auto-create DerivedFrom edge if finding_id provided (#12)
+                if let Some(fid) = finding_id {
+                    match store.create_edge(NodeType::Principle, pr.id, NodeType::Finding, fid, EdgeType::DerivedFrom) {
+                        Ok(e) => out += &format!("\nAuto-created edge: Principle #{} --DerivedFrom--> Finding #{} (Edge #{})", pr.id, fid, e.id),
+                        Err(e) => out += &format!("\nWarning: failed to create DerivedFrom edge to Finding #{}: {}", fid, e),
+                    }
+                }
+
+                // Auto-create DerivedFrom edge if decision_id provided (#12)
+                if let Some(did) = decision_id {
+                    match store.create_edge(NodeType::Principle, pr.id, NodeType::Decision, did, EdgeType::DerivedFrom) {
+                        Ok(e) => out += &format!("\nAuto-created edge: Principle #{} --DerivedFrom--> Decision #{} (Edge #{})", pr.id, did, e.id),
+                        Err(e) => out += &format!("\nWarning: failed to create DerivedFrom edge to Decision #{}: {}", did, e),
+                    }
+                }
+
+                // Suggest edges to related constraints (#15)
+                if let Ok(constraints) = store.list_constraints(proj.id) {
+                    if !constraints.is_empty() {
+                        out += "\n\nActive constraints (suggest related edges):\n";
+                        for c in constraints.iter().take(5) {
+                            let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
+                            let sev = c.severity.as_deref().unwrap_or("hard");
+                            out += &format!("  C#{} [{}]: {}\n", c.id, sev, t);
+                        }
+                        out += &format!("\nSuggest: pm_add_edge source_type=principle source_id={} target_type=constraint target_id={} relation=related\n", pr.id, constraints[0].id);
+                    }
+                }
+
+                out
+            }
             Err(e) => format!("Error: {}", e),
         },
         None => format!("Project not found: {}", project),
@@ -243,6 +366,11 @@ pub fn tool_constraint_add(store: &SqliteStore, args: &serde_json::Value) -> Str
     let scope_str = args.get("scope").and_then(|v| v.as_str()).unwrap_or("hardware");
     let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
     let source = args.get("source").and_then(|v| v.as_str());
+    let severity = args.get("severity").and_then(|v| v.as_str());
+    let resource = args.get("resource").and_then(|v| v.as_str());
+    let measured_value = args.get("measured_value").and_then(|v| v.as_str());
+    let expires_at = args.get("expires_at").and_then(|v| v.as_str());
+
     let cv = validation::validate_constraint(text, source);
     if !cv.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", cv.to_mcp_error());
@@ -253,8 +381,41 @@ pub fn tool_constraint_add(store: &SqliteStore, args: &serde_json::Value) -> Str
         _ => crate::store::ConstraintScope::Hardware,
     };
     match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
-        Some(proj) => match store.create_constraint(proj.id, scope, text, source) {
-            Ok(con) => format!("Constraint #{} added: {}", con.id, &text[..text.len().min(80)]),
+        Some(proj) => match store.create_constraint(proj.id, scope, text, source, severity, resource, measured_value, expires_at) {
+            Ok(con) => {
+                let mut out = format!("Constraint #{} added: {}", con.id, &text[..text.len().min(80)]);
+
+                // Suggest edges to relevant phases and experiments (#15)
+                if let Ok(phases) = store.list_phases(proj.id) {
+                    let text_words: HashSet<&str> = text.split_whitespace()
+                        .filter(|w| w.len() > 3)
+                        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+                        .filter(|w| !w.is_empty())
+                        .collect();
+                    for phase in &phases {
+                        let phase_words: HashSet<&str> = phase.name.split_whitespace()
+                            .filter(|w| w.len() > 3)
+                            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+                            .filter(|w| !w.is_empty())
+                            .collect();
+                        let overlap: Vec<&&str> = text_words.intersection(&phase_words).collect();
+                        if !overlap.is_empty() {
+                            out += &format!("\nSuggest: pm_add_edge source_type=constraint source_id={} target_type=phase target_id={} relation=related", con.id, phase.id);
+                        }
+                    }
+                    // Also suggest edges to pending experiments in matching phases
+                    for phase in &phases {
+                        if let Ok(exps) = store.list_experiments(Some(phase.id)) {
+                            let pending: Vec<_> = exps.iter().filter(|e| e.status == ExperimentStatus::Pending).collect();
+                            for exp in pending.iter().take(3) {
+                                out += &format!("\nSuggest: pm_add_edge source_type=constraint source_id={} target_type=experiment target_id={} relation=related", con.id, exp.id);
+                            }
+                        }
+                    }
+                }
+
+                out
+            }
             Err(e) => format!("Error: {}", e),
         },
         None => format!("Project not found: {}", project),

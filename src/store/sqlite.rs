@@ -563,12 +563,16 @@ impl Store for SqliteStore {
         })
     }
 
-    fn create_principle(&self, project_id: i64, scope: PrincipleScope, text: &str) -> Result<Principle> {
+    fn create_principle(&self, project_id: i64, scope: PrincipleScope, text: &str, rationale: Option<&str>, enforcement_level: Option<&str>) -> Result<Principle> {
         let now = Self::now();
         let s = match scope { PrincipleScope::Universal => "universal", PrincipleScope::Project => "project", PrincipleScope::Phase => "phase" };
-        self.conn.execute("INSERT INTO principles (project_id, scope, text, status, created_at) VALUES (?1, ?2, ?3, 'active', ?4)", params![project_id, s, text, now])?;
+        let el = enforcement_level.unwrap_or("advisory");
+        self.conn.execute(
+            "INSERT INTO principles (project_id, scope, text, status, rationale, enforcement_level, created_at) VALUES (?1, ?2, ?3, 'active', ?4, ?5, ?6)",
+            params![project_id, s, text, rationale, el, now],
+        )?;
         let id = self.conn.last_insert_rowid();
-        Ok(Principle { id, project_id, scope, text: text.to_string(), status: PrincipleStatus::Active, superseded_by: None, rationale: None, enforcement_level: None, created_at: Self::parse_dt(&now) })
+        Ok(Principle { id, project_id, scope, text: text.to_string(), status: PrincipleStatus::Active, superseded_by: None, rationale: rationale.map(|s| s.to_string()), enforcement_level: Some(el.to_string()), created_at: Self::parse_dt(&now) })
     }
     fn list_principles(&self, project_id: i64) -> Result<Vec<Principle>> {
         let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, status, superseded_by, created_at, rationale, enforcement_level FROM principles WHERE project_id = ?1 ORDER BY id")?;
@@ -618,12 +622,16 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn create_constraint(&self, project_id: i64, scope: ConstraintScope, text: &str, source: Option<&str>) -> Result<Constraint> {
+    fn create_constraint(&self, project_id: i64, scope: ConstraintScope, text: &str, source: Option<&str>, severity: Option<&str>, resource: Option<&str>, measured_value: Option<&str>, expires_at: Option<&str>) -> Result<Constraint> {
         let now = Self::now();
         let s = match scope { ConstraintScope::Hardware => "hardware", ConstraintScope::Software => "software", ConstraintScope::Process => "process" };
-        self.conn.execute("INSERT INTO constraints_tbl (project_id, scope, text, source, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![project_id, s, text, source, now])?;
+        let sev = severity.unwrap_or("hard");
+        self.conn.execute(
+            "INSERT INTO constraints_tbl (project_id, scope, text, source, severity, resource, measured_value, expires_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![project_id, s, text, source, sev, resource, measured_value, expires_at, now],
+        )?;
         let id = self.conn.last_insert_rowid();
-        Ok(Constraint { id, project_id, scope, text: text.to_string(), source: source.map(|s| s.to_string()), severity: None, resource: None, measured_value: None, expires_at: None, created_at: Self::parse_dt(&now) })
+        Ok(Constraint { id, project_id, scope, text: text.to_string(), source: source.map(|s| s.to_string()), severity: Some(sev.to_string()), resource: resource.map(|s| s.to_string()), measured_value: measured_value.map(|s| s.to_string()), expires_at: expires_at.map(|s| s.to_string()), created_at: Self::parse_dt(&now) })
     }
     fn list_constraints(&self, project_id: i64) -> Result<Vec<Constraint>> {
         let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, source, created_at, severity, resource, measured_value, expires_at FROM constraints_tbl WHERE project_id = ?1 ORDER BY id")?;
@@ -635,11 +643,36 @@ impl Store for SqliteStore {
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
 
-    fn create_literature(&self, project_id: i64, title: &str, arxiv_id: Option<&str>, relevance: Option<&str>, key_findings: Option<&str>) -> Result<LiteratureEntry> {
+    fn create_literature(&self, project_id: i64, title: &str, arxiv_id: Option<&str>, relevance: Option<&str>, key_findings: Option<&str>, authors: Option<&str>, venue: Option<&str>, year: Option<i32>, url: Option<&str>, code_url: Option<&str>, summary: Option<&str>) -> Result<LiteratureEntry> {
         let now = Self::now();
-        self.conn.execute("INSERT INTO literature (project_id, title, arxiv_id, relevance, key_findings, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![project_id, title, arxiv_id, relevance, key_findings, now])?;
+        self.conn.execute(
+            "INSERT INTO literature (project_id, title, arxiv_id, relevance, key_findings, authors, venue, year, url, code_url, summary, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'unread', ?12)",
+            params![project_id, title, arxiv_id, relevance, key_findings, authors, venue, year, url, code_url, summary, now],
+        )?;
         let id = self.conn.last_insert_rowid();
-        Ok(LiteratureEntry { id, project_id, arxiv_id: arxiv_id.map(|s| s.to_string()), title: title.to_string(), authors: None, relevance: relevance.map(|s| s.to_string()), key_findings: key_findings.map(|s| s.to_string()), url: None, venue: None, year: None, code_url: None, file_path: None, status: None, summary: None, created_at: Self::parse_dt(&now) })
+        Ok(LiteratureEntry {
+            id, project_id,
+            arxiv_id: arxiv_id.map(|s| s.to_string()),
+            title: title.to_string(),
+            authors: authors.map(|s| s.to_string()),
+            relevance: relevance.map(|s| s.to_string()),
+            key_findings: key_findings.map(|s| s.to_string()),
+            url: url.map(|s| s.to_string()),
+            venue: venue.map(|s| s.to_string()),
+            year,
+            code_url: code_url.map(|s| s.to_string()),
+            file_path: None,
+            status: Some("unread".to_string()),
+            summary: summary.map(|s| s.to_string()),
+            created_at: Self::parse_dt(&now),
+        })
+    }
+    fn update_literature_status(&self, id: i64, status: &str) -> Result<()> {
+        let rows = self.conn.execute("UPDATE literature SET status = ?1 WHERE id = ?2", params![status, id])?;
+        if rows == 0 {
+            return Err(StoreError::NotFound { entity: "literature".into(), id });
+        }
+        Ok(())
     }
     fn list_literature(&self, project_id: i64) -> Result<Vec<LiteratureEntry>> {
         let mut stmt = self.conn.prepare("SELECT id, project_id, arxiv_id, title, authors, relevance, key_findings, url, created_at, venue, year, code_url, file_path, status, summary FROM literature WHERE project_id = ?1 ORDER BY id")?;
@@ -861,6 +894,68 @@ impl Store for SqliteStore {
             self.conn.execute("UPDATE hypotheses SET confidence = ?1 WHERE id = ?2", params![conf, id])?;
         }
         Ok(())
+    }
+
+    fn get_orphaned_nodes(&self, node_type: &str, project_id: i64) -> Result<Vec<i64>> {
+        let (table, id_col, project_filter) = match node_type {
+            "finding" => {
+                // Findings are scoped through experiments -> phases -> project
+                let mut stmt = self.conn.prepare(
+                    "SELECT f.id FROM findings f
+                     LEFT JOIN experiments e ON f.experiment_id = e.id
+                     LEFT JOIN phases p ON e.phase_id = p.id
+                     WHERE (p.project_id = ?1 OR f.experiment_id IS NULL)
+                     AND f.id NOT IN (
+                         SELECT source_id FROM edges WHERE source_type = 'Finding'
+                         UNION
+                         SELECT target_id FROM edges WHERE target_type = 'Finding'
+                     )"
+                )?;
+                let ids: Vec<i64> = stmt.query_map(params![project_id], |row| row.get(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                return Ok(ids);
+            }
+            "decision" => ("decisions", "id", "project_id"),
+            "hypothesis" => {
+                // Hypotheses are scoped through phases
+                let mut stmt = self.conn.prepare(
+                    "SELECT h.id FROM hypotheses h
+                     LEFT JOIN phases p ON h.phase_id = p.id
+                     WHERE (p.project_id = ?1 OR h.phase_id IS NULL)
+                     AND h.id NOT IN (
+                         SELECT source_id FROM edges WHERE source_type = 'Hypothesis'
+                         UNION
+                         SELECT target_id FROM edges WHERE target_type = 'Hypothesis'
+                     )"
+                )?;
+                let ids: Vec<i64> = stmt.query_map(params![project_id], |row| row.get(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                return Ok(ids);
+            }
+            "literature" => ("literature", "id", "project_id"),
+            "principle" => ("principles", "id", "project_id"),
+            "constraint" => ("constraints_tbl", "id", "project_id"),
+            _ => return Ok(vec![]),
+        };
+        let node_type_cap = match node_type {
+            "finding" => "Finding",
+            "decision" => "Decision",
+            "literature" => "Literature",
+            "principle" => "Principle",
+            "constraint" => "Constraint",
+            _ => return Ok(vec![]),
+        };
+        let sql = format!(
+            "SELECT {id_col} FROM {table} WHERE {project_filter} = ?1 AND {id_col} NOT IN (
+                SELECT source_id FROM edges WHERE source_type = ?2
+                UNION
+                SELECT target_id FROM edges WHERE target_type = ?2
+            )"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let ids: Vec<i64> = stmt.query_map(params![project_id, node_type_cap], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ids)
     }
 
 }

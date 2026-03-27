@@ -303,7 +303,7 @@ pub trait Store {
     fn list_research(&self, phase_id: Option<i64>) -> Result<Vec<Research>>;
     fn update_research(&self, id: i64, status: ResearchStatus, report: Option<&str>) -> Result<()>;
     // Principles
-    fn create_principle(&self, project_id: i64, scope: PrincipleScope, text: &str) -> Result<Principle>;
+    fn create_principle(&self, project_id: i64, scope: PrincipleScope, text: &str, rationale: Option<&str>, enforcement_level: Option<&str>) -> Result<Principle>;
     fn list_principles(&self, project_id: i64) -> Result<Vec<Principle>>;
     fn update_principle_status(&self, id: i64, status: PrincipleStatus, superseded_by: Option<i64>) -> Result<()>;
 
@@ -313,11 +313,12 @@ pub trait Store {
     fn update_hypothesis(&self, id: i64, status: HypothesisStatus, experiment_id: Option<i64>, finding_id: Option<i64>) -> Result<()>;
 
     // Constraints
-    fn create_constraint(&self, project_id: i64, scope: ConstraintScope, text: &str, source: Option<&str>) -> Result<Constraint>;
+    fn create_constraint(&self, project_id: i64, scope: ConstraintScope, text: &str, source: Option<&str>, severity: Option<&str>, resource: Option<&str>, measured_value: Option<&str>, expires_at: Option<&str>) -> Result<Constraint>;
     fn list_constraints(&self, project_id: i64) -> Result<Vec<Constraint>>;
 
     // Literature
-    fn create_literature(&self, project_id: i64, title: &str, arxiv_id: Option<&str>, relevance: Option<&str>, key_findings: Option<&str>) -> Result<LiteratureEntry>;
+    fn create_literature(&self, project_id: i64, title: &str, arxiv_id: Option<&str>, relevance: Option<&str>, key_findings: Option<&str>, authors: Option<&str>, venue: Option<&str>, year: Option<i32>, url: Option<&str>, code_url: Option<&str>, summary: Option<&str>) -> Result<LiteratureEntry>;
+    fn update_literature_status(&self, id: i64, status: &str) -> Result<()>;
     fn list_literature(&self, project_id: i64) -> Result<Vec<LiteratureEntry>>;
 
     // Feedback
@@ -342,6 +343,9 @@ pub trait Store {
 
     // Hypothesis field updates (#9)
     fn update_hypothesis_fields(&self, id: i64, prediction: Option<&str>, criteria: Option<&str>, confidence: Option<f64>) -> Result<()>;
+
+    // Orphan detection (#14)
+    fn get_orphaned_nodes(&self, node_type: &str, project_id: i64) -> Result<Vec<i64>>;
 }
 
 #[cfg(test)]
