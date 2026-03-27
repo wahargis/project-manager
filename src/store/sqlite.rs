@@ -274,6 +274,12 @@ impl SqliteStore {
 
 impl Store for SqliteStore {
     fn create_project(&self, name: &str, alias: Option<&str>, parent_id: Option<i64>) -> Result<Project> {
+        // Validate parent exists if specified
+        if let Some(pid) = parent_id {
+            self.get_project(pid).map_err(|_| StoreError::Constraint(
+                format!("parent project #{} does not exist", pid)
+            ))?;
+        }
         let now = Self::now();
         self.conn.execute(
             "INSERT INTO projects (name, alias, status, created_at, parent_id) VALUES (?1, ?2, 'active', ?3, ?4)",
@@ -303,6 +309,19 @@ impl Store for SqliteStore {
     fn list_projects(&self) -> Result<Vec<Project>> {
         let mut stmt = self.conn.prepare("SELECT id, name, alias, status, created_at, parent_id FROM projects ORDER BY id")?;
         let rows = stmt.query_map([], |row| Ok(Project {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            alias: row.get(2)?,
+            status: SqliteStore::parse_project_status(&row.get::<_, String>(3)?),
+            created_at: SqliteStore::parse_dt(&row.get::<_, String>(4)?),
+            parent_id: row.get(5)?,
+        }))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
+    }
+
+    fn list_subprojects(&self, parent_id: i64) -> Result<Vec<Project>> {
+        let mut stmt = self.conn.prepare("SELECT id, name, alias, status, created_at, parent_id FROM projects WHERE parent_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![parent_id], |row| Ok(Project {
             id: row.get(0)?,
             name: row.get(1)?,
             alias: row.get(2)?,

@@ -268,6 +268,7 @@ pub trait Store {
     fn get_project(&self, id: i64) -> Result<Project>;
     fn list_projects(&self) -> Result<Vec<Project>>;
     fn update_project_status(&self, id: i64, status: ProjectStatus) -> Result<()>;
+    fn list_subprojects(&self, parent_id: i64) -> Result<Vec<Project>>;
 
     // Phases
     fn create_phase(&self, project_id: i64, name: &str, impact: i32, depends_on: &[i64]) -> Result<Phase>;

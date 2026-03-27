@@ -263,7 +263,14 @@ pub fn tool_session_init(store: &SqliteStore) -> String {
                             else if phase.status == PhaseStatus::Paused { "PAUSED" }
                             else { "NEXT" };
 
-                        out += &format!("## [{}] Phase #{} [impact:{}] {}\n", proj.name, phase.id, phase.impact, phase.name);
+                        let proj_label = if let Some(pid) = proj.parent_id {
+                            if let Ok(all_projs) = store.list_projects() {
+                                all_projs.iter().find(|p| p.id == pid)
+                                    .map(|p| format!("{}/{}", p.name, proj.name))
+                                    .unwrap_or_else(|| proj.name.clone())
+                            } else { proj.name.clone() }
+                        } else { proj.name.clone() };
+                        out += &format!("## [{}] Phase #{} [impact:{}] {}\n", proj_label, phase.id, phase.impact, phase.name);
                         out += &format!("  Status: {} | Experiments: {} pending, {} pass, {} fail\n\n",
                             status_str, pending.len(), pass_count, fail_count);
 

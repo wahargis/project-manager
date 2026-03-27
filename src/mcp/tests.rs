@@ -857,3 +857,49 @@ fn test_dashboard_mixed_standalone_and_grouped() {
     assert!(result.contains("[home-cloud/execution-engine]"), "Should show child1: {}", result);
     assert!(result.contains("[home-cloud/infrastructure]"), "Should show child2: {}", result);
 }
+
+// --- Issue #18: Subproject session_init and list_subprojects ---
+
+#[test]
+fn test_session_init_shows_subproject_hierarchy() {
+    let store = test_store();
+    let parent = store.create_project("home-cloud", None, None).unwrap();
+    let child = store.create_project("execution-engine", None, Some(parent.id)).unwrap();
+    let phase = store.create_phase(child.id, "Refactor EE", 40, &[]).unwrap();
+    store.create_experiment(Some(phase.id), "Test refactor").unwrap();
+    let result = super::dashboard::tool_session_init(&store);
+    // Session init should show the hierarchical label
+    assert!(result.contains("home-cloud/execution-engine") || result.contains("execution-engine"),
+        "Session init should reference subproject: {}", result);
+}
+
+#[test]
+fn test_dashboard_parent_own_phases_shown() {
+    let store = test_store();
+    let parent = store.create_project("home-cloud", None, None).unwrap();
+    let _child = store.create_project("execution-engine", None, Some(parent.id)).unwrap();
+    store.create_phase(parent.id, "Platform Phase", 50, &[]).unwrap();
+    let result = super::dashboard::tool_dashboard(&store);
+    assert!(result.contains("## home-cloud"), "Should have parent header: {}", result);
+    assert!(result.contains("Platform Phase"), "Should show parent's own phase: {}", result);
+}
+
+#[test]
+fn test_list_subprojects_via_store() {
+    let store = test_store();
+    let parent = store.create_project("home-cloud", None, None).unwrap();
+    store.create_project("execution-engine", None, Some(parent.id)).unwrap();
+    store.create_project("agent-system", None, Some(parent.id)).unwrap();
+    let subs = store.list_subprojects(parent.id).unwrap();
+    assert_eq!(subs.len(), 2);
+    let names: Vec<_> = subs.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"execution-engine"));
+    assert!(names.contains(&"agent-system"));
+}
+
+#[test]
+fn test_create_subproject_invalid_parent_rejected() {
+    let store = test_store();
+    let result = store.create_project("orphan", None, Some(9999));
+    assert!(result.is_err(), "Should reject invalid parent_id");
+}

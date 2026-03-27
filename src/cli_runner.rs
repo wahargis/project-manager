@@ -156,6 +156,19 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     println!("Archived: {}", name);
                 } else { eprintln!("Not found: {}", name); }
             }
+            ProjectAction::Subs { name } => {
+                let proj = resolve_project(&store, &name).ok_or("Project not found")?;
+                let subs = store.list_subprojects(proj.id)?;
+                if subs.is_empty() {
+                    println!("No subprojects for {}", proj.name);
+                } else {
+                    println!("=== Subprojects of {} ===
+", proj.name);
+                    for s in &subs {
+                        println!("  {} ({:?}) [alias: {}]", s.name, s.status, s.alias.as_deref().unwrap_or("-"));
+                    }
+                }
+            }
         },
 
         Commands::Phase { project, action } => {

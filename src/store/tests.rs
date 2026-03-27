@@ -714,3 +714,87 @@ fn subproject_with_alias() {
     assert_eq!(child.alias, Some("hc-infra".to_string()));
     assert_eq!(child.parent_id, Some(parent.id));
 }
+
+// --- Issue #18: Subproject validation and list_subprojects ---
+
+#[test]
+fn create_subproject_with_invalid_parent_fails() {
+    let store = test_store();
+    let result = store.create_project("orphan", None, Some(9999));
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        StoreError::Constraint(msg) => assert!(msg.contains("does not exist")),
+        other => panic!("Expected Constraint error, got: {:?}", other),
+    }
+}
+
+#[test]
+fn list_subprojects_returns_children_only() {
+    let store = test_store();
+    let parent = store.create_project("home-cloud", None, None).unwrap();
+    let _standalone = store.create_project("volta", None, None).unwrap();
+    let _child1 = store.create_project("execution-engine", None, Some(parent.id)).unwrap();
+    let _child2 = store.create_project("infrastructure", None, Some(parent.id)).unwrap();
+    let subs = store.list_subprojects(parent.id).unwrap();
+    assert_eq!(subs.len(), 2);
+    assert_eq!(subs[0].name, "execution-engine");
+    assert_eq!(subs[1].name, "infrastructure");
+}
+
+#[test]
+fn list_subprojects_empty_for_leaf_project() {
+    let store = test_store();
+    let proj = store.create_project("leaf", None, None).unwrap();
+    let subs = store.list_subprojects(proj.id).unwrap();
+    assert!(subs.is_empty());
+}
+
+#[test]
+fn list_subprojects_empty_for_standalone_child() {
+    let store = test_store();
+    let parent = store.create_project("parent", None, None).unwrap();
+    let child = store.create_project("child", None, Some(parent.id)).unwrap();
+    let subs = store.list_subprojects(child.id).unwrap();
+    assert!(subs.is_empty());
+}
+
+#[test]
+fn subproject_status_independent_of_parent() {
+    let store = test_store();
+    let parent = store.create_project("parent", None, None).unwrap();
+    let child = store.create_project("child", None, Some(parent.id)).unwrap();
+    store.update_project_status(parent.id, ProjectStatus::Paused).unwrap();
+    let child_fetched = store.get_project(child.id).unwrap();
+    assert_eq!(child_fetched.status, ProjectStatus::Active);
+}
+
+#[test]
+fn subproject_phases_independent_of_parent_phases() {
+    let store = test_store();
+    let parent = store.create_project("parent", None, None).unwrap();
+    let child = store.create_project("child", None, Some(parent.id)).unwrap();
+    store.create_phase(parent.id, "Parent Phase", 50, &[]).unwrap();
+    store.create_phase(child.id, "Child Phase", 30, &[]).unwrap();
+    let parent_phases = store.list_phases(parent.id).unwrap();
+    let child_phases = store.list_phases(child.id).unwrap();
+    assert_eq!(parent_phases.len(), 1);
+    assert_eq!(child_phases.len(), 1);
+    assert_eq!(parent_phases[0].name, "Parent Phase");
+    assert_eq!(child_phases[0].name, "Child Phase");
+}
+
+#[test]
+fn nested_subprojects_two_levels() {
+    let store = test_store();
+    let root = store.create_project("org", None, None).unwrap();
+    let mid = store.create_project("team", None, Some(root.id)).unwrap();
+    let leaf = store.create_project("component", None, Some(mid.id)).unwrap();
+    assert_eq!(leaf.parent_id, Some(mid.id));
+    assert_eq!(mid.parent_id, Some(root.id));
+    let root_subs = store.list_subprojects(root.id).unwrap();
+    assert_eq!(root_subs.len(), 1);
+    assert_eq!(root_subs[0].name, "team");
+    let mid_subs = store.list_subprojects(mid.id).unwrap();
+    assert_eq!(mid_subs.len(), 1);
+    assert_eq!(mid_subs[0].name, "component");
+}

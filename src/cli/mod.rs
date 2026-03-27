@@ -132,6 +132,8 @@ pub enum ProjectAction {
     Activate { name: String, #[arg(short, long)] alias: Option<String>, #[arg(short, long)] parent: Option<String> },
     Pause { name: String },
     Archive { name: String },
+    /// List subprojects of a parent project
+    Subs { name: String },
 }
 
 #[derive(Subcommand)]
