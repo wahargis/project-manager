@@ -286,6 +286,14 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             dashboard::tool_project_create(store, name, alias, parent)
         },
         "pm_project_list" => dashboard::tool_project_list(store),
+        "pm_project_activate" => {
+            let n = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            dashboard::tool_project_set_status(store, n, true)
+        }
+        "pm_project_deactivate" => {
+            let n = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            dashboard::tool_project_set_status(store, n, false)
+        }
 
         _ => format!("Unknown tool: {}", tool_name),
     }
@@ -396,6 +404,28 @@ fn tool_definitions() -> Vec<ToolDef> {
             name: "pm_project_list".into(),
             description: "List all projects in a tree hierarchy showing parent/child relationships and node counts per project.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+        ToolDef {
+            name: "pm_project_activate".into(),
+            description: "Mark a project or subproject as active. Active projects appear in dashboard by default.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string", "description": "Project name or alias to activate"}
+                }
+            }),
+        },
+        ToolDef {
+            name: "pm_project_deactivate".into(),
+            description: "Mark a project or subproject as inactive. Inactive projects hidden from dashboard unless explicitly requested. Use for future planning projects.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string", "description": "Project name or alias to deactivate"}
+                }
+            }),
         },
         ToolDef {
             name: "pm_phase_update".into(),

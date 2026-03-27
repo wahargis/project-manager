@@ -48,6 +48,19 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 .legend-item { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 .legend-line { height: 2px; border-radius: 1px; }
+
+.project-item.paused .proj-name { opacity: 0.7; }
+.project-item.archived-item .proj-name { opacity: 0.5; text-decoration: line-through; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; cursor: pointer; vertical-align: middle; border: 1px solid transparent; flex-shrink: 0; }
+.status-dot:hover { border-color: #fff; transform: scale(1.3); }
+.status-dot.active { background: #3fb950; }
+.status-dot.paused { background: #d29922; }
+.status-dot.archived { background: #484f58; }
+.archived-section { margin-top: 10px; border-top: 1px solid #444; }
+.archived-toggle { cursor: pointer; padding: 5px 0; color: #888; font-size: 11px; user-select: none; }
+.archived-toggle:hover { color: #c9d1d9; }
+.archived-list { display: none; }
+.proj-name-row { display: flex; align-items: center; }
 </style>
 </head>
 <body>
@@ -139,13 +152,115 @@ function formatNodeCounts(nc) {
   return parts.join(', ') || 'empty';
 }
 
+function statusDotClass(status) {
+  if (status === 'Paused') return 'paused';
+  if (status === 'Archived') return 'archived';
+  return 'active';
+}
+
+function makeStatusDot(proj) {
+  const cls = statusDotClass(proj.status);
+  const dot = document.createElement('span');
+  dot.className = 'status-dot ' + cls;
+  dot.title = proj.status + ' — click to change';
+  dot.onclick = function(ev) {
+    ev.stopPropagation();
+    toggleProjectStatus(proj.id, proj.name, proj.status);
+  };
+  return dot;
+}
+
+async function toggleProjectStatus(projectId, projectName, currentStatus) {
+  let newStatus, msg;
+  if (currentStatus === 'Active') {
+    const choice = prompt('Change status for "' + projectName + '":\n1) Archive (hide from default view)\n2) Pause (dim in dashboard)\n\nEnter 1 or 2 (or cancel):');
+    if (!choice) return;
+    if (choice.trim() === '2') {
+      newStatus = 'paused';
+      msg = 'Pause "' + projectName + '"? It will be dimmed in the dashboard.';
+    } else {
+      newStatus = 'archived';
+      msg = 'Archive "' + projectName + '"? It will be hidden from the default dashboard view.';
+    }
+  } else if (currentStatus === 'Paused') {
+    const choice = prompt('Change status for "' + projectName + '" (currently Paused):\n1) Reactivate\n2) Archive\n\nEnter 1 or 2 (or cancel):');
+    if (!choice) return;
+    if (choice.trim() === '2') {
+      newStatus = 'archived';
+      msg = 'Archive "' + projectName + '"? It will be hidden from the default dashboard view.';
+    } else {
+      newStatus = 'active';
+      msg = 'Reactivate "' + projectName + '"? It will appear in the main dashboard.';
+    }
+  } else {
+    newStatus = 'active';
+    msg = 'Reactivate "' + projectName + '"? It will appear in the main dashboard.';
+  }
+  if (!confirm(msg)) return;
+  const resp = await fetch('/api/projects/' + projectId + '/status', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: newStatus})
+  });
+  if (resp.ok) {
+    loadProjects();
+  } else {
+    alert('Failed to update project status');
+  }
+}
+
+function toggleArchived() {
+  const list = document.getElementById('archived-project-list');
+  const toggle = document.getElementById('archived-toggle-text');
+  if (list.style.display === 'none') {
+    list.style.display = 'block';
+    toggle.textContent = toggle.textContent.replace(/^[^ ]/, '\u25BC');
+  } else {
+    list.style.display = 'none';
+    toggle.textContent = toggle.textContent.replace(/^[^ ]/, '\u25B6');
+  }
+}
+
+function buildProjectItem(proj, isChild, isArchived) {
+  const item = document.createElement('div');
+  let className = 'project-item';
+  if (isChild) className += ' child';
+  if (proj.status === 'Archived') className += ' archived-item';
+  if (proj.status === 'Paused') className += ' paused';
+  if (!isChild && !isArchived) className += ' standalone';
+  item.className = className;
+  item.dataset.id = proj.id;
+
+  const dot = makeStatusDot(proj);
+  const nameRow = document.createElement('div');
+  nameRow.className = 'proj-name-row';
+  nameRow.appendChild(dot);
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'proj-name';
+  const prefix = isChild ? '\u230A ' : '';
+  const aliasStr = proj.alias && isChild ? ' [' + proj.alias + ']' : '';
+  const statusTag = proj.status !== 'Active' ? ' [' + proj.status.toLowerCase() + ']' : '';
+  nameSpan.textContent = prefix + proj.name + aliasStr + statusTag;
+  nameRow.appendChild(nameSpan);
+
+  item.appendChild(nameRow);
+
+  const statsDiv = document.createElement('div');
+  statsDiv.className = 'proj-stats';
+  const projData = allProjectsData.find(p => p.id === proj.id);
+  statsDiv.textContent = projData ? formatNodeCounts(projData.node_counts) : '';
+  item.appendChild(statsDiv);
+
+  return item;
+}
+
 async function loadProjects() {
   const res = await fetch('/api/projects');
   allProjectsData = await res.json();
   const tree = document.getElementById('project-tree');
   tree.innerHTML = '';
 
-  const topLevel = allProjectsData.filter(p => !p.parent_id && p.status === 'Active');
   const childMap = {};
   for (const p of allProjectsData) {
     if (p.parent_id) {
@@ -154,50 +269,89 @@ async function loadProjects() {
     }
   }
 
-  for (const proj of topLevel) {
-    const children = (childMap[proj.id] || []).filter(c => c.status === 'Active');
+  // Active and Paused top-level projects
+  const activeTop = allProjectsData.filter(p => !p.parent_id && (p.status === 'Active' || p.status === 'Paused'));
+  // Archived top-level projects
+  const archivedTop = allProjectsData.filter(p => !p.parent_id && p.status === 'Archived');
+
+  for (const proj of activeTop) {
+    const children = (childMap[proj.id] || []).filter(c => c.status === 'Active' || c.status === 'Paused');
     const hasChildren = children.length > 0;
 
     if (hasChildren) {
       const group = document.createElement('div');
       group.className = 'project-group';
 
-      const parentItem = document.createElement('div');
-      parentItem.className = 'project-item parent';
-      parentItem.dataset.id = proj.id;
-      parentItem.innerHTML = `<div class="proj-name">${proj.name}<span class="proj-badge">parent</span></div><div class="proj-stats">${formatNodeCounts(proj.node_counts)}</div>`;
+      const parentItem = buildProjectItem(proj, false, false);
+      parentItem.className = 'project-item parent' + (proj.status === 'Paused' ? ' paused' : '');
+      parentItem.querySelector('.proj-name').innerHTML = proj.name + '<span class="proj-badge">parent</span>' + (proj.status !== 'Active' ? ' <span class="proj-badge">' + proj.status.toLowerCase() + '</span>' : '');
       parentItem.onclick = () => selectProject(proj.id, parentItem, true);
       group.appendChild(parentItem);
 
       for (const child of children) {
-        const childItem = document.createElement('div');
-        childItem.className = 'project-item child';
-        childItem.dataset.id = child.id;
-        const aliasStr = child.alias ? ` [${child.alias}]` : '';
-        const childCounts = allProjectsData.find(p => p.id === child.id);
-        const countsStr = childCounts ? formatNodeCounts(childCounts.node_counts) : '';
-        childItem.innerHTML = `<div class="proj-name">&lfloor; ${child.name}${aliasStr}</div><div class="proj-stats">${countsStr}</div>`;
+        const childItem = buildProjectItem(child, true, false);
         childItem.onclick = (ev) => { ev.stopPropagation(); selectProject(child.id, childItem, false); };
         group.appendChild(childItem);
       }
+
+      // Archived children
+      const archivedChildren = (childMap[proj.id] || []).filter(c => c.status === 'Archived');
+      for (const child of archivedChildren) {
+        const childItem = buildProjectItem(child, true, true);
+        childItem.onclick = (ev) => { ev.stopPropagation(); selectProject(child.id, childItem, false); };
+        group.appendChild(childItem);
+      }
+
       tree.appendChild(group);
     } else {
-      const item = document.createElement('div');
-      item.className = 'project-item standalone';
-      item.dataset.id = proj.id;
-      item.innerHTML = `<div class="proj-name">${proj.name}</div><div class="proj-stats">${formatNodeCounts(proj.node_counts)}</div>`;
+      const item = buildProjectItem(proj, false, false);
       item.onclick = () => selectProject(proj.id, item, false);
       tree.appendChild(item);
     }
   }
 
+  // Archived section
+  if (archivedTop.length > 0) {
+    const section = document.createElement('div');
+    section.className = 'archived-section';
+
+    const toggle = document.createElement('div');
+    toggle.className = 'archived-toggle';
+    toggle.id = 'archived-toggle-text';
+    toggle.textContent = '\u25B6 Archived Projects (' + archivedTop.length + ')';
+    toggle.onclick = toggleArchived;
+    section.appendChild(toggle);
+
+    const list = document.createElement('div');
+    list.id = 'archived-project-list';
+    list.className = 'archived-list';
+    list.style.display = 'none';
+
+    for (const proj of archivedTop) {
+      const item = buildProjectItem(proj, false, true);
+      item.onclick = () => selectProject(proj.id, item, false);
+      list.appendChild(item);
+
+      // Also show archived children
+      const archivedChildren = (childMap[proj.id] || []);
+      for (const child of archivedChildren) {
+        const childItem = buildProjectItem(child, true, true);
+        childItem.onclick = (ev) => { ev.stopPropagation(); selectProject(child.id, childItem, false); };
+        list.appendChild(childItem);
+      }
+    }
+
+    section.appendChild(list);
+    tree.appendChild(section);
+  }
+
   const dash = await fetch('/api/dashboard').then(r => r.json());
   document.getElementById('dashboard-text').textContent = dash.text;
 
-  if (topLevel.length > 0) {
-    const first = topLevel[0];
+  if (activeTop.length > 0) {
+    const first = activeTop[0];
     const firstItem = tree.querySelector('.project-item');
-    const hasKids = (childMap[first.id] || []).filter(c => c.status === 'Active').length > 0;
+    const hasKids = (childMap[first.id] || []).filter(c => c.status === 'Active' || c.status === 'Paused').length > 0;
     selectProject(first.id, firstItem, hasKids);
   }
 }
