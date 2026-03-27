@@ -12,6 +12,7 @@ use crate::store::sqlite::SqliteStore;
 use crate::store::Store;
 use crate::dag::DagEngine;
 use crate::store::PhaseStatus;
+use crate::validation;
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -225,7 +226,12 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                     let status = args.get("status").and_then(|v| v.as_str()).unwrap_or("pass");
                     let result = args.get("result").and_then(|v| v.as_str()).unwrap_or("");
                     let finding_text = args.get("finding").and_then(|v| v.as_str());
-                    tool_exp_complete(&store, eid, status, result, finding_text)
+                    let sv = validation::validate_status("experiment", status);
+                    if !sv.is_ok() {
+                        format!("\u{274c} VALIDATION ERROR:\n{}", sv.to_mcp_error())
+                    } else {
+                        tool_exp_complete(&store, eid, status, result, finding_text)
+                    }
                 }
                 "pm_log_finding" => {
                     let eid = args.get("experiment_id").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -249,6 +255,10 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                 "pm_hyp_update" => {
                     let hid = args.get("hypothesis_id").and_then(|v| v.as_i64()).unwrap_or(0);
                     let status_str = args.get("status").and_then(|v| v.as_str()).unwrap_or("proposed");
+                    let sv = validation::validate_status("hypothesis", status_str);
+                    if !sv.is_ok() {
+                        format!("\u{274c} VALIDATION ERROR:\n{}", sv.to_mcp_error())
+                    } else {
                     let eid = args.get("experiment_id").and_then(|v| v.as_i64());
                     let fid = args.get("finding_id").and_then(|v| v.as_i64());
                     let hs = match status_str {
@@ -261,13 +271,20 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                         Ok(_) => format!("Hypothesis #{} updated to {:?}", hid, hs),
                         Err(e) => format!("Error: {}", e),
                     }
+                    } // end else validation
                 }
                 "pm_lit_add" => {
                     let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
                     let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                    let authors = args.get("authors").and_then(|v| v.as_str());
                     let arxiv = args.get("arxiv_id").and_then(|v| v.as_str());
+                    let url = args.get("url").and_then(|v| v.as_str());
                     let rel = args.get("relevance").and_then(|v| v.as_str());
                     let kf = args.get("key_findings").and_then(|v| v.as_str());
+                    let lv = validation::validate_literature(title, authors, arxiv, url, kf, rel);
+                    if !lv.is_ok() {
+                        format!("\u{274c} VALIDATION ERROR:\n{}", lv.to_mcp_error())
+                    } else {
                     match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
                         Some(proj) => match store.create_literature(proj.id, title, arxiv, rel, kf) {
                             Ok(l) => format!("Literature #{} added: {}", l.id, l.title),
@@ -275,12 +292,17 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                         },
                         None => format!("Project not found: {}", project),
                     }
+                    } // end else validation
                 }
                 "pm_constraint_add" => {
                     let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
                     let scope_str = args.get("scope").and_then(|v| v.as_str()).unwrap_or("hardware");
                     let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
                     let source = args.get("source").and_then(|v| v.as_str());
+                    let cv = validation::validate_constraint(text, source);
+                    if !cv.is_ok() {
+                        format!("\u{274c} VALIDATION ERROR:\n{}", cv.to_mcp_error())
+                    } else {
                     let scope = match scope_str {
                         "software" => crate::store::ConstraintScope::Software,
                         "process" => crate::store::ConstraintScope::Process,
@@ -294,11 +316,16 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                         },
                         None => format!("Project not found: {}", project),
                     }
+                    } // end else validation
                 }
                 "pm_research_complete" => {
                     let rid = args.get("research_id").and_then(|v| v.as_i64()).unwrap_or(0);
                     let status_str = args.get("status").and_then(|v| v.as_str()).unwrap_or("complete");
                     let report = args.get("report").and_then(|v| v.as_str());
+                    let rv = validation::validate_status("research", status_str);
+                    if !rv.is_ok() {
+                        format!("\u{274c} VALIDATION ERROR:\n{}", rv.to_mcp_error())
+                    } else {
                     let rs = match status_str {
                         // no abandoned status, just use Complete
                         _ => crate::store::ResearchStatus::Complete,
@@ -307,11 +334,17 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                         Ok(_) => format!("Research #{} updated to {:?}", rid, rs),
                         Err(e) => format!("Error: {}", e),
                     }
+                    } // end else validation
                 }
                 "pm_principle_add" => {
                     let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
                     let scope_str = args.get("scope").and_then(|v| v.as_str()).unwrap_or("methodology");
                     let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    let rationale = args.get("rationale").and_then(|v| v.as_str());
+                    let pv = validation::validate_principle(text, rationale);
+                    if !pv.is_ok() {
+                        format!("\u{274c} VALIDATION ERROR:\n{}", pv.to_mcp_error())
+                    } else {
                     let scope = match scope_str {
                         "universal" | "architecture" => crate::store::PrincipleScope::Universal,
                         "phase" | "process" => crate::store::PrincipleScope::Phase,
@@ -324,6 +357,7 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                         },
                         None => format!("Project not found: {}", project),
                     }
+                    } // end else validation
                 }
                 "pm_stats" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); tool_stats(&store, p) }
                 _ => format!("Unknown tool: {}", tool_name),
@@ -623,6 +657,10 @@ fn tool_exp_complete(store: &SqliteStore, eid: i64, status: &str, result: &str, 
 }
 
 fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
+    let v = validation::validate_finding(text);
+    if !v.is_ok() {
+        return format!("\u{274c} VALIDATION ERROR:\n{}", v.to_mcp_error());
+    }
     let exp_id = if eid > 0 { Some(eid) } else { None };
     match store.create_finding(exp_id, text) {
         Ok(f) => {
@@ -652,6 +690,10 @@ fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
 }
 
 fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experiment_id: Option<i64>) -> String {
+    let v = validation::validate_decision(what, why);
+    if !v.is_ok() {
+        return format!("\u{274c} VALIDATION ERROR:\n{}", v.to_mcp_error());
+    }
     match store.create_decision(experiment_id, what, why) {
         Ok(d) => {
             let mut out = format!("Decision #{} created: {}\n", d.id, d.what);
@@ -701,6 +743,10 @@ fn tool_add_edge(store: &SqliteStore, st: &str, si: i64, tt: &str, ti: i64, rel:
         "feedback" | "fb" => NodeType::Feedback,
         _ => return format!("Unknown target type: {}", tt),
     };
+    let v = validation::validate_edge_relation(rel);
+    if !v.is_ok() {
+        return format!("\u{274c} VALIDATION ERROR:\n{}", v.to_mcp_error());
+    }
     let relation = match rel {
         "supports" => EdgeType::Supports,
         "contradicts" => EdgeType::Contradicts,
