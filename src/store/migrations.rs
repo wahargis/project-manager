@@ -7,7 +7,7 @@
 use rusqlite::Connection;
 
 /// Current highest migration version.
-const LATEST_VERSION: i64 = 8;
+const LATEST_VERSION: i64 = 9;
 
 /// Run all pending migrations on the database connection.
 /// Creates the schema_version table if it doesn't exist, checks the current
@@ -58,6 +58,7 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), Box<dyn std::e
         6 => migrate_v6_principles(&tx)?,
         7 => migrate_v7_edges_uniqueness(&tx)?,
         8 => migrate_v8_subprojects(&tx)?,
+        9 => migrate_v9_project_seq(&tx)?,
         _ => return Err(format!("Unknown migration version: {}", version).into()),
     }
 
@@ -171,6 +172,81 @@ fn migrate_v7_edges_uniqueness(conn: &Connection) -> Result<(), Box<dyn std::err
 // Add parent_id to projects for hierarchical project structure
 fn migrate_v8_subprojects(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
     add_column_if_not_exists(conn, "projects", "parent_id", "INTEGER REFERENCES projects(id)")?;
+    Ok(())
+}
+
+
+// --- Migration v9: Per-project ordinal numbering ---
+// Add project_seq column to all project-scoped tables and backfill with
+// sequential ordinals per project, ordered by global ID (creation order).
+fn migrate_v9_project_seq(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    // Tables with direct project_id
+    let direct_tables = ["phases", "literature", "principles", "constraints_tbl", "feedback", "decisions"];
+    for table in &direct_tables {
+        add_column_if_not_exists(conn, table, "project_seq", "INTEGER")?;
+    }
+    // Tables linked through phases (experiments, hypotheses, research)
+    let phase_linked_tables = ["experiments", "hypotheses", "research"];
+    for table in &phase_linked_tables {
+        add_column_if_not_exists(conn, table, "project_seq", "INTEGER")?;
+    }
+    // Findings linked through experiments -> phases
+    add_column_if_not_exists(conn, "findings", "project_seq", "INTEGER")?;
+
+    // === Backfill: assign sequential ordinals per project ===
+
+    // Direct project_id tables
+    for table in &direct_tables {
+        conn.execute_batch(&format!(
+            "UPDATE {table} SET project_seq = (
+                SELECT COUNT(*) FROM {table} t2
+                WHERE t2.project_id = {table}.project_id AND t2.id <= {table}.id
+            ) WHERE project_seq IS NULL AND project_id IS NOT NULL;"
+        ))?;
+    }
+
+    // Experiments: project derived from experiment.phase_id -> phase.project_id
+    conn.execute_batch(
+        "UPDATE experiments SET project_seq = (
+            SELECT COUNT(*) FROM experiments e2
+            JOIN phases p2 ON e2.phase_id = p2.id
+            JOIN phases p ON experiments.phase_id = p.id
+            WHERE p2.project_id = p.project_id AND e2.id <= experiments.id
+        ) WHERE project_seq IS NULL AND phase_id IS NOT NULL;"
+    )?;
+
+    // Hypotheses: project derived from hypothesis.phase_id -> phase.project_id
+    conn.execute_batch(
+        "UPDATE hypotheses SET project_seq = (
+            SELECT COUNT(*) FROM hypotheses h2
+            JOIN phases p2 ON h2.phase_id = p2.id
+            JOIN phases p ON hypotheses.phase_id = p.id
+            WHERE p2.project_id = p.project_id AND h2.id <= hypotheses.id
+        ) WHERE project_seq IS NULL AND phase_id IS NOT NULL;"
+    )?;
+
+    // Research: project derived from research.phase_id -> phase.project_id
+    conn.execute_batch(
+        "UPDATE research SET project_seq = (
+            SELECT COUNT(*) FROM research r2
+            JOIN phases p2 ON r2.phase_id = p2.id
+            JOIN phases p ON research.phase_id = p.id
+            WHERE p2.project_id = p.project_id AND r2.id <= research.id
+        ) WHERE project_seq IS NULL AND phase_id IS NOT NULL;"
+    )?;
+
+    // Findings: project derived from finding.experiment_id -> experiment.phase_id -> phase.project_id
+    conn.execute_batch(
+        "UPDATE findings SET project_seq = (
+            SELECT COUNT(*) FROM findings f2
+            JOIN experiments e2 ON f2.experiment_id = e2.id
+            JOIN phases p2 ON e2.phase_id = p2.id
+            JOIN experiments e ON findings.experiment_id = e.id
+            JOIN phases p ON e.phase_id = p.id
+            WHERE p2.project_id = p.project_id AND f2.id <= findings.id
+        ) WHERE project_seq IS NULL AND experiment_id IS NOT NULL;"
+    )?;
+
     Ok(())
 }
 
@@ -360,10 +436,10 @@ mod tests {
 
         // Verify schema_version recorded all 8 migrations
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 8);
+        assert_eq!(count, 9);
 
         let max_version: i64 = conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(max_version, 8);
+        assert_eq!(max_version, 9);
     }
 
     #[test]
@@ -375,7 +451,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 8, "Should still have exactly 8 version records after idempotent run");
+        assert_eq!(count, 9, "Should still have exactly 9 version records after idempotent run");
     }
 
     #[test]
@@ -465,7 +541,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 8, "Should have 8 total version records (3 pre-existing + 5 new)");
+        assert_eq!(count, 9, "Should have 9 total version records (3 pre-existing + 6 new)");
 
         // Verify v4 columns exist
         conn.execute(

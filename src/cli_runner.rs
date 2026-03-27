@@ -75,10 +75,12 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                             .or_else(|| next.iter().find(|p| p.status == PhaseStatus::Pending));
                         if let Some(top) = top {
                             let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                            println!("  [{}] {} #{} [impact:{}] {}", parent.name, s, top.id, top.impact, top.name);
+                            let pref = top.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", top.id));
+                            println!("  [{}] {} {} [impact:{}] {}", parent.name, s, pref, top.impact, top.name);
                         }
                         if let Some(p) = next.iter().find(|p| p.status == PhaseStatus::Paused) {
-                            println!("  [{}] PAUSED #{} [impact:{}] {}", parent.name, p.id, p.impact, p.name);
+                            let pref = p.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", p.id));
+                            println!("  [{}] PAUSED {} [impact:{}] {}", parent.name, pref, p.impact, p.name);
                         }
                     }
                 } else {
@@ -91,7 +93,8 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                             .or_else(|| next.iter().find(|p| p.status == PhaseStatus::Pending));
                         if let Some(top) = top {
                             let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                            println!("  [{}] {} #{} [impact:{}] {}", parent.name, s, top.id, top.impact, top.name);
+                            let pref = top.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", top.id));
+                            println!("  [{}] {} {} [impact:{}] {}", parent.name, s, pref, top.impact, top.name);
                         }
                     }
                     // Show subprojects indented
@@ -102,10 +105,12 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                                 .or_else(|| next.iter().find(|p| p.status == PhaseStatus::Pending));
                             if let Some(top) = top {
                                 let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                                println!("  [{}/{}] {} #{} [impact:{}] {}", parent.name, sub.name, s, top.id, top.impact, top.name);
+                                let pref = top.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", top.id));
+                                println!("  [{}/{}] {} {} [impact:{}] {}", parent.name, sub.name, s, pref, top.impact, top.name);
                             }
                             if let Some(p) = next.iter().find(|p| p.status == PhaseStatus::Paused) {
-                                println!("  [{}/{}] PAUSED #{} [impact:{}] {}", parent.name, sub.name, p.id, p.impact, p.name);
+                                let pref = p.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", p.id));
+                                println!("  [{}/{}] PAUSED {} [impact:{}] {}", parent.name, sub.name, pref, p.impact, p.name);
                             }
                         }
                     }
@@ -183,7 +188,8 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     for p in store.list_phases(proj.id)? {
                         let deps = if p.depends_on.is_empty() { String::new() }
                             else { format!(" (depends: {:?})", p.depends_on) };
-                        println!("  #{} [{:?}] [impact:{}] {}{}", p.id, p.status, p.impact, p.name, deps);
+                        let pref = p.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", p.id));
+                    println!("  {} [{:?}] [impact:{}] {}{}", pref, p.status, p.impact, p.name, deps);
                     }
                 }
                 PhaseAction::Update { id, status } => {

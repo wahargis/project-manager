@@ -31,7 +31,8 @@ pub fn tool_dashboard(store: &SqliteStore) -> String {
                 if let Ok(next) = dag.next_phases() {
                     if let Some(top) = next.first() {
                         let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                        out += &format!("  [{}] {} #{} [impact:{}] {}\n", parent.name, s, top.id, top.impact, top.name);
+                        let pref = top.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", top.id));
+                        out += &format!("  [{}] {} {} [impact:{}] {}\n", parent.name, s, pref, top.impact, top.name);
                     }
                 }
             } else {
@@ -42,7 +43,8 @@ pub fn tool_dashboard(store: &SqliteStore) -> String {
                 if let Ok(next) = dag.next_phases() {
                     if let Some(top) = next.first() {
                         let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                        out += &format!("  [{}] {} #{} [impact:{}] {}\n", parent.name, s, top.id, top.impact, top.name);
+                        let pref = top.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", top.id));
+                        out += &format!("  [{}] {} {} [impact:{}] {}\n", parent.name, s, pref, top.impact, top.name);
                     }
                 }
                 // Subproject phases
@@ -51,7 +53,8 @@ pub fn tool_dashboard(store: &SqliteStore) -> String {
                     if let Ok(next) = dag.next_phases() {
                         if let Some(top) = next.first() {
                             let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                            out += &format!("  [{}/{}] {} #{} [impact:{}] {}\n", parent.name, sub.name, s, top.id, top.impact, top.name);
+                            let pref = top.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", top.id));
+                        out += &format!("  [{}/{}] {} {} [impact:{}] {}\n", parent.name, sub.name, s, pref, top.impact, top.name);
                         }
                     }
                 }
@@ -72,7 +75,8 @@ pub fn tool_next(store: &SqliteStore, project: &str) -> String {
                 out += "=== Next Phases (by impact) ===\n\n";
                 for phase in next.iter().take(3) {
                     let s = if phase.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                    out += &format!("  {} #{} [impact:{}] {}\n", s, phase.id, phase.impact, phase.name);
+                    let pref = phase.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", phase.id));
+                    out += &format!("  {} {} [impact:{}] {}\n", s, pref, phase.impact, phase.name);
 
                     // Show phase dependency info
                     if !phase.depends_on.is_empty() {
@@ -136,7 +140,8 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
     let fail_count = exps.iter().filter(|e| e.status == ExperimentStatus::Fail).count();
     let inconclusive_count = exps.iter().filter(|e| e.status == ExperimentStatus::Inconclusive).count();
 
-    let mut text = format!("=== Phase #{} ({}) ===\n\n", phase.id, phase.name);
+    let pref = phase.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", phase.id));
+    let mut text = format!("=== Phase {} ({}) ===\n\n", pref, phase.name);
 
     // Roll-up view: experiment counts by status
     text += &format!("## Experiment Summary: {} total ({} pending, {} pass, {} fail, {} inconclusive)\n\n",
@@ -184,8 +189,9 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
     if !pending.is_empty() {
         text += &format!("--- {} Pending Experiments ---\n\n", pending.len());
         for (i, e) in pending.iter().enumerate() {
-            text += &format!("TASK {}: Exp #{} \u{2014} {}\n", i + 1, e.id, e.name);
-            text += &format!("  Status: pending | Phase: #{} ({})\n", phase.id, phase.name);
+            let eref = e.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", e.id));
+            text += &format!("TASK {}: Exp {} \u{2014} {}\n", i + 1, eref, e.name);
+            text += &format!("  Status: pending | Phase: {} ({})\n", pref, phase.name);
             if let Some(notes) = &e.notes {
                 text += &format!("  Notes: {}\n", &notes[..notes.len().min(200)]);
             }
@@ -205,7 +211,8 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
                 let sev = c.severity.as_deref().unwrap_or("hard");
                 let src = c.source.as_deref().unwrap_or("unknown");
                 let t = if c.text.len() > 80 { &c.text[..80] } else { &c.text };
-                text += &format!("  C#{} [{}]: {} (source: {})\n", c.id, sev, t, src);
+                let cref = c.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", c.id));
+                text += &format!("  C{} [{}]: {} (source: {})\n", cref, sev, t, src);
             }
             text += "\n";
         }
@@ -226,7 +233,8 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
                 };
                 let enforcement = p.enforcement_level.as_deref().unwrap_or("advisory");
                 let t = if p.text.len() > 100 { &p.text[..100] } else { &p.text };
-                text += &format!("  P#{} [{}|{}]: {}\n", p.id, scope, enforcement, t);
+                let prref = p.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", p.id));
+                text += &format!("  P{} [{}|{}]: {}\n", prref, scope, enforcement, t);
             }
             text += "\n";
         }
@@ -270,7 +278,8 @@ pub fn tool_session_init(store: &SqliteStore) -> String {
                                     .unwrap_or_else(|| proj.name.clone())
                             } else { proj.name.clone() }
                         } else { proj.name.clone() };
-                        out += &format!("## [{}] Phase #{} [impact:{}] {}\n", proj_label, phase.id, phase.impact, phase.name);
+                        let pref = phase.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", phase.id));
+                        out += &format!("## [{}] Phase {} [impact:{}] {}\n", proj_label, pref, phase.impact, phase.name);
                         out += &format!("  Status: {} | Experiments: {} pending, {} pass, {} fail\n\n",
                             status_str, pending.len(), pass_count, fail_count);
 
@@ -279,8 +288,10 @@ pub fn tool_session_init(store: &SqliteStore) -> String {
                         } else {
                             for exp in pending.iter().take(5) {
                                 task_num += 1;
-                                out += &format!("  TASK {}: Exp #{} \u{2014} {}\n", task_num, exp.id, exp.name);
-                                out += &format!("    Status: pending | Phase: #{} ({})\n", phase.id, phase.name);
+                                let eref = exp.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", exp.id));
+                                out += &format!("  TASK {}: Exp {} \u{2014} {}\n", task_num, eref, exp.name);
+                                let pref2 = phase.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", phase.id));
+                                out += &format!("    Status: pending | Phase: {} ({})\n", pref2, phase.name);
                                 if let Some(notes) = &exp.notes {
                                     out += &format!("    {}\n", &notes[..notes.len().min(150)]);
                                 }
@@ -453,4 +464,32 @@ fn format_counts(c: &NodeCountsInternal) -> String {
     if c.constraints > 0 { parts.push(format!("Constraints: {}", c.constraints)); }
     if parts.is_empty() { return "(empty)".to_string(); }
     parts.join(" | ")
+}
+
+pub fn tool_project_set_status(store: &SqliteStore, name: &str, active: bool) -> String {
+    if name.is_empty() {
+        return "Error: project name is required".to_string();
+    }
+    // Resolve project by name or alias
+    let project = match store.list_projects() {
+        Ok(projects) => projects.into_iter().find(|p| p.name == name || p.alias.as_deref() == Some(name)),
+        Err(e) => return format!("Error listing projects: {}", e),
+    };
+    match project {
+        Some(p) => {
+            let status = if active {
+                crate::store::ProjectStatus::Active
+            } else {
+                crate::store::ProjectStatus::Archived
+            };
+            match store.update_project_status(p.id, status) {
+                Ok(()) => {
+                    let action = if active { "activated" } else { "deactivated" };
+                    format!("Project '{}' (#{}) {}.", p.name, p.id, action)
+                }
+                Err(e) => format!("Error updating project status: {}", e),
+            }
+        }
+        None => format!("Project '{}' not found. Use pm_project_list to see available projects.", name),
+    }
 }

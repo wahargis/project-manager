@@ -51,7 +51,8 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
     let exp_id = if eid > 0 { Some(eid) } else { None };
     match store.create_finding(exp_id, text) {
         Ok(f) => {
-            let mut out = format!("Finding #{} created", f.id);
+            let fref = f.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", f.id));
+            let mut out = format!("Finding {} created (global #{})", fref, f.id);
             let mut auto_edges: Vec<String> = Vec::new();
             let mut suggestions: Vec<(String, String)> = Vec::new();
 
@@ -90,7 +91,8 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                         out += "\nSibling findings (same experiment):\n";
                         for s in others.iter().take(5) {
                             let t = if s.text.len() > 60 { &s.text[..60] } else { &s.text };
-                            out += &format!("  F#{}: {}\n", s.id, t);
+                            let sref = s.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", s.id));
+                            out += &format!("  F{}: {}\n", sref, t);
                         }
                     }
                 }
@@ -107,7 +109,8 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                                     out += "\nRecent literature (suggest cited edges):\n";
                                     for l in &recent {
                                         let t = if l.title.len() > 60 { &l.title[..60] } else { &l.title };
-                                        out += &format!("  L#{}: {}\n", l.id, t);
+                                        let lref = l.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", l.id));
+                                        out += &format!("  L{}: {}\n", lref, t);
                                     }
                                 }
                             }
@@ -129,7 +132,8 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                                     out += "\nActive principles for this project:\n";
                                     for p in active.iter().take(5) {
                                         let t = if p.text.len() > 80 { &p.text[..80] } else { &p.text };
-                                        out += &format!("  P#{}: {}\n", p.id, t);
+                                        let prref = p.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", p.id));
+                                    out += &format!("  P{}: {}\n", prref, t);
                                     }
                                 }
                             }
@@ -181,7 +185,8 @@ pub fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experim
 
     match store.create_decision(experiment_id, what, why, project_id) {
         Ok(d) => {
-            let mut out = format!("Decision #{} created: {}\n", d.id, d.what);
+            let dref = d.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", d.id));
+            let mut out = format!("Decision {} created (global #{}): {}\n", dref, d.id, d.what);
             let mut auto_edges: Vec<String> = Vec::new();
             let mut suggestions: Vec<(String, String)> = Vec::new();
 
@@ -250,7 +255,8 @@ pub fn tool_lit_add(store: &SqliteStore, args: &serde_json::Value) -> String {
     match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
         Some(proj) => match store.create_literature(proj.id, title, arxiv, rel, kf, authors, venue, year, url, code_url, summary) {
             Ok(l) => {
-                let mut out = format!("Literature #{} added: {}", l.id, l.title);
+                let lref = l.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", l.id));
+                let mut out = format!("Literature {} added (global #{}): {}", lref, l.id, l.title);
 
                 // Edge suggestions: find phases with overlapping keywords (#15)
                 if let Ok(phases) = store.list_phases(proj.id) {
@@ -301,7 +307,8 @@ pub fn tool_exp_complete(store: &SqliteStore, eid: i64, status: &str, result: &s
     if let Err(e) = store.update_experiment_status(eid, es, Some(result)) {
         return format!("Error updating experiment: {}", e);
     }
-    let mut out = format!("Experiment #{} updated: status={}, result set.\n", eid, status);
+    let exp_pref = store.get_experiment(eid).ok().and_then(|e| e.project_seq).map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", eid));
+    let mut out = format!("Experiment {} updated: status={}, result set.\n", exp_pref, status);
     let mut auto_edges: Vec<String> = Vec::new();
     let mut suggestions: Vec<(String, String)> = Vec::new();
 
@@ -318,7 +325,8 @@ pub fn tool_exp_complete(store: &SqliteStore, eid: i64, status: &str, result: &s
     if let Some(text) = finding_text {
         match store.create_finding(Some(eid), text) {
             Ok(f) => {
-                out += &format!("Finding #{} created.\n", f.id);
+                let fref = f.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", f.id));
+                out += &format!("Finding {} created (global #{}).\n", fref, f.id);
                 // Auto-create Experiment --ProducedBy--> Finding edge
                 match store.create_edge(NodeType::Experiment, eid, NodeType::Finding, f.id, EdgeType::ProducedBy) {
                     Ok(_) => auto_edges.push(format!("Experiment#{} --ProducedBy--> Finding#{}", eid, f.id)),
@@ -455,7 +463,8 @@ pub fn tool_hyp_update(store: &SqliteStore, hid: i64, status_str: &str, experime
 
     match store.update_hypothesis(hid, hs.clone(), experiment_id, finding_id) {
         Ok(_) => {
-            let mut out = format!("Hypothesis #{} updated to {:?}", hid, hs);
+            let h_pref = store.get_hypothesis(hid).ok().and_then(|h| h.project_seq).map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", hid));
+            let mut out = format!("Hypothesis {} updated to {:?}", h_pref, hs);
 
             // Auto-suggestion for confirmed: suggest creating a principle
             if hs == HypothesisStatus::Confirmed {
@@ -505,7 +514,8 @@ pub fn tool_research_complete(store: &SqliteStore, rid: i64, status_str: &str, r
     };
     match store.update_research(rid, rs.clone(), report) {
         Ok(_) => {
-            let mut out = format!("Research #{} updated to {:?}", rid, rs);
+            let r_pref = store.get_research(rid).ok().and_then(|r| r.project_seq).map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", rid));
+            let mut out = format!("Research {} updated to {:?}", r_pref, rs);
             let mut auto_edges: Vec<String> = Vec::new();
             let mut suggestions: Vec<(String, String)> = Vec::new();
 
@@ -580,7 +590,8 @@ pub fn tool_principle_add(store: &SqliteStore, args: &serde_json::Value) -> Stri
     match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
         Some(proj) => match store.create_principle(proj.id, scope, text, rationale, enforcement_level) {
             Ok(pr) => {
-                let mut out = format!("Principle #{} added: {}", pr.id, &text[..text.len().min(80)]);
+                let prref = pr.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", pr.id));
+                let mut out = format!("Principle {} added (global #{}): {}", prref, pr.id, &text[..text.len().min(80)]);
 
                 // Auto-create DerivedFrom edge if finding_id provided (#12)
                 if let Some(fid) = finding_id {
@@ -605,7 +616,8 @@ pub fn tool_principle_add(store: &SqliteStore, args: &serde_json::Value) -> Stri
                         for c in constraints.iter().take(5) {
                             let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
                             let sev = c.severity.as_deref().unwrap_or("hard");
-                            out += &format!("  C#{} [{}]: {}\n", c.id, sev, t);
+                            let cref = c.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", c.id));
+                            out += &format!("  C{} [{}]: {}\n", cref, sev, t);
                         }
                         out += &format!("\nSuggest: pm_add_edge source_type=principle source_id={} target_type=constraint target_id={} relation=related\n", pr.id, constraints[0].id);
                     }
@@ -642,7 +654,8 @@ pub fn tool_constraint_add(store: &SqliteStore, args: &serde_json::Value) -> Str
     match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
         Some(proj) => match store.create_constraint(proj.id, scope, text, source, severity, resource, measured_value, expires_at) {
             Ok(con) => {
-                let mut out = format!("Constraint #{} added: {}", con.id, &text[..text.len().min(80)]);
+                let cref = con.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", con.id));
+                let mut out = format!("Constraint {} added (global #{}): {}", cref, con.id, &text[..text.len().min(80)]);
                 let mut auto_edges: Vec<String> = Vec::new();
                 let mut suggestions: Vec<(String, String)> = Vec::new();
 
@@ -759,8 +772,10 @@ pub fn tool_phase_update(store: &SqliteStore, phase_id: i64, description: Option
             return format!("Error updating phase status: {}", e);
         }
 
-        return format!("Phase #{} ({}) updated to {:?}", phase_id, phase.name, new_status);
+        let pref = phase.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", phase_id));
+        return format!("Phase {} ({}) updated to {:?}", pref, phase.name, new_status);
     }
 
-    format!("Phase #{} ({}) fields updated", phase_id, phase.name)
+    let pref2 = phase.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", phase_id));
+    format!("Phase {} ({}) fields updated", pref2, phase.name)
 }

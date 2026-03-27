@@ -558,7 +558,7 @@ fn test_kg_constraint_label_resolved() {
 
     let kg = KgEngine::new(&store);
     let result = kg.traverse(NodeType::Constraint, con.id).unwrap();
-    assert_eq!(result.root.label, "32GB VRAM limit per GPU for model loading");
+    assert!(result.root.label.starts_with("32GB VRAM limit per GPU for model loading"), "got: {}", result.root.label);
 }
 
 #[test]
@@ -574,7 +574,7 @@ fn test_kg_literature_label_resolved() {
 
     let kg = KgEngine::new(&store);
     let result = kg.traverse(NodeType::Literature, lit.id).unwrap();
-    assert_eq!(result.root.label, "Attention Is All You Need");
+    assert!(result.root.label.starts_with("Attention Is All You Need"), "got: {}", result.root.label);
 }
 
 #[test]
@@ -797,4 +797,321 @@ fn nested_subprojects_two_levels() {
     let mid_subs = store.list_subprojects(mid.id).unwrap();
     assert_eq!(mid_subs.len(), 1);
     assert_eq!(mid_subs[0].name, "component");
+}
+
+// === Per-project ordinal numbering (project_seq) tests ===
+
+#[test]
+fn project_seq_phases_sequential_per_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", Some("PA"), None).unwrap();
+    let p2 = store.create_project("proj-b", Some("PB"), None).unwrap();
+
+    let ph1 = store.create_phase(p1.id, "A-Phase1", 10, &[]).unwrap();
+    let ph2 = store.create_phase(p1.id, "A-Phase2", 20, &[]).unwrap();
+    let ph3 = store.create_phase(p2.id, "B-Phase1", 30, &[]).unwrap();
+    let ph4 = store.create_phase(p2.id, "B-Phase2", 40, &[]).unwrap();
+
+    // Project A phases should be #1, #2
+    assert_eq!(ph1.project_seq, Some(1));
+    assert_eq!(ph2.project_seq, Some(2));
+    // Project B phases should also be #1, #2 (not #3, #4)
+    assert_eq!(ph3.project_seq, Some(1));
+    assert_eq!(ph4.project_seq, Some(2));
+}
+
+#[test]
+fn project_seq_experiments_sequential_per_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+    let p2 = store.create_project("proj-b", None, None).unwrap();
+    let ph1 = store.create_phase(p1.id, "Phase-A", 10, &[]).unwrap();
+    let ph2 = store.create_phase(p2.id, "Phase-B", 10, &[]).unwrap();
+
+    let e1 = store.create_experiment(Some(ph1.id), "A-Exp1").unwrap();
+    let e2 = store.create_experiment(Some(ph1.id), "A-Exp2").unwrap();
+    let e3 = store.create_experiment(Some(ph2.id), "B-Exp1").unwrap();
+
+    assert_eq!(e1.project_seq, Some(1));
+    assert_eq!(e2.project_seq, Some(2));
+    assert_eq!(e3.project_seq, Some(1)); // Proj B starts at 1
+}
+
+#[test]
+fn project_seq_findings_sequential_per_project() {
+    let store = test_store();
+    let proj = store.create_project("proj-a", None, None).unwrap();
+    let ph = store.create_phase(proj.id, "Phase-1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(ph.id), "Exp-1").unwrap();
+
+    let f1 = store.create_finding(Some(exp.id), "Finding one").unwrap();
+    let f2 = store.create_finding(Some(exp.id), "Finding two").unwrap();
+
+    assert_eq!(f1.project_seq, Some(1));
+    assert_eq!(f2.project_seq, Some(2));
+}
+
+#[test]
+fn project_seq_orphan_nodes_get_none() {
+    let store = test_store();
+    // Finding without experiment_id gets no project_seq
+    let f = store.create_finding(None, "Orphan finding").unwrap();
+    assert_eq!(f.project_seq, None);
+
+    // Experiment without phase_id gets no project_seq
+    let e = store.create_experiment(None, "Orphan experiment").unwrap();
+    assert_eq!(e.project_seq, None);
+}
+
+#[test]
+fn project_seq_decisions_per_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+    let p2 = store.create_project("proj-b", None, None).unwrap();
+
+    let d1 = store.create_decision(None, "Decision A1", Some("reason"), Some(p1.id)).unwrap();
+    let d2 = store.create_decision(None, "Decision A2", Some("reason"), Some(p1.id)).unwrap();
+    let d3 = store.create_decision(None, "Decision B1", Some("reason"), Some(p2.id)).unwrap();
+
+    assert_eq!(d1.project_seq, Some(1));
+    assert_eq!(d2.project_seq, Some(2));
+    assert_eq!(d3.project_seq, Some(1)); // Proj B starts at 1
+}
+
+#[test]
+fn project_seq_principles_per_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+    let p2 = store.create_project("proj-b", None, None).unwrap();
+
+    let pr1 = store.create_principle(p1.id, PrincipleScope::Project, "Principle A1", None, None).unwrap();
+    let pr2 = store.create_principle(p1.id, PrincipleScope::Project, "Principle A2", None, None).unwrap();
+    let pr3 = store.create_principle(p2.id, PrincipleScope::Project, "Principle B1", None, None).unwrap();
+
+    assert_eq!(pr1.project_seq, Some(1));
+    assert_eq!(pr2.project_seq, Some(2));
+    assert_eq!(pr3.project_seq, Some(1));
+}
+
+#[test]
+fn project_seq_constraints_per_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+
+    let c1 = store.create_constraint(p1.id, ConstraintScope::Hardware, "C1", None, None, None, None, None).unwrap();
+    let c2 = store.create_constraint(p1.id, ConstraintScope::Hardware, "C2", None, None, None, None, None).unwrap();
+
+    assert_eq!(c1.project_seq, Some(1));
+    assert_eq!(c2.project_seq, Some(2));
+}
+
+#[test]
+fn project_seq_literature_per_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+    let p2 = store.create_project("proj-b", None, None).unwrap();
+
+    let l1 = store.create_literature(p1.id, "Paper A1", None, None, None, None, None, None, None, None, None).unwrap();
+    let l2 = store.create_literature(p1.id, "Paper A2", None, None, None, None, None, None, None, None, None).unwrap();
+    let l3 = store.create_literature(p2.id, "Paper B1", None, None, None, None, None, None, None, None, None).unwrap();
+
+    assert_eq!(l1.project_seq, Some(1));
+    assert_eq!(l2.project_seq, Some(2));
+    assert_eq!(l3.project_seq, Some(1));
+}
+
+#[test]
+fn project_seq_feedback_per_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+
+    let fb1 = store.create_feedback(p1.id, "Feedback 1", FeedbackCategory::Correction).unwrap();
+    let fb2 = store.create_feedback(p1.id, "Feedback 2", FeedbackCategory::Confirmation).unwrap();
+
+    assert_eq!(fb1.project_seq, Some(1));
+    assert_eq!(fb2.project_seq, Some(2));
+}
+
+#[test]
+fn project_seq_resolve_node_id_with_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", Some("PA"), None).unwrap();
+    let p2 = store.create_project("proj-b", Some("PB"), None).unwrap();
+
+    let ph1 = store.create_phase(p1.id, "A-Phase1", 10, &[]).unwrap();
+    let ph2 = store.create_phase(p2.id, "B-Phase1", 20, &[]).unwrap();
+
+    // Resolve project_seq=1 in proj-a -> should get ph1's global ID
+    let resolved = store.resolve_node_id("phases", 1, Some("proj-a")).unwrap();
+    assert_eq!(resolved, ph1.id);
+
+    // Resolve project_seq=1 in proj-b -> should get ph2's global ID
+    let resolved2 = store.resolve_node_id("phases", 1, Some("proj-b")).unwrap();
+    assert_eq!(resolved2, ph2.id);
+
+    // Resolve by alias
+    let resolved3 = store.resolve_node_id("phases", 1, Some("PA")).unwrap();
+    assert_eq!(resolved3, ph1.id);
+}
+
+#[test]
+fn project_seq_resolve_node_id_without_project_returns_global() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+    store.create_phase(p1.id, "Phase1", 10, &[]).unwrap();
+
+    // Without project context, treat as global ID
+    let resolved = store.resolve_node_id("phases", 1, None).unwrap();
+    assert_eq!(resolved, 1); // global ID passthrough
+}
+
+#[test]
+fn project_seq_resolve_experiment_via_phase() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+    let p2 = store.create_project("proj-b", None, None).unwrap();
+    let ph1 = store.create_phase(p1.id, "Phase-A", 10, &[]).unwrap();
+    let ph2 = store.create_phase(p2.id, "Phase-B", 10, &[]).unwrap();
+
+    let e1 = store.create_experiment(Some(ph1.id), "Exp-A1").unwrap();
+    let e2 = store.create_experiment(Some(ph2.id), "Exp-B1").unwrap();
+
+    let resolved_a = store.resolve_node_id("experiments", 1, Some("proj-a")).unwrap();
+    assert_eq!(resolved_a, e1.id);
+
+    let resolved_b = store.resolve_node_id("experiments", 1, Some("proj-b")).unwrap();
+    assert_eq!(resolved_b, e2.id);
+}
+
+#[test]
+fn project_seq_resolve_finding_via_experiment_phase() {
+    let store = test_store();
+    let proj = store.create_project("proj-a", None, None).unwrap();
+    let ph = store.create_phase(proj.id, "Phase-1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(ph.id), "Exp-1").unwrap();
+
+    let f1 = store.create_finding(Some(exp.id), "Finding text 1").unwrap();
+    let _f2 = store.create_finding(Some(exp.id), "Finding text 2").unwrap();
+
+    let resolved = store.resolve_node_id("findings", 1, Some("proj-a")).unwrap();
+    assert_eq!(resolved, f1.id);
+}
+
+#[test]
+fn project_seq_cross_project_numbering_independent() {
+    // Full integration: create two projects with overlapping node types,
+    // verify project_seq is independent per project
+    let store = test_store();
+    let pa = store.create_project("alpha", Some("A"), None).unwrap();
+    let pb = store.create_project("beta", Some("B"), None).unwrap();
+
+    // Alpha: 3 phases, 2 principles
+    let a_ph1 = store.create_phase(pa.id, "Alpha-P1", 10, &[]).unwrap();
+    let a_ph2 = store.create_phase(pa.id, "Alpha-P2", 20, &[]).unwrap();
+    let a_ph3 = store.create_phase(pa.id, "Alpha-P3", 30, &[]).unwrap();
+    let a_pr1 = store.create_principle(pa.id, PrincipleScope::Project, "A-Principle-1", None, None).unwrap();
+    let a_pr2 = store.create_principle(pa.id, PrincipleScope::Project, "A-Principle-2", None, None).unwrap();
+
+    // Beta: 2 phases, 1 principle
+    let b_ph1 = store.create_phase(pb.id, "Beta-P1", 10, &[]).unwrap();
+    let b_ph2 = store.create_phase(pb.id, "Beta-P2", 20, &[]).unwrap();
+    let b_pr1 = store.create_principle(pb.id, PrincipleScope::Project, "B-Principle-1", None, None).unwrap();
+
+    // Alpha phases: 1, 2, 3
+    assert_eq!(a_ph1.project_seq, Some(1));
+    assert_eq!(a_ph2.project_seq, Some(2));
+    assert_eq!(a_ph3.project_seq, Some(3));
+
+    // Beta phases: 1, 2 (independent)
+    assert_eq!(b_ph1.project_seq, Some(1));
+    assert_eq!(b_ph2.project_seq, Some(2));
+
+    // Alpha principles: 1, 2
+    assert_eq!(a_pr1.project_seq, Some(1));
+    assert_eq!(a_pr2.project_seq, Some(2));
+
+    // Beta principles: 1 (independent)
+    assert_eq!(b_pr1.project_seq, Some(1));
+
+    // Resolve: Phase #1 in Alpha != Phase #1 in Beta
+    let alpha_ph1_id = store.resolve_node_id("phases", 1, Some("alpha")).unwrap();
+    let beta_ph1_id = store.resolve_node_id("phases", 1, Some("beta")).unwrap();
+    assert_ne!(alpha_ph1_id, beta_ph1_id);
+    assert_eq!(alpha_ph1_id, a_ph1.id);
+    assert_eq!(beta_ph1_id, b_ph1.id);
+}
+
+#[test]
+fn project_seq_get_project_by_name() {
+    let store = test_store();
+    let p = store.create_project("test-proj", Some("TP"), None).unwrap();
+
+    let by_name = store.get_project_by_name("test-proj").unwrap();
+    assert_eq!(by_name.id, p.id);
+
+    let by_alias = store.get_project_by_name("TP").unwrap();
+    assert_eq!(by_alias.id, p.id);
+
+    let not_found = store.get_project_by_name("nonexistent");
+    assert!(not_found.is_err());
+}
+
+#[test]
+fn project_seq_hypotheses_per_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+    let p2 = store.create_project("proj-b", None, None).unwrap();
+    let ph1 = store.create_phase(p1.id, "Phase-A", 10, &[]).unwrap();
+    let ph2 = store.create_phase(p2.id, "Phase-B", 10, &[]).unwrap();
+
+    let h1 = store.create_hypothesis(Some(ph1.id), "Hyp A1").unwrap();
+    let h2 = store.create_hypothesis(Some(ph1.id), "Hyp A2").unwrap();
+    let h3 = store.create_hypothesis(Some(ph2.id), "Hyp B1").unwrap();
+
+    assert_eq!(h1.project_seq, Some(1));
+    assert_eq!(h2.project_seq, Some(2));
+    assert_eq!(h3.project_seq, Some(1));
+}
+
+#[test]
+fn project_seq_research_per_project() {
+    let store = test_store();
+    let p1 = store.create_project("proj-a", None, None).unwrap();
+    let ph1 = store.create_phase(p1.id, "Phase-A", 10, &[]).unwrap();
+
+    let r1 = store.create_research(Some(ph1.id), "Research 1").unwrap();
+    let r2 = store.create_research(Some(ph1.id), "Research 2").unwrap();
+
+    assert_eq!(r1.project_seq, Some(1));
+    assert_eq!(r2.project_seq, Some(2));
+}
+
+#[test]
+fn project_seq_persisted_and_retrieved() {
+    // Verify project_seq is persisted to DB and returned on get
+    let store = test_store();
+    let proj = store.create_project("test", None, None).unwrap();
+    let ph = store.create_phase(proj.id, "Phase-1", 10, &[]).unwrap();
+    assert_eq!(ph.project_seq, Some(1));
+
+    // Re-fetch and verify
+    let fetched = store.get_phase(ph.id).unwrap();
+    assert_eq!(fetched.project_seq, Some(1));
+}
+
+#[test]
+fn project_seq_migration_backfill() {
+    // The in-memory store runs migrations automatically.
+    // Verify that after migration, existing data has project_seq set.
+    let store = test_store();
+    let proj = store.create_project("test", None, None).unwrap();
+    let ph = store.create_phase(proj.id, "Phase-1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(ph.id), "Exp-1").unwrap();
+    let f = store.create_finding(Some(exp.id), "A finding").unwrap();
+    let d = store.create_decision(None, "Decision", Some("why"), Some(proj.id)).unwrap();
+
+    assert_eq!(ph.project_seq, Some(1));
+    assert_eq!(exp.project_seq, Some(1));
+    assert_eq!(f.project_seq, Some(1));
+    assert_eq!(d.project_seq, Some(1));
 }

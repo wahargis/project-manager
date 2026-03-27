@@ -37,7 +37,8 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
     if let Ok(next) = dag.next_phases() {
         text += "\n## Top phases by impact:\n";
         for p in next.iter().take(3) {
-            text += &format!("  #{} [impact:{}] {:?} {}\n", p.id, p.impact, p.status, p.name);
+            let pref = p.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", p.id));
+            text += &format!("  {} [impact:{}] {:?} {}\n", pref, p.impact, p.status, p.name);
         }
     }
     // Collect project-scoped findings through phase->experiment chain
@@ -76,7 +77,8 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
             text += &format!("\nHypotheses: {} untested\n", proposed.len());
             for h in proposed.iter().take(3) {
                 let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text };
-                text += &format!("  H#{}: {}\n", h.id, t);
+                let href = h.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", h.id));
+                text += &format!("  H{}: {}\n", href, t);
             }
         }
     }
@@ -112,6 +114,7 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
                     _ => "?",
                 };
                 let ids_str: Vec<String> = orphaned_ids.iter().map(|id| format!("{}#{}", prefix, id)).collect();
+                // Note: orphan IDs here are global IDs for identification
                 let cap = capitalize(nt);
                 orphan_sections.push(format!("  {}: {} orphaned ({})", cap, orphaned_ids.len(), ids_str.join(", ")));
             }
@@ -132,7 +135,8 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
             if let Some(ref expires) = c.expires_at {
                 if !expires.is_empty() && expires.as_str() <= today.as_str() {
                     let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
-                    expired.push(format!("  C#{}: {} (expired {})", c.id, t, expires));
+                    let cref = c.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", c.id));
+                    expired.push(format!("  C{}: {} (expired {})", cref, t, expires));
                 }
             }
         }

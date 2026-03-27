@@ -128,6 +128,7 @@ pub struct Project {
 pub struct Phase {
     pub id: i64,
     pub project_id: i64,
+    pub project_seq: Option<i64>,
     pub name: String,
     pub status: PhaseStatus,
     pub impact: i32,
@@ -144,6 +145,7 @@ pub struct Phase {
 pub struct Experiment {
     pub id: i64,
     pub phase_id: Option<i64>,
+    pub project_seq: Option<i64>,
     pub name: String,
     pub status: ExperimentStatus,
     pub hypothesis: Option<String>,
@@ -156,6 +158,7 @@ pub struct Experiment {
 pub struct Finding {
     pub id: i64,
     pub experiment_id: Option<i64>,
+    pub project_seq: Option<i64>,
     pub text: String,
     pub created_at: NaiveDateTime,
 }
@@ -175,6 +178,7 @@ pub struct Decision {
     pub id: i64,
     pub experiment_id: Option<i64>,
     pub project_id: Option<i64>,
+    pub project_seq: Option<i64>,
     pub what: String,
     pub why: Option<String>,
     pub created_at: NaiveDateTime,
@@ -184,6 +188,7 @@ pub struct Decision {
 pub struct Research {
     pub id: i64,
     pub phase_id: Option<i64>,
+    pub project_seq: Option<i64>,
     pub name: String,
     pub report: Option<String>,
     pub status: ResearchStatus,
@@ -195,6 +200,7 @@ pub struct Research {
 pub struct Principle {
     pub id: i64,
     pub project_id: i64,
+    pub project_seq: Option<i64>,
     pub scope: PrincipleScope,
     pub text: String,
     pub status: PrincipleStatus,
@@ -208,6 +214,7 @@ pub struct Principle {
 pub struct Hypothesis {
     pub id: i64,
     pub phase_id: Option<i64>,
+    pub project_seq: Option<i64>,
     pub text: String,
     pub status: HypothesisStatus,
     pub experiment_id: Option<i64>,
@@ -222,6 +229,7 @@ pub struct Hypothesis {
 pub struct Constraint {
     pub id: i64,
     pub project_id: i64,
+    pub project_seq: Option<i64>,
     pub scope: ConstraintScope,
     pub text: String,
     pub source: Option<String>,
@@ -236,6 +244,7 @@ pub struct Constraint {
 pub struct LiteratureEntry {
     pub id: i64,
     pub project_id: i64,
+    pub project_seq: Option<i64>,
     pub arxiv_id: Option<String>,
     pub title: String,
     pub authors: Option<String>,
@@ -255,6 +264,7 @@ pub struct LiteratureEntry {
 pub struct FeedbackEntry {
     pub id: i64,
     pub project_id: i64,
+    pub project_seq: Option<i64>,
     pub text: String,
     pub category: FeedbackCategory,
     pub created_at: NaiveDateTime,
@@ -347,6 +357,10 @@ pub trait Store {
 
     // Orphan detection (#14)
     fn get_orphaned_nodes(&self, node_type: &str, project_id: i64) -> Result<Vec<i64>>;
+
+    // Per-project ordinal resolution
+    fn get_project_by_name(&self, name: &str) -> Result<Project>;
+    fn resolve_node_id(&self, table: &str, seq: i64, project_name: Option<&str>) -> Result<i64>;
 }
 
 #[cfg(test)]
