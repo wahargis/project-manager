@@ -135,6 +135,11 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                     input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "phase_id": {"type": "integer"}}, "required": ["project", "phase_id"]}),
                 },
                 ToolDef {
+                    name: "pm_session_init".into(),
+                    description: "Returns actionable tasks from the DAG for all active projects. Call at session start to populate task tracker.".into(),
+                    input_schema: serde_json::json!({"type": "object", "properties": {}}),
+                },
+                ToolDef {
                     name: "pm_stats".into(),
                     description: "KG node and edge counts for a project.".into(),
                     input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}}, "required": ["project"]}),
@@ -168,6 +173,7 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
                 "pm_review" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); tool_review(&store, p) }
                 "pm_kg_traverse" => { let nt = args.get("node_type").and_then(|v| v.as_str()).unwrap_or("finding"); let nid = args.get("node_id").and_then(|v| v.as_i64()).unwrap_or(1); tool_kg_traverse(&store, nt, nid) }
                 "pm_scaffold" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); let pid = args.get("phase_id").and_then(|v| v.as_i64()).unwrap_or(0); tool_scaffold(&store, p, pid) }
+                "pm_session_init" => { tool_session_init(&store) }
                 "pm_stats" => { let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance"); tool_stats(&store, p) }
                 _ => format!("Unknown tool: {}", tool_name),
             };
@@ -327,3 +333,43 @@ fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> String {
 
 
 fn tool_stats(store: &SqliteStore, project: &str) -> String { let proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) { Some(p) => p, None => return "Not found".to_string() }; let phases = store.list_phases(proj.id).unwrap_or_default(); let mut ec = 0; let mut fc = 0; for p in &phases { ec += store.list_experiments(Some(p.id)).map(|e| e.len()).unwrap_or(0); for e in store.list_experiments(Some(p.id)).unwrap_or_default() { fc += store.list_findings(Some(e.id)).map(|f| f.len()).unwrap_or(0); } } let t = format!("Phases:{} Exp:{} Find:{} Dec:{} Princ:{} Hyp:{} Con:{} Lit:{} Edges:{}", phases.len(), ec, fc, store.list_decisions(proj.id).map(|d| d.len()).unwrap_or(0), store.list_principles(proj.id).map(|p| p.len()).unwrap_or(0), store.list_hypotheses(None).map(|h| h.len()).unwrap_or(0), store.list_constraints(proj.id).map(|c| c.len()).unwrap_or(0), store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0), store.list_all_edges().map(|e| e.len()).unwrap_or(0)); t }
+
+fn tool_session_init(store: &SqliteStore) -> String {
+    let mut out = String::new();
+    if let Ok(projects) = store.list_projects() {
+        for proj in &projects {
+            if proj.status != crate::store::ProjectStatus::Active { continue; }
+            let dag = DagEngine::new(store, proj.id);
+            if let Ok(phases) = dag.next_phases() {
+                // Get InProgress and Pending phases (skip Paused)
+                let actionable: Vec<_> = phases.iter()
+                    .filter(|p| p.status == crate::store::PhaseStatus::InProgress || p.status == crate::store::PhaseStatus::Pending)
+                    .take(3)
+                    .collect();
+                
+                for phase in &actionable {
+                    if let Ok(exps) = store.list_experiments(Some(phase.id)) {
+                        let pending: Vec<_> = exps.iter()
+                            .filter(|e| e.status == crate::store::ExperimentStatus::Pending)
+                            .collect();
+                        if !pending.is_empty() {
+                            out += &format!("## [{}] Phase #{} [impact:{}]: {}\n", proj.name, phase.id, phase.impact, phase.name);
+                            for exp in pending.iter().take(5) {
+                                out += &format!("TASK: [{}] Exp #{}: {}\n", proj.name, exp.id, exp.name);
+                                if let Some(notes) = &exp.notes {
+                                    out += &format!("  {}\n", &notes[..notes.len().min(150)]);
+                                }
+                            }
+                            out += "\n";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        "No pending tasks in actionable phases.".to_string()
+    } else {
+        format!("=== Session Init: Actionable DAG Tasks ===\n\n{}\nCreate these as task tracker items and work through them.", out)
+    }
+}
