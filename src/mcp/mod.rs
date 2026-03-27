@@ -278,6 +278,15 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             nodes::tool_phase_update(store, phase_id, description, goals, success_criteria, status)
         },
 
+        // Project CRUD tools
+        "pm_project_create" => {
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let alias = args.get("alias").and_then(|v| v.as_str());
+            let parent = args.get("parent").and_then(|v| v.as_str());
+            dashboard::tool_project_create(store, name, alias, parent)
+        },
+        "pm_project_list" => dashboard::tool_project_list(store),
+
         _ => format!("Unknown tool: {}", tool_name),
     }
 }
@@ -377,6 +386,16 @@ fn tool_definitions() -> Vec<ToolDef> {
             name: "pm_stats".into(),
             description: "KG node and edge counts for a project.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}}, "required": ["project"]}),
+        },
+        ToolDef {
+            name: "pm_project_create".into(),
+            description: "Create a new project or subproject. If parent is provided, creates as a subproject under the named parent.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"name": {"type": "string", "description": "Project name (required)"}, "alias": {"type": "string", "description": "Short alias for the project"}, "parent": {"type": "string", "description": "Parent project name or alias to create as subproject under"}}, "required": ["name"]}),
+        },
+        ToolDef {
+            name: "pm_project_list".into(),
+            description: "List all projects in a tree hierarchy showing parent/child relationships and node counts per project.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
         },
         ToolDef {
             name: "pm_phase_update".into(),

@@ -347,3 +347,110 @@ pub fn tool_session_init(store: &SqliteStore) -> String {
         format!("=== Session Init: Actionable Tasks ===\n\n{}Create these as task tracker items and work through them.", out)
     }
 }
+
+pub fn tool_project_create(store: &SqliteStore, name: &str, alias: Option<&str>, parent: Option<&str>) -> String {
+    if name.is_empty() {
+        return "Error: project name is required.".to_string();
+    }
+
+    let parent_id = if let Some(parent_name) = parent {
+        match store.list_projects() {
+            Ok(projects) => {
+                match projects.iter().find(|p| p.name == parent_name || p.alias.as_deref() == Some(parent_name)) {
+                    Some(p) => Some(p.id),
+                    None => return format!("Error: parent project {} not found.", parent_name),
+                }
+            }
+            Err(e) => return format!("Error listing projects: {}", e),
+        }
+    } else {
+        None
+    };
+
+    match store.create_project(name, alias, parent_id) {
+        Ok(proj) => {
+            if let Some(pname) = parent {
+                format!("Subproject #{} {} created under parent {}.", proj.id, proj.name, pname)
+            } else {
+                format!("Project #{} {} created.", proj.id, proj.name)
+            }
+        }
+        Err(e) => format!("Error creating project: {}", e),
+    }
+}
+
+pub fn tool_project_list(store: &SqliteStore) -> String {
+    let projects = match store.list_projects() {
+        Ok(p) => p,
+        Err(e) => return format!("Error: {}", e),
+    };
+
+    let mut out = String::from("Projects:\n");
+
+    // Separate into top-level and children
+    let top_level: Vec<_> = projects.iter().filter(|p| p.parent_id.is_none()).collect();
+    let children: Vec<_> = projects.iter().filter(|p| p.parent_id.is_some()).collect();
+
+    for proj in &top_level {
+        let subs: Vec<_> = children.iter().filter(|c| c.parent_id == Some(proj.id)).collect();
+        let counts = node_counts_for_project(store, proj.id);
+        let kind = if subs.is_empty() { "standalone" } else { "parent" };
+        out += &format!("  #{} {} ({})  {}\n", proj.id, proj.name, kind, format_counts(&counts));
+
+        for sub in &subs {
+            let sub_counts = node_counts_for_project(store, sub.id);
+            let alias_str = sub.alias.as_ref().map(|a| format!(" [{}]", a)).unwrap_or_default();
+            out += &format!("    └─ #{} {}{}\n", sub.id, sub.name, alias_str);
+            out += &format!("       {}\n", format_counts(&sub_counts));
+        }
+    }
+
+    out
+}
+
+struct NodeCountsInternal {
+    phases: usize,
+    experiments: usize,
+    findings: usize,
+    decisions: usize,
+    hypotheses: usize,
+    literature: usize,
+    principles: usize,
+    constraints: usize,
+}
+
+fn node_counts_for_project(store: &SqliteStore, project_id: i64) -> NodeCountsInternal {
+    let phases = store.list_phases(project_id).map(|v| v.len()).unwrap_or(0);
+    let mut experiments = 0usize;
+    let mut findings = 0usize;
+    if let Ok(ph_list) = store.list_phases(project_id) {
+        for ph in &ph_list {
+            if let Ok(exps) = store.list_experiments(Some(ph.id)) {
+                experiments += exps.len();
+                for exp in &exps {
+                    findings += store.list_findings(Some(exp.id)).map(|f| f.len()).unwrap_or(0);
+                }
+            }
+        }
+    }
+    let decisions = store.list_decisions(project_id).map(|v| v.len()).unwrap_or(0);
+    let hypotheses = store.list_hypotheses(None).map(|v| v.len()).unwrap_or(0);
+    let literature = store.list_literature(project_id).map(|v| v.len()).unwrap_or(0);
+    let principles = store.list_principles(project_id).map(|v| v.len()).unwrap_or(0);
+    let constraints = store.list_constraints(project_id).map(|v| v.len()).unwrap_or(0);
+
+    NodeCountsInternal { phases, experiments, findings, decisions, hypotheses, literature, principles, constraints }
+}
+
+fn format_counts(c: &NodeCountsInternal) -> String {
+    let mut parts = Vec::new();
+    if c.phases > 0 { parts.push(format!("Phases: {}", c.phases)); }
+    if c.experiments > 0 { parts.push(format!("Experiments: {}", c.experiments)); }
+    if c.findings > 0 { parts.push(format!("Findings: {}", c.findings)); }
+    if c.decisions > 0 { parts.push(format!("Decisions: {}", c.decisions)); }
+    if c.literature > 0 { parts.push(format!("Literature: {}", c.literature)); }
+    if c.principles > 0 { parts.push(format!("Principles: {}", c.principles)); }
+    if c.constraints > 0 { parts.push(format!("Constraints: {}", c.constraints)); }
+    if parts.is_empty() { return "(empty)".to_string(); }
+    parts.join(" | ")
+}

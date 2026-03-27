@@ -14,18 +14,23 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 #main { display: flex; height: calc(100vh - 49px); }
 #sidebar { width: 280px; min-width: 280px; background: #161b22; border-right: 1px solid #30363d; overflow-y: auto; padding: 16px; position: relative; z-index: 5; }
 #sidebar h2 { font-size: 13px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-.project-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 12px; cursor: pointer; }
-.project-card:hover { border-color: #58a6ff; }
-.project-card.selected { border-color: #1f6feb; background: #161b22; }
-.project-card h3 { font-size: 14px; color: #f0f6fc; margin-bottom: 4px; }
-.project-card .stats { font-size: 11px; color: #8b949e; }
-.progress-bar { height: 4px; background: #21262d; border-radius: 2px; margin-top: 6px; }
-.progress-fill { height: 100%; background: #3fb950; border-radius: 2px; }
+.project-item { padding: 8px 12px; margin-bottom: 4px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid transparent; }
+.project-item:hover { border-color: #58a6ff; background: #0d1117; }
+.project-item.selected { border-color: #1f6feb; background: #161b22; }
+.project-item .proj-name { color: #f0f6fc; font-weight: bold; font-size: 13px; }
+.project-item .proj-stats { color: #8b949e; font-size: 10px; margin-top: 2px; }
+.project-item .proj-badge { font-size: 9px; color: #8b949e; background: #21262d; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
+.project-group { margin-bottom: 8px; }
+.project-item.child { padding-left: 24px; }
+.project-item.child .proj-name { font-weight: normal; font-size: 12px; color: #c9d1d9; }
+.subproject-hull { pointer-events: all; cursor: pointer; }
+.subproject-hull:hover { fill-opacity: 0.12 !important; }
+.subproject-label { font-size: 10px; fill: #8b949e; font-weight: bold; pointer-events: none; }
 #graph-container { flex: 1; position: relative; overflow: hidden; }
 #graph-container svg { width: 100%; height: 100%; display: block; }
 #tooltip {
   position: fixed; background: #1c2128; border: 1px solid #30363d; border-radius: 8px;
-  padding: 12px; max-width: 420px; max-height: 300px; overflow-y: auto;
+  padding: 12px; max-width: 480px; max-height: 400px; overflow-y: auto;
   font-size: 11px; display: none; z-index: 100; pointer-events: none;
 }
 #tooltip .tt-type { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
@@ -36,6 +41,9 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 #tooltip .tt-body code { background: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 10px; color: #79c0ff; }
 #tooltip .tt-body ul { margin: 4px 0 4px 16px; }
 #tooltip .tt-body li { margin: 2px 0; }
+#tooltip .tt-field { margin: 3px 0; }
+#tooltip .tt-field-label { color: #58a6ff; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+#tooltip .tt-field-value { color: #c9d1d9; margin-left: 4px; }
 .legend { position: absolute; bottom: 16px; right: 16px; background: #161b22ee; border: 1px solid #30363d; border-radius: 8px; padding: 12px; font-size: 10px; z-index: 5; }
 .legend-item { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
@@ -53,7 +61,7 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 <div id="main">
   <div id="sidebar">
     <h2>Projects</h2>
-    <div id="project-list"></div>
+    <div id="project-tree"></div>
     <h2 style="margin-top:16px">Dashboard</h2>
     <div id="dashboard-text" style="font-size:11px;color:#8b949e;white-space:pre-wrap"></div>
   </div>
@@ -92,10 +100,11 @@ let currentProject = null;
 let currentView = 'kg';
 let pinnedNode = null;
 let pinnedNodeEl = null;
+let allProjectsData = [];
+let activeSubprojectFilter = null;
 
 const tooltip = document.getElementById('tooltip');
 
-// Simple markdown-to-HTML converter (no external deps)
 function miniMarkdown(text) {
   if (!text) return '';
   return text
@@ -108,53 +117,102 @@ function miniMarkdown(text) {
     .replace(/\n/g, '<br>');
 }
 
-// Node type color palette (distinct, accessible)
 const TYPE_COLORS = {
-  experiment: '#3fb950',
-  decision: '#e8883a',
-  research: '#2dd4bf',
-  finding: '#58a6ff',
-  principle: '#fbbf24',
-  hypothesis: '#c084fc',
-  literature: '#93c5fd',
-  constraint: '#f87171',
-  phase: '#8b949e',
+  experiment: '#3fb950', decision: '#e8883a', research: '#2dd4bf',
+  finding: '#58a6ff', principle: '#fbbf24', hypothesis: '#c084fc',
+  literature: '#93c5fd', constraint: '#f87171', phase: '#8b949e',
   feedback: '#a5b4fc',
 };
 
+const SUBPROJECT_COLORS = [
+  '#264653', '#2a9d8f', '#e9c46a', '#f4a261', '#e76f51',
+  '#606c38', '#283618', '#dda15e', '#bc6c25', '#457b9d',
+];
+
+function formatNodeCounts(nc) {
+  const parts = [];
+  if (nc.phases) parts.push(nc.phases + ' ph');
+  if (nc.experiments) parts.push(nc.experiments + ' exp');
+  if (nc.findings) parts.push(nc.findings + ' find');
+  if (nc.literature) parts.push(nc.literature + ' lit');
+  if (nc.decisions) parts.push(nc.decisions + ' dec');
+  return parts.join(', ') || 'empty';
+}
+
 async function loadProjects() {
   const res = await fetch('/api/projects');
-  const projects = await res.json();
-  const list = document.getElementById('project-list');
-  list.innerHTML = '';
-  for (const p of projects) {
-    if (p.status !== 'Active') continue;
-    const card = document.createElement('div');
-    card.className = 'project-card';
-    card.onclick = () => selectProject(p.id, card);
-    const phases = await fetch(`/api/projects/${p.id}/phases`).then(r => r.json());
-    const complete = phases.filter(ph => ph.status === 'Complete').length;
-    card.innerHTML = `<h3>${p.name}</h3><div class="stats">${complete}/${phases.length} phases</div><div class="progress-bar"><div class="progress-fill" style="width:${phases.length?complete/phases.length*100:0}%"></div></div>`;
-    list.appendChild(card);
+  allProjectsData = await res.json();
+  const tree = document.getElementById('project-tree');
+  tree.innerHTML = '';
+
+  const topLevel = allProjectsData.filter(p => !p.parent_id && p.status === 'Active');
+  const childMap = {};
+  for (const p of allProjectsData) {
+    if (p.parent_id) {
+      if (!childMap[p.parent_id]) childMap[p.parent_id] = [];
+      childMap[p.parent_id].push(p);
+    }
   }
+
+  for (const proj of topLevel) {
+    const children = (childMap[proj.id] || []).filter(c => c.status === 'Active');
+    const hasChildren = children.length > 0;
+
+    if (hasChildren) {
+      const group = document.createElement('div');
+      group.className = 'project-group';
+
+      const parentItem = document.createElement('div');
+      parentItem.className = 'project-item parent';
+      parentItem.dataset.id = proj.id;
+      parentItem.innerHTML = `<div class="proj-name">${proj.name}<span class="proj-badge">parent</span></div><div class="proj-stats">${formatNodeCounts(proj.node_counts)}</div>`;
+      parentItem.onclick = () => selectProject(proj.id, parentItem, true);
+      group.appendChild(parentItem);
+
+      for (const child of children) {
+        const childItem = document.createElement('div');
+        childItem.className = 'project-item child';
+        childItem.dataset.id = child.id;
+        const aliasStr = child.alias ? ` [${child.alias}]` : '';
+        const childCounts = allProjectsData.find(p => p.id === child.id);
+        const countsStr = childCounts ? formatNodeCounts(childCounts.node_counts) : '';
+        childItem.innerHTML = `<div class="proj-name">&lfloor; ${child.name}${aliasStr}</div><div class="proj-stats">${countsStr}</div>`;
+        childItem.onclick = (ev) => { ev.stopPropagation(); selectProject(child.id, childItem, false); };
+        group.appendChild(childItem);
+      }
+      tree.appendChild(group);
+    } else {
+      const item = document.createElement('div');
+      item.className = 'project-item standalone';
+      item.dataset.id = proj.id;
+      item.innerHTML = `<div class="proj-name">${proj.name}</div><div class="proj-stats">${formatNodeCounts(proj.node_counts)}</div>`;
+      item.onclick = () => selectProject(proj.id, item, false);
+      tree.appendChild(item);
+    }
+  }
+
   const dash = await fetch('/api/dashboard').then(r => r.json());
   document.getElementById('dashboard-text').textContent = dash.text;
-  if (projects.filter(p => p.status === 'Active').length > 0) {
-    const first = projects.find(p => p.status === 'Active');
-    selectProject(first.id, list.firstChild);
+
+  if (topLevel.length > 0) {
+    const first = topLevel[0];
+    const firstItem = tree.querySelector('.project-item');
+    const hasKids = (childMap[first.id] || []).filter(c => c.status === 'Active').length > 0;
+    selectProject(first.id, firstItem, hasKids);
   }
 }
 
-async function selectProject(id, card) {
+async function selectProject(id, item, includeSubprojects) {
   currentProject = id;
   pinnedNode = null;
   pinnedNodeEl = null;
+  activeSubprojectFilter = null;
   tooltip.style.display = 'none';
-  document.querySelectorAll('.project-card').forEach(c => c.classList.remove('selected'));
-  if (card) card.classList.add('selected');
+  document.querySelectorAll('.project-item').forEach(c => c.classList.remove('selected'));
+  if (item) item.classList.add('selected');
   const container = document.getElementById('graph-container');
   container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8b949e;font-size:14px">Loading graph...</div>';
-  if (currentView === 'kg') await loadKG(id);
+  if (currentView === 'kg') await loadKG(id, includeSubprojects);
   else await loadDAG(id);
 }
 
@@ -165,34 +223,35 @@ function setView(view) {
   document.getElementById('legend-kg').style.display = view === 'kg' ? '' : 'none';
   document.getElementById('legend-dag').style.display = view === 'dag' ? '' : 'none';
   if (currentProject) {
-    const card = document.querySelector('.project-card.selected');
-    selectProject(currentProject, card);
+    const item = document.querySelector('.project-item.selected');
+    const projData = allProjectsData.find(p => p.id === currentProject);
+    const hasSubs = projData && projData.children && projData.children.length > 0;
+    selectProject(currentProject, item, hasSubs);
   }
 }
 
-// D3 symbol generators for different node types
 function drawNodeShape(ng, type, color, size) {
   const s = size || 8;
   switch (type) {
-    case 'finding': // circle (smaller)
+    case 'finding':
       return ng.append('circle').attr('class', 'node-shape').attr('r', s * 0.5).attr('fill', color).attr('fill-opacity', 0.7);
-    case 'experiment': // circle
+    case 'experiment':
       return ng.append('circle').attr('class', 'node-shape').attr('r', s).attr('fill', color).attr('fill-opacity', 0.85);
-    case 'decision': { // diamond
+    case 'decision': {
       const d = s;
       return ng.append('polygon').attr('class', 'node-shape')
         .attr('points', `0,${-d} ${d},0 0,${d} ${-d},0`)
         .attr('fill', color).attr('fill-opacity', 0.9);
     }
-    case 'phase': // square (larger)
+    case 'phase':
       return ng.append('rect').attr('class', 'node-shape')
         .attr('x', -s*2.5).attr('y', -s).attr('width', s*5).attr('height', s*2)
         .attr('rx', 4).attr('fill', color).attr('fill-opacity', 0.7);
-    case 'hypothesis': // triangle-up
+    case 'hypothesis':
       return ng.append('polygon').attr('class', 'node-shape')
         .attr('points', `0,${-s} ${s},${s*0.8} ${-s},${s*0.8}`)
         .attr('fill', color).attr('fill-opacity', 0.8);
-    case 'literature': { // hexagon
+    case 'literature': {
       const r = s * 0.9;
       const pts = [0,1,2,3,4,5].map(i => {
         const a = Math.PI/6 + i * Math.PI/3;
@@ -201,7 +260,7 @@ function drawNodeShape(ng, type, color, size) {
       return ng.append('polygon').attr('class', 'node-shape')
         .attr('points', pts).attr('fill', color).attr('fill-opacity', 0.7);
     }
-    case 'principle': { // star (5-point)
+    case 'principle': {
       const outer = s, inner = s * 0.4;
       const pts = [];
       for (let i = 0; i < 5; i++) {
@@ -213,13 +272,13 @@ function drawNodeShape(ng, type, color, size) {
       return ng.append('polygon').attr('class', 'node-shape')
         .attr('points', pts.join(' ')).attr('fill', color).attr('fill-opacity', 0.85);
     }
-    case 'constraint': { // cross / plus
+    case 'constraint': {
       const w = s * 0.35, h = s;
       return ng.append('polygon').attr('class', 'node-shape')
         .attr('points', `${-w},${-h} ${w},${-h} ${w},${-w} ${h},${-w} ${h},${w} ${w},${w} ${w},${h} ${-w},${h} ${-w},${w} ${-h},${w} ${-h},${-w} ${-w},${-w}`)
         .attr('fill', color).attr('fill-opacity', 0.8);
     }
-    case 'research': { // hexagon (teal)
+    case 'research': {
       const r = s * 0.9;
       const pts = [0,1,2,3,4,5].map(i => {
         const a = i * Math.PI/3;
@@ -228,12 +287,192 @@ function drawNodeShape(ng, type, color, size) {
       return ng.append('polygon').attr('class', 'node-shape')
         .attr('points', pts).attr('fill', color).attr('fill-opacity', 0.85);
     }
-    default: // fallback circle
+    default:
       return ng.append('circle').attr('class', 'node-shape').attr('r', s * 0.5).attr('fill', color).attr('fill-opacity', 0.6);
   }
 }
 
-async function loadKG(projectId) {
+// Build enriched tooltip HTML based on node type
+function buildTooltipHtml(d) {
+  let html = '';
+  const extra = d.extra || {};
+
+  function field(label, value) {
+    if (value === null || value === undefined || value === '') return '';
+    return `<div class="tt-field"><span class="tt-field-label">${label}:</span> <span class="tt-field-value">${miniMarkdown(String(value))}</span></div>`;
+  }
+
+  // Common: text/name
+  if (d.text) html += `<div style="margin-bottom:6px">${miniMarkdown(d.text.substring(0, 500))}</div>`;
+
+  switch (d.type) {
+    case 'phase':
+      html += field('Status', d.status);
+      html += field('Impact', extra.impact);
+      html += field('Description', extra.description);
+      html += field('Goals', extra.goals);
+      html += field('Success Criteria', extra.success_criteria);
+      if (extra.depends_on && extra.depends_on.length) html += field('Depends On', extra.depends_on.map(id => '#' + id).join(', '));
+      html += field('Started', extra.started_at);
+      html += field('Completed', extra.completed_at);
+      break;
+    case 'experiment':
+      html += field('Status', d.status);
+      html += field('Hypothesis', extra.hypothesis);
+      html += field('Result', extra.result);
+      html += field('Notes', extra.notes);
+      break;
+    case 'hypothesis':
+      html += field('Status', d.status);
+      html += field('Prediction', extra.prediction);
+      html += field('Criteria', extra.criteria);
+      html += field('Confidence', extra.confidence != null ? (extra.confidence * 100).toFixed(0) + '%' : null);
+      break;
+    case 'literature':
+      html += field('Authors', extra.authors);
+      html += field('Venue', extra.venue);
+      html += field('Year', extra.year);
+      html += field('ArXiv', extra.arxiv_id);
+      html += field('Status', d.status);
+      html += field('Summary', extra.summary);
+      html += field('Relevance', extra.relevance);
+      html += field('Key Findings', extra.key_findings);
+      if (extra.url) html += field('URL', extra.url);
+      if (extra.code_url) html += field('Code', extra.code_url);
+      break;
+    case 'principle':
+      html += field('Scope', extra.scope);
+      html += field('Status', d.status);
+      html += field('Rationale', extra.rationale);
+      html += field('Enforcement', extra.enforcement_level);
+      break;
+    case 'constraint':
+      html += field('Scope', extra.scope);
+      html += field('Severity', extra.severity);
+      html += field('Resource', extra.resource);
+      html += field('Measured Value', extra.measured_value);
+      html += field('Source', extra.source);
+      html += field('Expires', extra.expires_at);
+      break;
+    case 'decision':
+      html += field('Why', extra.why);
+      break;
+    case 'research':
+      html += field('Status', d.status);
+      html += field('Report', extra.report);
+      break;
+    case 'finding':
+      html += field('Experiment', extra.experiment_id ? '#' + extra.experiment_id : null);
+      break;
+  }
+
+  if (d.subproject_name) {
+    html += `<div class="tt-field" style="margin-top:4px;border-top:1px solid #30363d;padding-top:4px"><span class="tt-field-label">Subproject:</span> <span class="tt-field-value">${d.subproject_name}</span></div>`;
+  }
+
+  return html;
+}
+
+async function loadKG(projectId, includeSubprojects) {
+  // Try the new KG endpoint first
+  let kgData;
+  try {
+    kgData = await fetch(`/api/projects/${projectId}/kg`).then(r => r.json());
+  } catch (e) {
+    kgData = null;
+  }
+
+  if (kgData && kgData.nodes) {
+    renderKGFromEndpoint(kgData, includeSubprojects);
+    return;
+  }
+
+  // Fallback to old per-type endpoints
+  await loadKGLegacy(projectId);
+}
+
+function renderKGFromEndpoint(kgData, includeSubprojects) {
+  const nodes = [];
+  const links = [];
+  const nodeMap = {};
+
+  const subprojectNames = {};
+  const subprojectColorMap = {};
+  if (kgData.subprojects) {
+    kgData.subprojects.forEach((sp, i) => {
+      subprojectNames[sp.id] = sp.alias || sp.name;
+      subprojectColorMap[sp.id] = SUBPROJECT_COLORS[i % SUBPROJECT_COLORS.length];
+    });
+  }
+
+  const typePrefix = {
+    'finding': 'f', 'experiment': 'e', 'phase': 'p', 'decision': 'd',
+    'research': 'r', 'principle': 'pr', 'hypothesis': 'h', 'constraint': 'co',
+    'literature': 'l', 'feedback': 'fb'
+  };
+
+  for (const kn of kgData.nodes) {
+    const prefix = typePrefix[kn.node_type] || 'x';
+    const id = `${prefix}-${kn.node_id}`;
+
+    let color = TYPE_COLORS[kn.node_type] || '#8b949e';
+    // Status-based coloring for certain types
+    if (kn.node_type === 'experiment') {
+      color = kn.status === 'Pass' ? '#3fb950' : kn.status === 'Fail' ? '#f85149' : kn.status === 'Inconclusive' ? '#d29922' : '#8b949e';
+    } else if (kn.node_type === 'hypothesis') {
+      color = kn.status === 'Confirmed' ? '#3fb950' : kn.status === 'Refuted' ? '#f85149' : kn.status === 'Testing' ? '#58a6ff' : '#c084fc';
+    } else if (kn.node_type === 'phase') {
+      color = kn.status === 'Complete' ? '#3fb950' : kn.status === 'InProgress' ? '#58a6ff' : kn.status === 'Paused' ? '#f85149' : '#8b949e';
+    }
+
+    const node = {
+      id, numId: kn.node_id, label: kn.label, text: kn.text,
+      type: kn.node_type, color, status: kn.status,
+      subproject_id: kn.subproject_id,
+      subproject_name: kn.subproject_id ? subprojectNames[kn.subproject_id] : null,
+      extra: kn.extra || {},
+    };
+    nodes.push(node);
+    nodeMap[id] = node;
+
+    // Structural edges for findings
+    if (kn.node_type === 'finding' && kn.extra && kn.extra.experiment_id && nodeMap[`e-${kn.extra.experiment_id}`]) {
+      links.push({ source: `e-${kn.extra.experiment_id}`, target: id, relation: 'structural', color: '#30363d' });
+    }
+  }
+
+  // KG Edges
+  const edgeTypePrefix = {
+    'Finding': 'f', 'Experiment': 'e', 'Phase': 'p', 'Decision': 'd',
+    'Research': 'r', 'Principle': 'pr', 'Hypothesis': 'h', 'Constraint': 'co',
+    'Literature': 'l', 'Feedback': 'fb'
+  };
+
+  for (const edge of kgData.edges) {
+    const srcP = edgeTypePrefix[edge.source_type] || 'x';
+    const tgtP = edgeTypePrefix[edge.target_type] || 'x';
+    const src = `${srcP}-${edge.source_id}`;
+    const tgt = `${tgtP}-${edge.target_id}`;
+    if (nodeMap[src] && nodeMap[tgt]) {
+      const rel = edge.relation;
+      const color = rel === 'Contradicts' ? '#f85149' :
+                    rel === 'Supports' ? '#3fb950' :
+                    rel === 'Informed' ? '#e8883a' :
+                    rel === 'Supersedes' ? '#a371f7' :
+                    rel === 'DependsOn' ? '#79c0ff' :
+                    rel === 'ProducedBy' ? '#30363d' :
+                    rel === 'CitedIn' ? '#93c5fd' :
+                    rel === 'DerivedFrom' ? '#fbbf24' :
+                    rel === 'TestedBy' ? '#2dd4bf' :
+                    rel === 'ViolatedBy' ? '#f87171' : '#30363d';
+      links.push({ source: src, target: tgt, relation: rel, color });
+    }
+  }
+
+  renderForceGraph(nodes, links, nodeMap, kgData.subprojects || [], subprojectColorMap);
+}
+
+async function loadKGLegacy(projectId) {
   const [findings, edges, experiments, phases, decisions, research,
          principles, hypotheses, constraints, literature, feedback] = await Promise.all([
     fetch(`/api/projects/${projectId}/findings`).then(r => r.json()),
@@ -253,91 +492,77 @@ async function loadKG(projectId) {
   const links = [];
   const nodeMap = {};
 
-  const typePrefix = {
-    'Finding': 'f', 'Experiment': 'e', 'Phase': 'p', 'Decision': 'd',
-    'Research': 'r', 'Principle': 'pr', 'Hypothesis': 'h', 'Constraint': 'co',
-    'Literature': 'l', 'Feedback': 'fb'
-  };
-
-  // Experiments
   for (const e of [...experiments].sort((a, b) => a.id - b.id)) {
     const id = `e-${e.id}`;
     const statusColor = e.status === 'Pass' ? '#3fb950' : e.status === 'Fail' ? '#f85149' : e.status === 'Inconclusive' ? '#d29922' : '#8b949e';
-    nodes.push({ id, numId: e.id, label: `E${e.id}`, text: e.name, type: 'experiment', color: statusColor, ts: e.created_at });
+    nodes.push({ id, numId: e.id, label: `E${e.id}`, text: e.name, type: 'experiment', color: statusColor, extra: {} });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Decisions
   for (const d of decisions) {
     const id = `d-${d.id}`;
-    nodes.push({ id, numId: d.id, label: `D${d.id}`, text: d.what + (d.why ? ' -- ' + d.why : ''), type: 'decision', color: TYPE_COLORS.decision, expId: d.experiment_id, ts: d.created_at });
+    nodes.push({ id, numId: d.id, label: `D${d.id}`, text: d.what, type: 'decision', color: TYPE_COLORS.decision, extra: { why: d.why } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Research
   for (const r of research) {
     const id = `r-${r.id}`;
-    nodes.push({ id, numId: r.id, label: `R${r.id}`, text: r.name, type: 'research', color: TYPE_COLORS.research, ts: r.created_at });
+    nodes.push({ id, numId: r.id, label: `R${r.id}`, text: r.name, type: 'research', color: TYPE_COLORS.research, extra: {} });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Findings
   for (const f of findings) {
     const id = `f-${f.id}`;
-    nodes.push({ id, numId: f.id, label: `F${f.id}`, text: f.text ? f.text.substring(0, 200) : '', type: 'finding', color: TYPE_COLORS.finding, expId: f.experiment_id });
+    nodes.push({ id, numId: f.id, label: `F${f.id}`, text: f.text ? f.text.substring(0, 200) : '', type: 'finding', color: TYPE_COLORS.finding, extra: { experiment_id: f.experiment_id } });
     nodeMap[id] = nodes[nodes.length - 1];
     if (f.experiment_id && nodeMap[`e-${f.experiment_id}`]) {
       links.push({ source: `e-${f.experiment_id}`, target: id, relation: 'structural', color: '#30363d' });
     }
   }
 
-  // Principles
   for (const p of principles) {
     const id = `pr-${p.id}`;
-    const scopeTag = p.scope === 'Universal' ? '[U]' : p.scope === 'Phase' ? '[Ph]' : '[Pr]';
-    nodes.push({ id, numId: p.id, label: `${scopeTag}P${p.id}`, text: p.text ? p.text.substring(0, 200) : '', type: 'principle', color: TYPE_COLORS.principle });
+    nodes.push({ id, numId: p.id, label: `P${p.id}`, text: p.text ? p.text.substring(0, 200) : '', type: 'principle', color: TYPE_COLORS.principle, extra: { rationale: p.rationale, enforcement_level: p.enforcement_level, scope: p.scope } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Hypotheses
   for (const h of hypotheses) {
     const id = `h-${h.id}`;
     const statusColor = h.status === 'Confirmed' ? '#3fb950' : h.status === 'Refuted' ? '#f85149' : h.status === 'Testing' ? '#58a6ff' : '#c084fc';
-    nodes.push({ id, numId: h.id, label: `H${h.id}`, text: h.text ? h.text.substring(0, 200) : '', type: 'hypothesis', color: statusColor });
+    nodes.push({ id, numId: h.id, label: `H${h.id}`, text: h.text ? h.text.substring(0, 200) : '', type: 'hypothesis', color: statusColor, extra: { prediction: h.prediction, criteria: h.criteria, confidence: h.confidence } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Constraints
   for (const c of constraints) {
     const id = `co-${c.id}`;
-    nodes.push({ id, numId: c.id, label: `C${c.id}`, text: c.text ? c.text.substring(0, 200) : '', type: 'constraint', color: TYPE_COLORS.constraint });
+    nodes.push({ id, numId: c.id, label: `C${c.id}`, text: c.text ? c.text.substring(0, 200) : '', type: 'constraint', color: TYPE_COLORS.constraint, extra: { severity: c.severity, resource: c.resource, measured_value: c.measured_value, expires_at: c.expires_at, source: c.source } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Literature
   for (const l of literature) {
     const id = `l-${l.id}`;
-    const arxiv = l.arxiv_id ? ` [${l.arxiv_id}]` : '';
-    nodes.push({ id, numId: l.id, label: `L${l.id}`, text: `${l.title}${arxiv}`, type: 'literature', color: TYPE_COLORS.literature });
+    nodes.push({ id, numId: l.id, label: `L${l.id}`, text: l.title, type: 'literature', color: TYPE_COLORS.literature, extra: { authors: l.authors, venue: l.venue, year: l.year, arxiv_id: l.arxiv_id, summary: l.summary } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Phases
   for (const p of phases) {
     const id = `p-${p.id}`;
     const statusColor = p.status === 'Complete' ? '#3fb950' : p.status === 'InProgress' ? '#58a6ff' : p.status === 'Paused' ? '#f85149' : '#8b949e';
-    nodes.push({ id, numId: p.id, label: `Ph${p.id}`, text: `${p.name} [impact:${p.impact}]`, type: 'phase', color: statusColor });
+    nodes.push({ id, numId: p.id, label: `Ph${p.id}`, text: `${p.name} [impact:${p.impact}]`, type: 'phase', color: statusColor, extra: { impact: p.impact, description: p.description, goals: p.goals } });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // Feedback
   for (const f of feedback) {
     const id = `fb-${f.id}`;
-    nodes.push({ id, numId: f.id, label: `Fb${f.id}`, text: f.text ? f.text.substring(0, 200) : '', type: 'feedback', color: TYPE_COLORS.feedback });
+    nodes.push({ id, numId: f.id, label: `Fb${f.id}`, text: f.text ? f.text.substring(0, 200) : '', type: 'feedback', color: TYPE_COLORS.feedback, extra: {} });
     nodeMap[id] = nodes[nodes.length - 1];
   }
 
-  // KG Edges
+  const typePrefix = {
+    'Finding': 'f', 'Experiment': 'e', 'Phase': 'p', 'Decision': 'd',
+    'Research': 'r', 'Principle': 'pr', 'Hypothesis': 'h', 'Constraint': 'co',
+    'Literature': 'l', 'Feedback': 'fb'
+  };
   for (const edge of edges) {
     const srcP = typePrefix[edge.source_type] || 'x';
     const tgtP = typePrefix[edge.target_type] || 'x';
@@ -345,24 +570,15 @@ async function loadKG(projectId) {
     const tgt = `${tgtP}-${edge.target_id}`;
     if (nodeMap[src] && nodeMap[tgt]) {
       const rel = edge.relation;
-      const color = rel === 'Contradicts' ? '#f85149' :
-                    rel === 'Supports' ? '#3fb950' :
-                    rel === 'Informed' ? '#e8883a' :
-                    rel === 'Supersedes' ? '#a371f7' :
-                    rel === 'DependsOn' ? '#79c0ff' :
-                    rel === 'ProducedBy' ? '#30363d' :
-                    rel === 'CitedIn' ? '#93c5fd' :
-                    rel === 'DerivedFrom' ? '#fbbf24' :
-                    rel === 'TestedBy' ? '#2dd4bf' :
-                    rel === 'ViolatedBy' ? '#f87171' : '#30363d';
+      const color = rel === 'Contradicts' ? '#f85149' : rel === 'Supports' ? '#3fb950' : rel === 'Informed' ? '#e8883a' : rel === 'Supersedes' ? '#a371f7' : rel === 'DependsOn' ? '#79c0ff' : '#30363d';
       links.push({ source: src, target: tgt, relation: rel, color });
     }
   }
 
-  renderForceGraph(nodes, links, nodeMap);
+  renderForceGraph(nodes, links, nodeMap, [], {});
 }
 
-function renderForceGraph(nodes, links, nodeMap) {
+function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap) {
   const container = document.getElementById('graph-container');
   container.innerHTML = '';
   const W = container.offsetWidth;
@@ -370,7 +586,6 @@ function renderForceGraph(nodes, links, nodeMap) {
 
   const svg = d3.select(container).append('svg').attr('width', W).attr('height', H);
 
-  // Defs for arrowheads
   const defs = svg.append('defs');
   const arrowColors = {
     'Contradicts': '#f85149', 'Supports': '#3fb950', 'DependsOn': '#79c0ff',
@@ -396,7 +611,6 @@ function renderForceGraph(nodes, links, nodeMap) {
   const zoom = d3.zoom().scaleExtent([0.1, 10]).on('zoom', e => g.attr('transform', e.transform));
   svg.call(zoom).on('dblclick.zoom', null);
 
-  // Edge style map
   const edgeStyle = {
     'Contradicts': { width: 1.2, opacity: 0.6, dash: '', arrow: true },
     'Supports':    { width: 0.8, opacity: 0.4, dash: '', arrow: true },
@@ -412,7 +626,6 @@ function renderForceGraph(nodes, links, nodeMap) {
     'structural':  { width: 0.3, opacity: 0.08, dash: '', arrow: false },
   };
 
-  // Build D3 force simulation with compact layout
   const simNodes = nodes.map(n => ({...n}));
   const simLinks = links.map(l => ({source: l.source, target: l.target, relation: l.relation, color: l.color}));
 
@@ -431,7 +644,9 @@ function renderForceGraph(nodes, links, nodeMap) {
     .force('x', d3.forceX(W / 2).strength(0.03))
     .force('y', d3.forceY(H / 2).strength(0.03));
 
-  // Create link elements
+  // Subproject hull layer (drawn below links and nodes)
+  const hullG = g.append('g').attr('class', 'hulls');
+
   const linkG = g.append('g').attr('class', 'links');
   const linkEls = linkG.selectAll('line').data(simLinks).enter().append('line')
     .attr('stroke', d => d.color || '#30363d')
@@ -443,7 +658,6 @@ function renderForceGraph(nodes, links, nodeMap) {
       return s.arrow ? `url(#arrow-${d.relation})` : null;
     });
 
-  // Create node groups
   const nodeG = g.append('g').attr('class', 'nodes');
   const nodeEls = nodeG.selectAll('g').data(simNodes).enter().append('g')
     .style('cursor', 'pointer')
@@ -453,42 +667,37 @@ function renderForceGraph(nodes, links, nodeMap) {
       .on('end', (ev, d) => { if (!ev.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
     );
 
-  // Draw shapes per node
   nodeEls.each(function(d) {
     const el = d3.select(this);
     drawNodeShape(el, d.type, d.color, d.type === 'phase' ? 10 : d.type === 'finding' ? 6 : 8);
-    // Label for non-tiny nodes
     if (d.type !== 'finding') {
       el.append('text')
         .attr('x', d.type === 'phase' ? 0 : 12)
         .attr('y', d.type === 'phase' ? 3 : 3)
         .attr('text-anchor', d.type === 'phase' ? 'middle' : 'start')
         .attr('fill', d.type === 'phase' ? '#0d1117' : d.color)
-        .attr('font-size', d.type === 'phase' ? '7px' : '7px')
+        .attr('font-size', '7px')
         .attr('font-weight', d.type === 'phase' ? 'bold' : 'normal')
         .text(d.label);
     }
   });
 
-  // Helper: show tooltip for a node
   function showTooltipForNode(d, ev) {
     tooltip.querySelector('.tt-type').textContent = d.type.toUpperCase();
     tooltip.querySelector('.tt-type').style.color = d.color;
     tooltip.querySelector('.tt-title').textContent = `#${d.numId}: ${d.label}`;
-    tooltip.querySelector('.tt-body').innerHTML = miniMarkdown(d.text ? d.text.substring(0, 500) : '');
+    tooltip.querySelector('.tt-body').innerHTML = buildTooltipHtml(d);
     tooltip.style.display = 'block';
     tooltip.style.left = (ev.clientX + 12) + 'px';
     tooltip.style.top = (ev.clientY - 8) + 'px';
   }
 
-  // Helper: highlight edges connected to a node
   function highlightEdgesForNode(d) {
     linkEls.attr('stroke-opacity', 0.03);
     linkEls.filter(l => l.source.id === d.id || l.target.id === d.id)
       .attr('stroke-opacity', 0.8).attr('stroke-width', 2);
   }
 
-  // Helper: reset all edge highlighting to defaults
   function resetEdgeHighlight() {
     linkEls.each(function(l) {
       const s = edgeStyle[l.relation] || edgeStyle['structural'];
@@ -496,12 +705,8 @@ function renderForceGraph(nodes, links, nodeMap) {
     });
   }
 
-  // Helper: hide tooltip
-  function hideTooltip() {
-    tooltip.style.display = 'none';
-  }
+  function hideTooltip() { tooltip.style.display = 'none'; }
 
-  // Helper: clear pinned node visual indicator
   function clearPinnedVisual() {
     if (pinnedNodeEl) {
       d3.select(pinnedNodeEl).select('.node-shape').attr('stroke', null).attr('stroke-width', 0);
@@ -509,7 +714,6 @@ function renderForceGraph(nodes, links, nodeMap) {
     }
   }
 
-  // Click on SVG background to unpin
   svg.on('click', function() {
     if (pinnedNode) {
       clearPinnedVisual();
@@ -519,66 +723,116 @@ function renderForceGraph(nodes, links, nodeMap) {
     }
   });
 
-  // Tooltip + click-to-pin handlers
   nodeEls
     .on('click', function(ev, d) {
       ev.stopPropagation();
       if (pinnedNode === d) {
-        // Clicking pinned node unpins it
-        clearPinnedVisual();
-        pinnedNode = null;
-        hideTooltip();
-        resetEdgeHighlight();
+        clearPinnedVisual(); pinnedNode = null; hideTooltip(); resetEdgeHighlight();
       } else {
-        // Unpin previous
         clearPinnedVisual();
-        // Pin new node
-        pinnedNode = d;
-        pinnedNodeEl = this;
+        pinnedNode = d; pinnedNodeEl = this;
         showTooltipForNode(d, ev);
         highlightEdgesForNode(d);
         d3.select(this).select('.node-shape').attr('stroke', '#fbbf24').attr('stroke-width', 2.5);
       }
     })
     .on('mouseenter', function(ev, d) {
-      if (pinnedNode) return; // Don't hover when pinned
+      if (pinnedNode) return;
       showTooltipForNode(d, ev);
       highlightEdgesForNode(d);
       d3.select(this).select('.node-shape').attr('stroke', '#fff').attr('stroke-width', 2);
     })
     .on('mouseleave', function(ev, d) {
-      if (pinnedNode) return; // Don't unhover when pinned
+      if (pinnedNode) return;
       hideTooltip();
       resetEdgeHighlight();
       d3.select(this).select('.node-shape').attr('stroke', null).attr('stroke-width', 0);
     })
     .on('mousemove', function(ev) {
-      if (pinnedNode) return; // Don't move tooltip when pinned
+      if (pinnedNode) return;
       tooltip.style.left = (ev.clientX + 12) + 'px';
       tooltip.style.top = (ev.clientY - 8) + 'px';
     });
 
-  // Tick function
+  // Update hull positions on each tick
+  function updateHulls() {
+    hullG.selectAll('*').remove();
+    if (!subprojects || subprojects.length === 0) return;
+
+    for (const sp of subprojects) {
+      const spNodes = simNodes.filter(n => n.subproject_id === sp.id);
+      if (spNodes.length < 2) continue;
+
+      const points = spNodes.map(n => [n.x, n.y]);
+      // Add padding points for convex hull
+      const padded = [];
+      const pad = 30;
+      for (const [x, y] of points) {
+        padded.push([x - pad, y - pad]);
+        padded.push([x + pad, y - pad]);
+        padded.push([x + pad, y + pad]);
+        padded.push([x - pad, y + pad]);
+      }
+      const hull = d3.polygonHull(padded);
+      if (!hull) continue;
+
+      const color = subprojectColorMap[sp.id] || '#30363d';
+
+      hullG.append('path')
+        .attr('class', 'subproject-hull')
+        .attr('d', `M${hull.join('L')}Z`)
+        .attr('fill', color)
+        .attr('fill-opacity', 0.07)
+        .attr('stroke', color)
+        .attr('stroke-opacity', 0.2)
+        .attr('stroke-width', 1)
+        .on('click', function(ev) {
+          ev.stopPropagation();
+          if (activeSubprojectFilter === sp.id) {
+            activeSubprojectFilter = null;
+            nodeEls.style('opacity', 1);
+            linkEls.style('opacity', 1);
+          } else {
+            activeSubprojectFilter = sp.id;
+            nodeEls.style('opacity', d => d.subproject_id === sp.id ? 1 : 0.15);
+            linkEls.style('opacity', l => {
+              const sId = typeof l.source === 'object' ? l.source.subproject_id : null;
+              const tId = typeof l.target === 'object' ? l.target.subproject_id : null;
+              return (sId === sp.id || tId === sp.id) ? 1 : 0.05;
+            });
+          }
+        });
+
+      // Label at centroid
+      const cx = d3.mean(spNodes, n => n.x);
+      const cy = d3.min(spNodes, n => n.y) - pad - 5;
+      hullG.append('text')
+        .attr('class', 'subproject-label')
+        .attr('x', cx).attr('y', cy)
+        .attr('text-anchor', 'middle')
+        .attr('fill', color)
+        .attr('fill-opacity', 0.5)
+        .text(sp.alias || sp.name);
+    }
+  }
+
   simulation.on('tick', () => {
     linkEls
-      .attr('x1', d => d.source.x)
-      .attr('y1', d => d.source.y)
-      .attr('x2', d => d.target.x)
-      .attr('y2', d => d.target.y);
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
     nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+    updateHulls();
   });
 
-  // Run simulation for 300 ticks then stop (performance)
   simulation.alpha(1).restart();
   for (let i = 0; i < 300; i++) simulation.tick();
   simulation.alpha(0.01);
-  // Trigger final position update
   linkEls
     .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
     .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
   nodeEls.attr('transform', d => `translate(${d.x},${d.y})`);
+  updateHulls();
 
-  // Zoom to fit
   const allX = simNodes.map(n => n.x);
   const allY = simNodes.map(n => n.y);
   if (allX.length > 1) {
@@ -602,7 +856,6 @@ async function loadDAG(projectId) {
   const W = container.offsetWidth;
   const H = container.offsetHeight;
 
-  // Topological layering
   const pMap = {};
   phases.forEach(p => { pMap[p.id] = p; p.layer = 0; });
   let changed = true;
@@ -640,7 +893,6 @@ async function loadDAG(projectId) {
   const zoom = d3.zoom().scaleExtent([0.2, 5]).on('zoom', e => gMain.attr('transform', e.transform));
   svg.call(zoom).on('dblclick.zoom', null);
 
-  // Defs for DAG arrows
   const defs = svg.append('defs');
   defs.append('marker')
     .attr('id', 'arrow-dag')
@@ -652,7 +904,6 @@ async function loadDAG(projectId) {
     .attr('d', 'M0,0 L10,3 L0,6 Z')
     .attr('fill', '#79c0ff');
 
-  // Edges
   for (const p of phases) {
     for (const dep of p.depends_on) {
       const src = pMap[dep];
@@ -667,7 +918,6 @@ async function loadDAG(projectId) {
     }
   }
 
-  // Nodes
   for (const p of phases) {
     const color = p.status === 'Complete' ? '#3fb950' : p.status === 'InProgress' ? '#58a6ff' : p.status === 'Paused' ? '#f85149' : '#8b949e';
     const ng = gMain.append('g').attr('transform', `translate(${p.x}, ${p.y})`)
@@ -711,7 +961,6 @@ async function loadDAG(projectId) {
       .text(p.name ? p.name.substring(0, 25) : '');
   }
 
-  // Zoom to fit
   const allX = phases.map(p => p.x);
   const allY = phases.map(p => p.y);
   if (allX.length) {
@@ -730,8 +979,10 @@ async function loadDAG(projectId) {
 
 window.addEventListener('resize', () => {
   if (currentProject) {
-    const card = document.querySelector('.project-card.selected');
-    selectProject(currentProject, card);
+    const item = document.querySelector('.project-item.selected');
+    const projData = allProjectsData.find(p => p.id === currentProject);
+    const hasSubs = projData && projData.children && projData.children.length > 0;
+    selectProject(currentProject, item, hasSubs);
   }
 });
 

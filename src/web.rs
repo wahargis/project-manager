@@ -2,16 +2,279 @@ use warp::Filter;
 use crate::store::sqlite::SqliteStore;
 use crate::store::Store;
 use crate::dag::DagEngine;
+use serde::Serialize;
 use std::sync::Arc;
+
+#[derive(Serialize)]
+struct NodeCounts {
+    phases: usize,
+    experiments: usize,
+    findings: usize,
+    decisions: usize,
+    hypotheses: usize,
+    literature: usize,
+    principles: usize,
+    constraints: usize,
+}
+
+#[derive(Serialize)]
+struct ProjectTree {
+    #[serde(flatten)]
+    project: crate::store::Project,
+    children: Vec<crate::store::Project>,
+    node_counts: NodeCounts,
+}
+
+fn compute_node_counts(store: &SqliteStore, project_id: i64) -> NodeCounts {
+    let phases = store.list_phases(project_id).map(|v| v.len()).unwrap_or(0);
+    let mut experiments = 0usize;
+    let mut findings = 0usize;
+    if let Ok(ph_list) = store.list_phases(project_id) {
+        for ph in &ph_list {
+            if let Ok(exps) = store.list_experiments(Some(ph.id)) {
+                experiments += exps.len();
+                for exp in &exps {
+                    findings += store.list_findings(Some(exp.id)).map(|f| f.len()).unwrap_or(0);
+                }
+            }
+        }
+    }
+    let decisions = store.list_decisions(project_id).map(|v| v.len()).unwrap_or(0);
+    let hypotheses = store.list_hypotheses(None).map(|v| v.len()).unwrap_or(0);
+    let literature = store.list_literature(project_id).map(|v| v.len()).unwrap_or(0);
+    let principles = store.list_principles(project_id).map(|v| v.len()).unwrap_or(0);
+    let constraints = store.list_constraints(project_id).map(|v| v.len()).unwrap_or(0);
+
+    NodeCounts { phases, experiments, findings, decisions, hypotheses, literature, principles, constraints }
+}
+
+#[derive(Serialize)]
+struct KgNode {
+    node_type: String,
+    node_id: i64,
+    label: String,
+    text: String,
+    subproject_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+struct KgResponse {
+    nodes: Vec<KgNode>,
+    edges: Vec<crate::store::Edge>,
+    subprojects: Vec<SubprojectInfo>,
+}
+
+#[derive(Serialize)]
+struct SubprojectInfo {
+    id: i64,
+    name: String,
+    alias: Option<String>,
+}
+
+fn collect_kg_nodes(store: &SqliteStore, project_id: i64, subproject_id: Option<i64>, nodes: &mut Vec<KgNode>) {
+    if let Ok(phases) = store.list_phases(project_id) {
+        for p in &phases {
+            let status_str = format!("{:?}", p.status);
+            let extra = serde_json::json!({
+                "impact": p.impact,
+                "description": p.description,
+                "goals": p.goals,
+                "success_criteria": p.success_criteria,
+                "depends_on": p.depends_on,
+                "started_at": p.started_at.map(|t| t.to_string()),
+                "completed_at": p.completed_at.map(|t| t.to_string()),
+            });
+            nodes.push(KgNode {
+                node_type: "phase".into(), node_id: p.id, label: format!("Ph{}", p.id),
+                text: p.name.clone(), subproject_id, status: Some(status_str),
+                extra: Some(extra),
+            });
+
+            if let Ok(exps) = store.list_experiments(Some(p.id)) {
+                for e in &exps {
+                    let status_str = format!("{:?}", e.status);
+                    let extra = serde_json::json!({
+                        "hypothesis": e.hypothesis,
+                        "result": e.result,
+                        "notes": e.notes,
+                        "phase_id": p.id,
+                    });
+                    nodes.push(KgNode {
+                        node_type: "experiment".into(), node_id: e.id, label: format!("E{}", e.id),
+                        text: e.name.clone(), subproject_id, status: Some(status_str),
+                        extra: Some(extra),
+                    });
+
+                    if let Ok(findings) = store.list_findings(Some(e.id)) {
+                        for f in &findings {
+                            nodes.push(KgNode {
+                                node_type: "finding".into(), node_id: f.id, label: format!("F{}", f.id),
+                                text: f.text.clone(), subproject_id, status: None,
+                                extra: Some(serde_json::json!({"experiment_id": e.id})),
+                            });
+                        }
+                    }
+                }
+            }
+
+            if let Ok(hyps) = store.list_hypotheses(Some(p.id)) {
+                for h in &hyps {
+                    let status_str = format!("{:?}", h.status);
+                    let extra = serde_json::json!({
+                        "prediction": h.prediction,
+                        "criteria": h.criteria,
+                        "confidence": h.confidence,
+                        "experiment_id": h.experiment_id,
+                        "finding_id": h.finding_id,
+                    });
+                    nodes.push(KgNode {
+                        node_type: "hypothesis".into(), node_id: h.id, label: format!("H{}", h.id),
+                        text: h.text.clone(), subproject_id, status: Some(status_str),
+                        extra: Some(extra),
+                    });
+                }
+            }
+        }
+    }
+
+    if let Ok(phases) = store.list_phases(project_id) {
+        for p in &phases {
+            if let Ok(items) = store.list_research(Some(p.id)) {
+                for r in &items {
+                    let extra = serde_json::json!({
+                        "report": r.report,
+                        "phase_id": p.id,
+                    });
+                    nodes.push(KgNode {
+                        node_type: "research".into(), node_id: r.id, label: format!("R{}", r.id),
+                        text: r.name.clone(), subproject_id, status: Some(format!("{:?}", r.status)),
+                        extra: Some(extra),
+                    });
+                }
+            }
+        }
+    }
+
+    if let Ok(decs) = store.list_decisions(project_id) {
+        for d in &decs {
+            let extra = serde_json::json!({
+                "why": d.why,
+                "experiment_id": d.experiment_id,
+            });
+            nodes.push(KgNode {
+                node_type: "decision".into(), node_id: d.id, label: format!("D{}", d.id),
+                text: d.what.clone(), subproject_id, status: None,
+                extra: Some(extra),
+            });
+        }
+    }
+
+    if let Ok(prins) = store.list_principles(project_id) {
+        for p in &prins {
+            let extra = serde_json::json!({
+                "scope": format!("{:?}", p.scope),
+                "rationale": p.rationale,
+                "enforcement_level": p.enforcement_level,
+                "superseded_by": p.superseded_by,
+            });
+            nodes.push(KgNode {
+                node_type: "principle".into(), node_id: p.id, label: format!("P{}", p.id),
+                text: p.text.clone(), subproject_id, status: Some(format!("{:?}", p.status)),
+                extra: Some(extra),
+            });
+        }
+    }
+
+    if let Ok(cons) = store.list_constraints(project_id) {
+        for c in &cons {
+            let extra = serde_json::json!({
+                "scope": format!("{:?}", c.scope),
+                "severity": c.severity,
+                "resource": c.resource,
+                "measured_value": c.measured_value,
+                "expires_at": c.expires_at,
+                "source": c.source,
+            });
+            nodes.push(KgNode {
+                node_type: "constraint".into(), node_id: c.id, label: format!("C{}", c.id),
+                text: c.text.clone(), subproject_id, status: None,
+                extra: Some(extra),
+            });
+        }
+    }
+
+    if let Ok(lits) = store.list_literature(project_id) {
+        for l in &lits {
+            let extra = serde_json::json!({
+                "authors": l.authors,
+                "venue": l.venue,
+                "year": l.year,
+                "arxiv_id": l.arxiv_id,
+                "url": l.url,
+                "code_url": l.code_url,
+                "summary": l.summary,
+                "relevance": l.relevance,
+                "key_findings": l.key_findings,
+            });
+            nodes.push(KgNode {
+                node_type: "literature".into(), node_id: l.id, label: format!("L{}", l.id),
+                text: l.title.clone(), subproject_id, status: l.status.clone(),
+                extra: Some(extra),
+            });
+        }
+    }
+
+    if let Ok(fbs) = store.list_feedback(project_id) {
+        for f in &fbs {
+            nodes.push(KgNode {
+                node_type: "feedback".into(), node_id: f.id, label: format!("Fb{}", f.id),
+                text: f.text.clone(), subproject_id, status: None, extra: None,
+            });
+        }
+    }
+}
 
 pub async fn serve(db_path: &str, port: u16) {
     let db = Arc::new(db_path.to_string());
 
     let db1 = db.clone();
     let projects = warp::path!("api" / "projects")
+        .and(warp::get())
         .map(move || {
             let store = SqliteStore::new(&db1).unwrap();
-            warp::reply::json(&store.list_projects().unwrap_or_default())
+            let all = store.list_projects().unwrap_or_default();
+            let trees: Vec<ProjectTree> = all.iter().map(|p| {
+                let children = store.list_subprojects(p.id).unwrap_or_default();
+                let counts = compute_node_counts(&store, p.id);
+                ProjectTree { project: p.clone(), children, node_counts: counts }
+            }).collect();
+            warp::reply::json(&trees)
+        });
+
+    let db_kg = db.clone();
+    let kg = warp::path!("api" / "projects" / i64 / "kg")
+        .and(warp::get())
+        .map(move |project_id: i64| {
+            let store = SqliteStore::new(&db_kg).unwrap();
+            let mut nodes = Vec::new();
+            let mut subprojects = Vec::new();
+
+            collect_kg_nodes(&store, project_id, None, &mut nodes);
+
+            if let Ok(subs) = store.list_subprojects(project_id) {
+                for sub in &subs {
+                    subprojects.push(SubprojectInfo { id: sub.id, name: sub.name.clone(), alias: sub.alias.clone() });
+                    collect_kg_nodes(&store, sub.id, Some(sub.id), &mut nodes);
+                }
+            }
+
+            let edges = store.list_all_edges().unwrap_or_default();
+            let response = KgResponse { nodes, edges, subprojects };
+            warp::reply::json(&response)
         });
 
     let db2 = db.clone();
@@ -25,7 +288,6 @@ pub async fn serve(db_path: &str, port: u16) {
     let findings = warp::path!("api" / "projects" / i64 / "findings")
         .map(move |project_id: i64| {
             let store = SqliteStore::new(&db3).unwrap();
-            // Filter findings by project: project → phases → experiments → findings
             let mut project_findings = Vec::new();
             if let Ok(phases) = store.list_phases(project_id) {
                 for phase in &phases {
@@ -38,7 +300,6 @@ pub async fn serve(db_path: &str, port: u16) {
                     }
                 }
             }
-            // Also get findings with no experiment (experiment_id = None won't be caught above)
             warp::reply::json(&project_findings)
         });
 
@@ -46,7 +307,6 @@ pub async fn serve(db_path: &str, port: u16) {
     let edges = warp::path!("api" / "projects" / i64 / "edges")
         .map(move |_project_id: i64| {
             let store = SqliteStore::new(&db4).unwrap();
-            // Return ALL edges — the frontend filters by node membership
             warp::reply::json(&store.list_all_edges().unwrap_or_default())
         });
 
@@ -64,7 +324,6 @@ pub async fn serve(db_path: &str, port: u16) {
             }
             warp::reply::json(&project_exps)
         });
-
 
     let db7 = db.clone();
     let decisions = warp::path!("api" / "projects" / i64 / "decisions")
@@ -85,13 +344,11 @@ pub async fn serve(db_path: &str, port: u16) {
                     }
                 }
             }
-            // Also get research with no phase
             if let Ok(items) = store.list_research(None) {
                 project_research.extend(items);
             }
             warp::reply::json(&project_research)
         });
-
 
     let db_principles = db.clone();
     let principles = warp::path!("api" / "projects" / i64 / "principles")
@@ -150,7 +407,21 @@ pub async fn serve(db_path: &str, port: u16) {
     let index = warp::path::end()
         .map(|| warp::reply::html(include_str!("web/index.html")));
 
-    let routes = index.or(projects).or(phases).or(findings).or(edges).or(experiments).or(decisions).or(research).or(principles).or(hypotheses).or(constraints).or(literature).or(feedback).or(dashboard);
+    let routes = index
+        .or(kg)
+        .or(projects)
+        .or(phases)
+        .or(findings)
+        .or(edges)
+        .or(experiments)
+        .or(decisions)
+        .or(research)
+        .or(principles)
+        .or(hypotheses)
+        .or(constraints)
+        .or(literature)
+        .or(feedback)
+        .or(dashboard);
 
     println!("PM dashboard at http://localhost:{}", port);
     warp::serve(routes).run(([0, 0, 0, 0], port)).await;
