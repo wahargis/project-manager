@@ -10,7 +10,7 @@ fn test_store() -> SqliteStore {
 #[test]
 fn create_project_returns_project_with_id() {
     let store = test_store();
-    let p = store.create_project("volta-renaissance", Some("vr")).unwrap();
+    let p = store.create_project("volta-renaissance", Some("vr"), None).unwrap();
     assert!(p.id > 0);
     assert_eq!(p.name, "volta-renaissance");
     assert_eq!(p.alias, Some("vr".to_string()));
@@ -20,7 +20,7 @@ fn create_project_returns_project_with_id() {
 #[test]
 fn get_project_by_id() {
     let store = test_store();
-    let created = store.create_project("test", None).unwrap();
+    let created = store.create_project("test", None, None).unwrap();
     let fetched = store.get_project(created.id).unwrap();
     assert_eq!(fetched.name, "test");
 }
@@ -28,8 +28,8 @@ fn get_project_by_id() {
 #[test]
 fn list_projects_returns_all() {
     let store = test_store();
-    store.create_project("a", None).unwrap();
-    store.create_project("b", None).unwrap();
+    store.create_project("a", None, None).unwrap();
+    store.create_project("b", None, None).unwrap();
     let all = store.list_projects().unwrap();
     assert_eq!(all.len(), 2);
 }
@@ -37,7 +37,7 @@ fn list_projects_returns_all() {
 #[test]
 fn update_project_status() {
     let store = test_store();
-    let p = store.create_project("test", None).unwrap();
+    let p = store.create_project("test", None, None).unwrap();
     store.update_project_status(p.id, ProjectStatus::Paused).unwrap();
     let fetched = store.get_project(p.id).unwrap();
     assert_eq!(fetched.status, ProjectStatus::Paused);
@@ -48,7 +48,7 @@ fn update_project_status() {
 #[test]
 fn create_phase_with_dependencies() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let p1 = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
     let p2 = store.create_phase(proj.id, "Phase 2", 30, &[p1.id]).unwrap();
     assert_eq!(p2.depends_on, vec![p1.id]);
@@ -58,7 +58,7 @@ fn create_phase_with_dependencies() {
 #[test]
 fn list_phases_for_project() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     store.create_phase(proj.id, "A", 10, &[]).unwrap();
     store.create_phase(proj.id, "B", 20, &[]).unwrap();
     let phases = store.list_phases(proj.id).unwrap();
@@ -70,7 +70,7 @@ fn list_phases_for_project() {
 #[test]
 fn create_experiment_with_phase() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test exp").unwrap();
     assert_eq!(exp.status, ExperimentStatus::Pending);
@@ -80,7 +80,7 @@ fn create_experiment_with_phase() {
 #[test]
 fn update_experiment_status_to_pass() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     store.update_experiment_status(exp.id, ExperimentStatus::Pass, Some("0/256 mismatches")).unwrap();
@@ -94,7 +94,7 @@ fn update_experiment_status_to_pass() {
 #[test]
 fn create_finding_linked_to_experiment() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let finding = store.create_finding(Some(exp.id), "Q4_K GEMV is compute-bound").unwrap();
@@ -107,7 +107,7 @@ fn create_finding_linked_to_experiment() {
 #[test]
 fn create_edge_supports() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let f1 = store.create_finding(Some(exp.id), "finding 1").unwrap();
@@ -123,7 +123,7 @@ fn create_edge_supports() {
 #[test]
 fn get_edges_from_finding() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let f1 = store.create_finding(Some(exp.id), "source").unwrap();
@@ -139,7 +139,7 @@ fn get_edges_from_finding() {
 #[test]
 fn create_decision_with_rationale() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let dec = store.create_decision(Some(exp.id), "Use Rust", Some("Type safety for KG"), None).unwrap();
@@ -152,7 +152,7 @@ fn create_decision_with_rationale() {
 #[test]
 fn list_experiments_by_phase() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let p1 = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let p2 = store.create_phase(proj.id, "P2", 20, &[]).unwrap();
     store.create_experiment(Some(p1.id), "exp_p1").unwrap();
@@ -170,7 +170,7 @@ fn list_experiments_by_phase() {
 #[test]
 fn update_phase_status_round_trip() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "test", 10, &[]).unwrap();
     
     for status in [PhaseStatus::InProgress, PhaseStatus::Complete, PhaseStatus::Deprioritized, PhaseStatus::Paused, PhaseStatus::Pending] {
@@ -183,7 +183,7 @@ fn update_phase_status_round_trip() {
 #[test]
 fn finding_list_by_experiment() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let e1 = store.create_experiment(Some(phase.id), "e1").unwrap();
     let e2 = store.create_experiment(Some(phase.id), "e2").unwrap();
@@ -199,7 +199,7 @@ fn finding_list_by_experiment() {
 #[test]
 fn edges_bidirectional() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "e1").unwrap();
     let f1 = store.create_finding(Some(exp.id), "A").unwrap();
@@ -223,7 +223,7 @@ fn edges_bidirectional() {
 fn test_store_migration_creates_new_columns() {
     // SqliteStore::in_memory() runs init_schema + migrate
     let store = test_store();
-    let proj = store.create_project("migration-test", None).unwrap();
+    let proj = store.create_project("migration-test", None, None).unwrap();
 
     // Verify phase new fields default to None
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
@@ -288,7 +288,7 @@ fn test_store_new_fields_round_trip_via_raw_sql() {
     // Test that the new columns work end-to-end by inserting via raw SQL
     // and reading back through the store's list methods
     let store = test_store();
-    let proj = store.create_project("rt-test", None).unwrap();
+    let proj = store.create_project("rt-test", None, None).unwrap();
 
     // Insert literature with new fields via the store, then verify list picks them up
     let lits = store.list_literature(proj.id).unwrap();
@@ -329,7 +329,7 @@ fn test_store_new_fields_round_trip_via_raw_sql() {
 #[test]
 fn test_edge_to_nonexistent_source_rejected() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let f1 = store.create_finding(Some(exp.id), "finding 1").unwrap();
@@ -349,7 +349,7 @@ fn test_edge_to_nonexistent_source_rejected() {
 #[test]
 fn test_edge_to_nonexistent_target_rejected() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let f1 = store.create_finding(Some(exp.id), "finding 1").unwrap();
@@ -369,7 +369,7 @@ fn test_edge_to_nonexistent_target_rejected() {
 #[test]
 fn test_duplicate_edge_returns_existing_id() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let f1 = store.create_finding(Some(exp.id), "finding 1").unwrap();
@@ -395,7 +395,7 @@ fn test_duplicate_edge_returns_existing_id() {
 #[test]
 fn test_valid_edge_created_between_existing_nodes() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let f1 = store.create_finding(Some(exp.id), "finding 1").unwrap();
@@ -414,7 +414,7 @@ fn test_valid_edge_created_between_existing_nodes() {
 #[test]
 fn test_edge_cross_node_types_with_integrity() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "test").unwrap();
     let finding = store.create_finding(Some(exp.id), "finding").unwrap();
@@ -438,7 +438,7 @@ fn test_edge_cross_node_types_with_integrity() {
 #[test]
 fn test_node_exists_for_all_types() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "finding").unwrap();
@@ -471,7 +471,7 @@ fn test_node_exists_for_all_types() {
 #[test]
 fn test_new_edge_types_round_trip() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let f1 = store.create_finding(Some(exp.id), "finding 1").unwrap();
@@ -515,7 +515,7 @@ fn test_new_edge_types_round_trip() {
 fn test_kg_decision_label_resolved() {
     use crate::kg::KgEngine;
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "A finding for testing").unwrap();
@@ -533,7 +533,7 @@ fn test_kg_decision_label_resolved() {
 fn test_kg_hypothesis_label_resolved() {
     use crate::kg::KgEngine;
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "A finding").unwrap();
@@ -550,7 +550,7 @@ fn test_kg_hypothesis_label_resolved() {
 fn test_kg_constraint_label_resolved() {
     use crate::kg::KgEngine;
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "32GB VRAM limit per GPU for model loading", None, None, None, None, None).unwrap();
@@ -565,7 +565,7 @@ fn test_kg_constraint_label_resolved() {
 fn test_kg_literature_label_resolved() {
     use crate::kg::KgEngine;
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "A finding").unwrap();
@@ -581,7 +581,7 @@ fn test_kg_literature_label_resolved() {
 fn test_kg_principle_label_resolved_directly() {
     use crate::kg::KgEngine;
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "finding").unwrap();
@@ -607,7 +607,7 @@ fn test_get_decision_by_id() {
 #[test]
 fn test_get_principle_by_id() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let p = store.create_principle(proj.id, PrincipleScope::Universal, "Test principle", None, None).unwrap();
     let fetched = store.get_principle(p.id).unwrap();
     assert_eq!(fetched.text, "Test principle");
@@ -626,7 +626,7 @@ fn test_get_hypothesis_by_id() {
 #[test]
 fn test_get_constraint_by_id() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let c = store.create_constraint(proj.id, ConstraintScope::Hardware, "32GB VRAM", Some("nvidia-smi"), None, None, None, None).unwrap();
     let fetched = store.get_constraint(c.id).unwrap();
     assert_eq!(fetched.text, "32GB VRAM");
@@ -636,7 +636,7 @@ fn test_get_constraint_by_id() {
 #[test]
 fn test_get_literature_by_id() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let l = store.create_literature(proj.id, "Test Paper", Some("2301.00001"), Some("High"), Some("Key findings"), None, None, None, None, None, None).unwrap();
     let fetched = store.get_literature(l.id).unwrap();
     assert_eq!(fetched.title, "Test Paper");
@@ -646,7 +646,7 @@ fn test_get_literature_by_id() {
 #[test]
 fn test_get_feedback_entry_by_id() {
     let store = test_store();
-    let proj = store.create_project("test", None).unwrap();
+    let proj = store.create_project("test", None, None).unwrap();
     let f = store.create_feedback(proj.id, "Test feedback", FeedbackCategory::Correction).unwrap();
     let fetched = store.get_feedback_entry(f.id).unwrap();
     assert_eq!(fetched.text, "Test feedback");
@@ -665,4 +665,52 @@ fn test_get_nonexistent_decision_returns_not_found() {
         }
         other => panic!("Expected NotFound error, got: {:?}", other),
     }
+}
+
+// --- Issue #18: Subproject Support ---
+
+#[test]
+fn create_subproject_with_parent_id() {
+    let store = test_store();
+    let parent = store.create_project("home-cloud", None, None).unwrap();
+    let child = store.create_project("execution-engine", None, Some(parent.id)).unwrap();
+    assert_eq!(child.parent_id, Some(parent.id));
+    assert_eq!(child.name, "execution-engine");
+}
+
+#[test]
+fn subproject_parent_id_none_for_standalone() {
+    let store = test_store();
+    let proj = store.create_project("standalone", None, None).unwrap();
+    assert!(proj.parent_id.is_none());
+}
+
+#[test]
+fn list_projects_includes_subprojects() {
+    let store = test_store();
+    let parent = store.create_project("parent", None, None).unwrap();
+    store.create_project("child-a", None, Some(parent.id)).unwrap();
+    store.create_project("child-b", None, Some(parent.id)).unwrap();
+    let all = store.list_projects().unwrap();
+    assert_eq!(all.len(), 3);
+    let children: Vec<_> = all.iter().filter(|p| p.parent_id == Some(parent.id)).collect();
+    assert_eq!(children.len(), 2);
+}
+
+#[test]
+fn subproject_get_by_id_preserves_parent() {
+    let store = test_store();
+    let parent = store.create_project("parent", None, None).unwrap();
+    let child = store.create_project("child", None, Some(parent.id)).unwrap();
+    let fetched = store.get_project(child.id).unwrap();
+    assert_eq!(fetched.parent_id, Some(parent.id));
+}
+
+#[test]
+fn subproject_with_alias() {
+    let store = test_store();
+    let parent = store.create_project("home-cloud", Some("hc"), None).unwrap();
+    let child = store.create_project("infra", Some("hc-infra"), Some(parent.id)).unwrap();
+    assert_eq!(child.alias, Some("hc-infra".to_string()));
+    assert_eq!(child.parent_id, Some(parent.id));
 }

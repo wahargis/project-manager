@@ -273,11 +273,11 @@ impl SqliteStore {
 }
 
 impl Store for SqliteStore {
-    fn create_project(&self, name: &str, alias: Option<&str>) -> Result<Project> {
+    fn create_project(&self, name: &str, alias: Option<&str>, parent_id: Option<i64>) -> Result<Project> {
         let now = Self::now();
         self.conn.execute(
-            "INSERT INTO projects (name, alias, status, created_at) VALUES (?1, ?2, 'active', ?3)",
-            params![name, alias, now],
+            "INSERT INTO projects (name, alias, status, created_at, parent_id) VALUES (?1, ?2, 'active', ?3, ?4)",
+            params![name, alias, now, parent_id],
         )?;
         self.get_project(self.conn.last_insert_rowid())
     }

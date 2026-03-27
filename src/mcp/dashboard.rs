@@ -19,18 +19,47 @@ fn is_stale(ts: &NaiveDateTime, days: i64) -> bool {
 pub fn tool_dashboard(store: &SqliteStore) -> String {
     let mut out = String::from("=== Cross-Project Dashboard ===\n\n");
     if let Ok(projects) = store.list_projects() {
-        for proj in &projects {
-            if proj.status != crate::store::ProjectStatus::Active { continue; }
-            let dag = DagEngine::new(store, proj.id);
-            if let Ok(next) = dag.next_phases() {
-                if let Some(top) = next.first() {
-                    let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                    out += &format!("  [{}] {} #{} [impact:{}] {}\n", proj.name, s, top.id, top.impact, top.name);
+        let active: Vec<_> = projects.iter().filter(|p| p.status == crate::store::ProjectStatus::Active).collect();
+        let parents: Vec<_> = active.iter().filter(|p| p.parent_id.is_none()).collect();
+        let children: Vec<_> = active.iter().filter(|p| p.parent_id.is_some()).collect();
+
+        for parent in &parents {
+            let subs: Vec<_> = children.iter().filter(|c| c.parent_id == Some(parent.id)).collect();
+            if subs.is_empty() {
+                // Standalone project
+                let dag = DagEngine::new(store, parent.id);
+                if let Ok(next) = dag.next_phases() {
+                    if let Some(top) = next.first() {
+                        let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
+                        out += &format!("  [{}] {} #{} [impact:{}] {}\n", parent.name, s, top.id, top.impact, top.name);
+                    }
                 }
+            } else {
+                // Parent with subprojects
+                out += &format!("## {}\n", parent.name);
+                // Parent's own phases
+                let dag = DagEngine::new(store, parent.id);
+                if let Ok(next) = dag.next_phases() {
+                    if let Some(top) = next.first() {
+                        let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
+                        out += &format!("  [{}] {} #{} [impact:{}] {}\n", parent.name, s, top.id, top.impact, top.name);
+                    }
+                }
+                // Subproject phases
+                for sub in &subs {
+                    let dag = DagEngine::new(store, sub.id);
+                    if let Ok(next) = dag.next_phases() {
+                        if let Some(top) = next.first() {
+                            let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
+                            out += &format!("  [{}/{}] {} #{} [impact:{}] {}\n", parent.name, sub.name, s, top.id, top.impact, top.name);
+                        }
+                    }
+                }
+                out += "\n";
             }
         }
     }
-    out += "\n## ACTION: Execute the highest-impact item above.";
+    out += "## ACTION: Execute the highest-impact item above.";
     out
 }
 

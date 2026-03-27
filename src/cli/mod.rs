@@ -129,7 +129,7 @@ pub enum Commands {
 #[derive(Subcommand)]
 pub enum ProjectAction {
     List,
-    Activate { name: String, #[arg(short, long)] alias: Option<String> },
+    Activate { name: String, #[arg(short, long)] alias: Option<String>, #[arg(short, long)] parent: Option<String> },
     Pause { name: String },
     Archive { name: String },
 }

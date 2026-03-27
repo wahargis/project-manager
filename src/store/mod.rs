@@ -264,7 +264,7 @@ pub struct FeedbackEntry {
 
 pub trait Store {
     // Projects
-    fn create_project(&self, name: &str, alias: Option<&str>) -> Result<Project>;
+    fn create_project(&self, name: &str, alias: Option<&str>, parent_id: Option<i64>) -> Result<Project>;
     fn get_project(&self, id: i64) -> Result<Project>;
     fn list_projects(&self) -> Result<Vec<Project>>;
     fn update_project_status(&self, id: i64, status: ProjectStatus) -> Result<()>;

@@ -59,21 +59,57 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Dashboard => {
             let projects = store.list_projects()?;
             println!("=== Cross-Project Dashboard ===\n");
-            for proj in &projects {
-                if proj.status != pm::store::ProjectStatus::Active { continue; }
-                let dag = DagEngine::new(&store, proj.id);
-                if let Ok(next) = dag.next_phases() {
-                    // Prefer: InProgress > Pending > Paused
-                    let top = next.iter().find(|p| p.status == PhaseStatus::InProgress)
-                        .or_else(|| next.iter().find(|p| p.status == PhaseStatus::Pending));
-                    if let Some(top) = top {
-                        let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
-                        println!("  [{}] {} #{} [impact:{}] {}", proj.name, s, top.id, top.impact, top.name);
+
+            // Group projects by parent for hierarchical display
+            let active: Vec<_> = projects.iter().filter(|p| p.status == pm::store::ProjectStatus::Active).collect();
+            let parents: Vec<_> = active.iter().filter(|p| p.parent_id.is_none()).collect();
+            let children: Vec<_> = active.iter().filter(|p| p.parent_id.is_some()).collect();
+
+            for parent in &parents {
+                let subs: Vec<_> = children.iter().filter(|c| c.parent_id == Some(parent.id)).collect();
+                if subs.is_empty() {
+                    // Standalone project (no children) -- show inline
+                    let dag = DagEngine::new(&store, parent.id);
+                    if let Ok(next) = dag.next_phases() {
+                        let top = next.iter().find(|p| p.status == PhaseStatus::InProgress)
+                            .or_else(|| next.iter().find(|p| p.status == PhaseStatus::Pending));
+                        if let Some(top) = top {
+                            let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
+                            println!("  [{}] {} #{} [impact:{}] {}", parent.name, s, top.id, top.impact, top.name);
+                        }
+                        if let Some(p) = next.iter().find(|p| p.status == PhaseStatus::Paused) {
+                            println!("  [{}] PAUSED #{} [impact:{}] {}", parent.name, p.id, p.impact, p.name);
+                        }
                     }
-                    // Show paused as secondary
-                    if let Some(p) = next.iter().find(|p| p.status == PhaseStatus::Paused) {
-                        println!("  [{}] PAUSED #{} [impact:{}] {}", proj.name, p.id, p.impact, p.name);
+                } else {
+                    // Parent with subprojects -- group header
+                    println!("## {}", parent.name);
+                    // Show parent's own phases first
+                    let dag = DagEngine::new(&store, parent.id);
+                    if let Ok(next) = dag.next_phases() {
+                        let top = next.iter().find(|p| p.status == PhaseStatus::InProgress)
+                            .or_else(|| next.iter().find(|p| p.status == PhaseStatus::Pending));
+                        if let Some(top) = top {
+                            let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
+                            println!("  [{}] {} #{} [impact:{}] {}", parent.name, s, top.id, top.impact, top.name);
+                        }
                     }
+                    // Show subprojects indented
+                    for sub in &subs {
+                        let dag = DagEngine::new(&store, sub.id);
+                        if let Ok(next) = dag.next_phases() {
+                            let top = next.iter().find(|p| p.status == PhaseStatus::InProgress)
+                                .or_else(|| next.iter().find(|p| p.status == PhaseStatus::Pending));
+                            if let Some(top) = top {
+                                let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
+                                println!("  [{}/{}] {} #{} [impact:{}] {}", parent.name, sub.name, s, top.id, top.impact, top.name);
+                            }
+                            if let Some(p) = next.iter().find(|p| p.status == PhaseStatus::Paused) {
+                                println!("  [{}/{}] PAUSED #{} [impact:{}] {}", parent.name, sub.name, p.id, p.impact, p.name);
+                            }
+                        }
+                    }
+                    println!();
                 }
             }
             println!("\n## ACTION: Execute the highest-impact item above.");
@@ -81,13 +117,32 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
         Commands::Project { action } => match action {
             ProjectAction::List => {
-                for p in store.list_projects()? {
-                    println!("  {} ({:?}) [alias: {}]", p.name, p.status, p.alias.as_deref().unwrap_or("-"));
+                let all = store.list_projects()?;
+                for p in &all {
+                    let parent_info = if let Some(pid) = p.parent_id {
+                        all.iter().find(|pp| pp.id == pid)
+                            .map(|pp| format!(" [parent: {}]", pp.name))
+                            .unwrap_or_else(|| format!(" [parent: #{}]", pid))
+                    } else {
+                        String::new()
+                    };
+                    println!("  {} ({:?}) [alias: {}]{}", p.name, p.status, p.alias.as_deref().unwrap_or("-"), parent_info);
                 }
             }
-            ProjectAction::Activate { name, alias } => {
-                let p = store.create_project(&name, alias.as_deref())?;
-                println!("Activated: {} (id: {})", p.name, p.id);
+            ProjectAction::Activate { name, alias, parent } => {
+                let parent_id = if let Some(parent_name) = &parent {
+                    let parent_proj = resolve_project(&store, parent_name)
+                        .ok_or(format!("Parent project not found: {}", parent_name))?;
+                    Some(parent_proj.id)
+                } else {
+                    None
+                };
+                let p = store.create_project(&name, alias.as_deref(), parent_id)?;
+                if let Some(pid) = parent_id {
+                    println!("Activated: {} (id: {}, parent: #{})", p.name, p.id, pid);
+                } else {
+                    println!("Activated: {} (id: {})", p.name, p.id);
+                }
             }
             ProjectAction::Pause { name } => {
                 if let Some(p) = resolve_project(&store, &name) {
@@ -624,7 +679,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
 fn import_v2(store: &SqliteStore, path: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let data: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-    let proj = store.create_project(name, None)?;
+    let proj = store.create_project(name, None, None)?;
     println!("Created project: {} (id: {})", name, proj.id);
 
     let mut phase_map = std::collections::HashMap::new();

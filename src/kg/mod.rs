@@ -128,7 +128,7 @@ mod tests {
 
     fn setup() -> SqliteStore {
         let store = SqliteStore::in_memory().unwrap();
-        let proj = store.create_project("test", None).unwrap();
+        let proj = store.create_project("test", None, None).unwrap();
         let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
         let exp = store.create_experiment(Some(phase.id), "exp1").unwrap();
         

@@ -103,7 +103,7 @@ mod tests {
 
     fn setup() -> (SqliteStore, i64) {
         let store = SqliteStore::in_memory().unwrap();
-        let proj = store.create_project("test", None).unwrap();
+        let proj = store.create_project("test", None, None).unwrap();
         (store, proj.id)
     }
 

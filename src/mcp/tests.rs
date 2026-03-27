@@ -9,7 +9,7 @@ fn test_store() -> SqliteStore {
 
 // Helper: create a project with a phase and experiment
 fn setup_project(store: &SqliteStore) -> (i64, i64, i64) {
-    let proj = store.create_project("test-project", Some("tp")).unwrap();
+    let proj = store.create_project("test-project", Some("tp"), None).unwrap();
     let phase = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "Exp 1").unwrap();
     (proj.id, phase.id, exp.id)
@@ -247,7 +247,7 @@ fn test_scaffold_shows_rollup() {
 #[test]
 fn test_next_shows_phase_dependencies() {
     let store = test_store();
-    let proj = store.create_project("dep-test", None).unwrap();
+    let proj = store.create_project("dep-test", None, None).unwrap();
     let p1 = store.create_phase(proj.id, "Base Phase", 40, &[]).unwrap();
     let _p2 = store.create_phase(proj.id, "Dependent Phase", 30, &[p1.id]).unwrap();
     // Complete p1 so p2 becomes actionable
@@ -482,7 +482,7 @@ fn test_lit_add_with_all_new_fields() {
 #[test]
 fn test_lit_status_lifecycle() {
     let store = test_store();
-    let proj = store.create_project("test-project", Some("tp")).unwrap();
+    let proj = store.create_project("test-project", Some("tp"), None).unwrap();
     let lit = store.create_literature(proj.id, "Paper", Some("1234.56789"), None, None, Some("Author"), None, None, None, None, None).unwrap();
     assert_eq!(lit.status, Some("unread".to_string()));
 
@@ -510,7 +510,7 @@ fn test_lit_status_lifecycle() {
 #[test]
 fn test_lit_status_invalid_status() {
     let store = test_store();
-    let proj = store.create_project("test-project", Some("tp")).unwrap();
+    let proj = store.create_project("test-project", Some("tp"), None).unwrap();
     let lit = store.create_literature(proj.id, "Paper", Some("1234.56789"), None, None, Some("Author"), None, None, None, None, None).unwrap();
     let result = super::nodes::tool_lit_status(&store, lit.id, "foobar");
     assert!(result.contains("VALIDATION ERROR"));
@@ -730,7 +730,7 @@ fn test_orphan_detection_excludes_linked_nodes() {
 #[test]
 fn test_lit_add_edge_suggestions() {
     let store = test_store();
-    let proj = store.create_project("test-project", Some("tp")).unwrap();
+    let proj = store.create_project("test-project", Some("tp"), None).unwrap();
     // Create phase with a matching word
     store.create_phase(proj.id, "Kernel Optimization Research", 40, &[]).unwrap();
     let _exp = store.create_experiment(None, "Exp1").unwrap();
@@ -753,7 +753,7 @@ fn test_lit_add_edge_suggestions() {
 #[test]
 fn test_constraint_add_edge_suggestions() {
     let store = test_store();
-    let proj = store.create_project("test-project", Some("tp")).unwrap();
+    let proj = store.create_project("test-project", Some("tp"), None).unwrap();
     let phase = store.create_phase(proj.id, "VRAM Optimization Phase", 40, &[]).unwrap();
     let _exp = store.create_experiment(Some(phase.id), "Pending experiment").unwrap();
 
@@ -806,7 +806,7 @@ fn test_finding_suggests_experiment_and_literature_edges() {
 #[test]
 fn test_dispatch_pm_lit_status() {
     let store = test_store();
-    let proj = store.create_project("test-project", Some("tp")).unwrap();
+    let proj = store.create_project("test-project", Some("tp"), None).unwrap();
     let lit = store.create_literature(proj.id, "Paper", Some("1234.5"), None, None, Some("Auth"), None, None, None, None, None).unwrap();
     let args = serde_json::json!({
         "literature_id": lit.id,
@@ -814,4 +814,46 @@ fn test_dispatch_pm_lit_status() {
     });
     let result = super::dispatch_tool(&store, "pm_lit_status", &args);
     assert!(result.contains("status updated to 'read'"), "result: {}", result);
+}
+
+// === Issue #18: Subproject Dashboard Grouping ===
+
+#[test]
+fn test_dashboard_groups_subprojects_under_parent() {
+    let store = test_store();
+    let parent = store.create_project("home-cloud", None, None).unwrap();
+    let child = store.create_project("execution-engine", None, Some(parent.id)).unwrap();
+    store.create_phase(child.id, "Refactor EE", 40, &[]).unwrap();
+    let result = super::dashboard::tool_dashboard(&store);
+    assert!(result.contains("## home-cloud"), "Should have parent header: {}", result);
+    assert!(result.contains("[home-cloud/execution-engine]"), "Should show parent/child format: {}", result);
+}
+
+#[test]
+fn test_dashboard_standalone_project_no_group_header() {
+    let store = test_store();
+    store.create_project("standalone", None, None).unwrap();
+    let result = super::dashboard::tool_dashboard(&store);
+    // Standalone projects should NOT get a "##" header
+    assert!(!result.contains("## standalone"), "Standalone should not have group header: {}", result);
+}
+
+#[test]
+fn test_dashboard_mixed_standalone_and_grouped() {
+    let store = test_store();
+    // Standalone project
+    let standalone = store.create_project("volta-renaissance", None, None).unwrap();
+    store.create_phase(standalone.id, "Phase 1", 50, &[]).unwrap();
+    // Parent with subprojects
+    let parent = store.create_project("home-cloud", None, None).unwrap();
+    let child1 = store.create_project("execution-engine", None, Some(parent.id)).unwrap();
+    let child2 = store.create_project("infrastructure", None, Some(parent.id)).unwrap();
+    store.create_phase(child1.id, "EE Phase", 30, &[]).unwrap();
+    store.create_phase(child2.id, "Infra Phase", 20, &[]).unwrap();
+
+    let result = super::dashboard::tool_dashboard(&store);
+    assert!(result.contains("[volta-renaissance]"), "Should show standalone: {}", result);
+    assert!(result.contains("## home-cloud"), "Should have parent header: {}", result);
+    assert!(result.contains("[home-cloud/execution-engine]"), "Should show child1: {}", result);
+    assert!(result.contains("[home-cloud/infrastructure]"), "Should show child2: {}", result);
 }
