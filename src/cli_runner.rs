@@ -136,6 +136,30 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 FindingAction::Add { text, experiment } => {
                     let f = store.create_finding(experiment, &text)?;
                     println!("Finding #{} added", f.id);
+
+                    // KG quality hints: suggest related findings for edge creation
+                    if let Some(eid) = experiment {
+                        let siblings = store.list_findings(Some(eid)).unwrap_or_default();
+                        let others: Vec<_> = siblings.iter().filter(|s| s.id != f.id).collect();
+                        if !others.is_empty() {
+                            println!("\n  Nearby findings (same experiment #{}):", eid);
+                            for s in others.iter().take(5) {
+                                let trunc = if s.text.len() > 70 { &s.text[..70] } else { &s.text };
+                                println!("    F#{}: {}", s.id, trunc);
+                            }
+                            println!("\n  Suggest edges? Examples:");
+                            println!("    pm kg {} edge f {} f {} supports", _proj.name, f.id, others[0].id);
+                            if others.len() > 1 {
+                                println!("    pm kg {} edge f {} f {} contradicts", _proj.name, f.id, others[1].id);
+                            }
+                        }
+                    }
+
+                    // Check text length for lab report quality
+                    if f.text.len() < 200 {
+                        println!("\n  WARNING: Finding text is {} chars (< 200). Consider expanding to lab report format:", f.text.len());
+                        println!("    Methodology | Data | Analysis | Conclusions | Edges");
+                    }
                 }
                 FindingAction::List { experiment } => {
                     let findings = store.list_findings(experiment)?;
