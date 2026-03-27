@@ -28,18 +28,30 @@ impl<'a, S: Store> KgEngine<'a, S> {
         match nt {
             NodeType::Finding => self.store.get_finding(id).map(|f| {
                 let t = &f.text; if t.len() > 80 { format!("{}...", &t[..80]) } else { t.clone() }
-            }).unwrap_or_default(),
-            NodeType::Experiment => self.store.get_experiment(id).map(|e| e.name).unwrap_or_default(),
-            NodeType::Decision => self.store.list_decisions(0).ok()
-                .and_then(|ds| ds.into_iter().find(|d| d.id == id))
-                .map(|d| d.what).unwrap_or_default(),
-            NodeType::Phase => self.store.get_phase(id).map(|p| p.name).unwrap_or_default(),
-            NodeType::Research => self.store.get_research(id).map(|r| r.name).unwrap_or_default(),
-            NodeType::Principle => self.store.list_principles(0).ok()
-                .and_then(|ps| ps.into_iter().find(|p| p.id == id))
-                .map(|p| { let t = &p.text; if t.len() > 80 { format!("{}...", &t[..80]) } else { t.clone() } })
-                .unwrap_or_default(),
-            _ => format!("{:?} #{}", nt, id),
+            }).unwrap_or_else(|_| format!("Finding #{}", id)),
+            NodeType::Experiment => self.store.get_experiment(id).map(|e| e.name)
+                .unwrap_or_else(|_| format!("Experiment #{}", id)),
+            NodeType::Decision => self.store.get_decision(id).map(|d| {
+                let t = &d.what; if t.len() > 60 { format!("{}...", &t[..60]) } else { t.clone() }
+            }).unwrap_or_else(|_| format!("Decision #{}", id)),
+            NodeType::Phase => self.store.get_phase(id).map(|p| p.name)
+                .unwrap_or_else(|_| format!("Phase #{}", id)),
+            NodeType::Research => self.store.get_research(id).map(|r| r.name)
+                .unwrap_or_else(|_| format!("Research #{}", id)),
+            NodeType::Principle => self.store.get_principle(id).map(|p| {
+                let t = &p.text; if t.len() > 80 { format!("{}...", &t[..80]) } else { t.clone() }
+            }).unwrap_or_else(|_| format!("Principle #{}", id)),
+            NodeType::Hypothesis => self.store.get_hypothesis(id).map(|h| {
+                let t = &h.text; if t.len() > 80 { format!("{}...", &t[..80]) } else { t.clone() }
+            }).unwrap_or_else(|_| format!("Hypothesis #{}", id)),
+            NodeType::Constraint => self.store.get_constraint(id).map(|c| {
+                let t = &c.text; if t.len() > 80 { format!("{}...", &t[..80]) } else { t.clone() }
+            }).unwrap_or_else(|_| format!("Constraint #{}", id)),
+            NodeType::Literature => self.store.get_literature(id).map(|l| l.title)
+                .unwrap_or_else(|_| format!("Literature #{}", id)),
+            NodeType::Feedback => self.store.get_feedback_entry(id).map(|f| {
+                let t = &f.text; if t.len() > 80 { format!("{}...", &t[..80]) } else { t.clone() }
+            }).unwrap_or_else(|_| format!("Feedback #{}", id)),
         }
     }
 

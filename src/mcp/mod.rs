@@ -756,10 +756,15 @@ fn tool_add_edge(store: &SqliteStore, st: &str, si: i64, tt: &str, ti: i64, rel:
         "related" => EdgeType::RelatedTo,
         "produced" => EdgeType::ProducedBy,
         "cited" => EdgeType::CitedIn,
+        "contains" => EdgeType::Contains,
+        "derived_from" => EdgeType::DerivedFrom,
+        "tested_by" => EdgeType::TestedBy,
+        "violated_by" => EdgeType::ViolatedBy,
         _ => return format!("Unknown relation: {}", rel),
     };
     match store.create_edge(source_type, si, target_type, ti, relation) {
         Ok(e) => format!("Edge #{} added: {:?} #{} --{:?}--> {:?} #{}", e.id, e.source_type, si, e.relation, e.target_type, ti),
+        Err(crate::store::StoreError::Constraint(msg)) => format!("\u{274c} CONSTRAINT ERROR: {}", msg),
         Err(e) => format!("Error: {}", e),
     }
 }

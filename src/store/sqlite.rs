@@ -1,4 +1,5 @@
 use super::*;
+use super::migrations;
 use rusqlite::{Connection, params};
 use chrono::NaiveDateTime;
 
@@ -12,6 +13,12 @@ impl SqliteStore {
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         let store = Self { conn };
         store.init_schema()?;
+        if let Err(e) = migrations::migrate(&store.conn) {
+            return Err(StoreError::Db(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                Some(format!("migration failed: {}", e)),
+            )));
+        }
         Ok(store)
     }
 
@@ -237,8 +244,31 @@ impl SqliteStore {
             "DependsOn" => EdgeType::DependsOn,
             "RelatedTo" => EdgeType::RelatedTo,
             "CitedIn" => EdgeType::CitedIn,
+            "Contains" => EdgeType::Contains,
+            "DerivedFrom" => EdgeType::DerivedFrom,
+            "TestedBy" => EdgeType::TestedBy,
+            "ViolatedBy" => EdgeType::ViolatedBy,
             _ => EdgeType::RelatedTo,
         }
+    }
+
+    pub fn node_exists_check(&self, node_type: &str, node_id: i64) -> Result<bool> {
+        let table = match node_type {
+            "Finding" => "findings",
+            "Experiment" => "experiments",
+            "Decision" => "decisions",
+            "Phase" => "phases",
+            "Research" => "research",
+            "Principle" => "principles",
+            "Hypothesis" => "hypotheses",
+            "Constraint" => "constraints_tbl",
+            "Literature" => "literature",
+            "Feedback" => "feedback",
+            _ => return Err(StoreError::Constraint(format!("Unknown node type: {}", node_type))),
+        };
+        let sql = format!("SELECT EXISTS(SELECT 1 FROM {} WHERE id = ?1)", table);
+        self.conn.query_row(&sql, params![node_id], |row| row.get(0))
+            .map_err(StoreError::Db)
     }
 }
 
@@ -254,7 +284,7 @@ impl Store for SqliteStore {
 
     fn get_project(&self, id: i64) -> Result<Project> {
         self.conn.query_row(
-            "SELECT id, name, alias, status, created_at FROM projects WHERE id = ?1",
+            "SELECT id, name, alias, status, created_at, parent_id FROM projects WHERE id = ?1",
             params![id],
             |row| Ok(Project {
                 id: row.get(0)?,
@@ -262,6 +292,7 @@ impl Store for SqliteStore {
                 alias: row.get(2)?,
                 status: Self::parse_project_status(&row.get::<_, String>(3)?),
                 created_at: Self::parse_dt(&row.get::<_, String>(4)?),
+                parent_id: row.get(5)?,
             }),
         ).map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "project".into(), id },
@@ -270,13 +301,14 @@ impl Store for SqliteStore {
     }
 
     fn list_projects(&self) -> Result<Vec<Project>> {
-        let mut stmt = self.conn.prepare("SELECT id, name, alias, status, created_at FROM projects ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, name, alias, status, created_at, parent_id FROM projects ORDER BY id")?;
         let rows = stmt.query_map([], |row| Ok(Project {
             id: row.get(0)?,
             name: row.get(1)?,
             alias: row.get(2)?,
             status: SqliteStore::parse_project_status(&row.get::<_, String>(3)?),
             created_at: SqliteStore::parse_dt(&row.get::<_, String>(4)?),
+            parent_id: row.get(5)?,
         }))?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
@@ -302,17 +334,26 @@ impl Store for SqliteStore {
 
     fn get_phase(&self, id: i64) -> Result<Phase> {
         let phase = self.conn.query_row(
-            "SELECT id, project_id, name, status, impact, created_at FROM phases WHERE id = ?1",
+            "SELECT id, project_id, name, status, impact, created_at, description, goals, success_criteria, started_at, completed_at FROM phases WHERE id = ?1",
             params![id],
-            |row| Ok(Phase {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                name: row.get(2)?,
-                status: SqliteStore::parse_phase_status(&row.get::<_, String>(3)?),
-                impact: row.get(4)?,
-                depends_on: vec![],
-                created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?),
-            }),
+            |row| {
+                let started_at: Option<String> = row.get(9)?;
+                let completed_at: Option<String> = row.get(10)?;
+                Ok(Phase {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    name: row.get(2)?,
+                    status: SqliteStore::parse_phase_status(&row.get::<_, String>(3)?),
+                    impact: row.get(4)?,
+                    depends_on: vec![],
+                    description: row.get(6)?,
+                    goals: row.get(7)?,
+                    success_criteria: row.get(8)?,
+                    started_at: started_at.map(|s| SqliteStore::parse_dt(&s)),
+                    completed_at: completed_at.map(|s| SqliteStore::parse_dt(&s)),
+                    created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?),
+                })
+            },
         ).map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "phase".into(), id },
             o => StoreError::Db(o),
@@ -422,6 +463,31 @@ impl Store for SqliteStore {
         let st = format!("{:?}", source_type);
         let tt = format!("{:?}", target_type);
         let rel = format!("{:?}", relation);
+
+        // Verify source node exists
+        if !self.node_exists_check(&st, source_id)? {
+            return Err(StoreError::Constraint(format!(
+                "{} #{} does not exist", st, source_id
+            )));
+        }
+        // Verify target node exists
+        if !self.node_exists_check(&tt, target_id)? {
+            return Err(StoreError::Constraint(format!(
+                "{} #{} does not exist", tt, target_id
+            )));
+        }
+
+        // Check for duplicate edge
+        let existing = self.conn.query_row(
+            "SELECT id FROM edges WHERE source_type = ?1 AND source_id = ?2 AND target_type = ?3 AND target_id = ?4 AND relation = ?5",
+            params![st, source_id, tt, target_id, rel],
+            |row| row.get::<_, i64>(0),
+        );
+        if let Ok(existing_id) = existing {
+            // Return existing edge instead of creating duplicate
+            return Ok(Edge { id: existing_id, source_type, source_id, target_type, target_id, relation });
+        }
+
         self.conn.execute(
             "INSERT INTO edges (source_type, source_id, target_type, target_id, relation) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![st, source_id, tt, target_id, rel],
@@ -490,6 +556,7 @@ impl Store for SqliteStore {
         Ok(Decision {
             id,
             experiment_id,
+            project_id: None,
             what: what.to_string(),
             why: why.map(|s| s.to_string()),
             created_at: Self::parse_dt(&now),
@@ -501,16 +568,16 @@ impl Store for SqliteStore {
         let s = match scope { PrincipleScope::Universal => "universal", PrincipleScope::Project => "project", PrincipleScope::Phase => "phase" };
         self.conn.execute("INSERT INTO principles (project_id, scope, text, status, created_at) VALUES (?1, ?2, ?3, 'active', ?4)", params![project_id, s, text, now])?;
         let id = self.conn.last_insert_rowid();
-        Ok(Principle { id, project_id, scope, text: text.to_string(), status: PrincipleStatus::Active, superseded_by: None, created_at: Self::parse_dt(&now) })
+        Ok(Principle { id, project_id, scope, text: text.to_string(), status: PrincipleStatus::Active, superseded_by: None, rationale: None, enforcement_level: None, created_at: Self::parse_dt(&now) })
     }
     fn list_principles(&self, project_id: i64) -> Result<Vec<Principle>> {
-        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, status, superseded_by, created_at FROM principles WHERE project_id = ?1 ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, status, superseded_by, created_at, rationale, enforcement_level FROM principles WHERE project_id = ?1 ORDER BY id")?;
         let rows = stmt.query_map(params![project_id], |row| {
             let scope_str: String = row.get(2)?;
             let scope = match scope_str.as_str() { "universal" => PrincipleScope::Universal, "phase" => PrincipleScope::Phase, _ => PrincipleScope::Project };
             let status_str: String = row.get(4)?;
             let status = match status_str.as_str() { "superseded" => PrincipleStatus::Superseded, "refined" => PrincipleStatus::Refined, _ => PrincipleStatus::Active };
-            Ok(Principle { id: row.get(0)?, project_id: row.get(1)?, scope, text: row.get(3)?, status, superseded_by: row.get(5)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+            Ok(Principle { id: row.get(0)?, project_id: row.get(1)?, scope, text: row.get(3)?, status, superseded_by: row.get(5)?, rationale: row.get(7)?, enforcement_level: row.get(8)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
@@ -524,23 +591,23 @@ impl Store for SqliteStore {
         let now = Self::now();
         self.conn.execute("INSERT INTO hypotheses (phase_id, text, status, created_at) VALUES (?1, ?2, 'proposed', ?3)", params![phase_id, text, now])?;
         let id = self.conn.last_insert_rowid();
-        Ok(Hypothesis { id, phase_id, text: text.to_string(), status: HypothesisStatus::Proposed, experiment_id: None, finding_id: None, created_at: Self::parse_dt(&now) })
+        Ok(Hypothesis { id, phase_id, text: text.to_string(), status: HypothesisStatus::Proposed, experiment_id: None, finding_id: None, prediction: None, criteria: None, confidence: None, created_at: Self::parse_dt(&now) })
     }
     fn list_hypotheses(&self, phase_id: Option<i64>) -> Result<Vec<Hypothesis>> {
-        let sql = if phase_id.is_some() { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at FROM hypotheses WHERE phase_id = ?1 ORDER BY id" }
-                  else { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at FROM hypotheses ORDER BY id" };
+        let sql = if phase_id.is_some() { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at, prediction, criteria, confidence FROM hypotheses WHERE phase_id = ?1 ORDER BY id" }
+                  else { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at, prediction, criteria, confidence FROM hypotheses ORDER BY id" };
         let mut stmt = self.conn.prepare(sql)?;
         let rows = if let Some(pid) = phase_id {
             stmt.query_map(params![pid], |row| {
                 let status_str: String = row.get(3)?;
                 let status = match status_str.as_str() { "testing" => HypothesisStatus::Testing, "confirmed" => HypothesisStatus::Confirmed, "refuted" => HypothesisStatus::Refuted, _ => HypothesisStatus::Proposed };
-                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, prediction: row.get(7)?, criteria: row.get(8)?, confidence: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
             })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
         } else {
             stmt.query_map([], |row| {
                 let status_str: String = row.get(3)?;
                 let status = match status_str.as_str() { "testing" => HypothesisStatus::Testing, "confirmed" => HypothesisStatus::Confirmed, "refuted" => HypothesisStatus::Refuted, _ => HypothesisStatus::Proposed };
-                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, prediction: row.get(7)?, criteria: row.get(8)?, confidence: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
             })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
         };
         Ok(rows)
@@ -556,14 +623,14 @@ impl Store for SqliteStore {
         let s = match scope { ConstraintScope::Hardware => "hardware", ConstraintScope::Software => "software", ConstraintScope::Process => "process" };
         self.conn.execute("INSERT INTO constraints_tbl (project_id, scope, text, source, created_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![project_id, s, text, source, now])?;
         let id = self.conn.last_insert_rowid();
-        Ok(Constraint { id, project_id, scope, text: text.to_string(), source: source.map(|s| s.to_string()), created_at: Self::parse_dt(&now) })
+        Ok(Constraint { id, project_id, scope, text: text.to_string(), source: source.map(|s| s.to_string()), severity: None, resource: None, measured_value: None, expires_at: None, created_at: Self::parse_dt(&now) })
     }
     fn list_constraints(&self, project_id: i64) -> Result<Vec<Constraint>> {
-        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, source, created_at FROM constraints_tbl WHERE project_id = ?1 ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, source, created_at, severity, resource, measured_value, expires_at FROM constraints_tbl WHERE project_id = ?1 ORDER BY id")?;
         let rows = stmt.query_map(params![project_id], |row| {
             let scope_str: String = row.get(2)?;
             let scope = match scope_str.as_str() { "software" => ConstraintScope::Software, "process" => ConstraintScope::Process, _ => ConstraintScope::Hardware };
-            Ok(Constraint { id: row.get(0)?, project_id: row.get(1)?, scope, text: row.get(3)?, source: row.get(4)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?) })
+            Ok(Constraint { id: row.get(0)?, project_id: row.get(1)?, scope, text: row.get(3)?, source: row.get(4)?, severity: row.get(6)?, resource: row.get(7)?, measured_value: row.get(8)?, expires_at: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?) })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
@@ -572,12 +639,12 @@ impl Store for SqliteStore {
         let now = Self::now();
         self.conn.execute("INSERT INTO literature (project_id, title, arxiv_id, relevance, key_findings, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![project_id, title, arxiv_id, relevance, key_findings, now])?;
         let id = self.conn.last_insert_rowid();
-        Ok(LiteratureEntry { id, project_id, arxiv_id: arxiv_id.map(|s| s.to_string()), title: title.to_string(), authors: None, relevance: relevance.map(|s| s.to_string()), key_findings: key_findings.map(|s| s.to_string()), url: None, created_at: Self::parse_dt(&now) })
+        Ok(LiteratureEntry { id, project_id, arxiv_id: arxiv_id.map(|s| s.to_string()), title: title.to_string(), authors: None, relevance: relevance.map(|s| s.to_string()), key_findings: key_findings.map(|s| s.to_string()), url: None, venue: None, year: None, code_url: None, file_path: None, status: None, summary: None, created_at: Self::parse_dt(&now) })
     }
     fn list_literature(&self, project_id: i64) -> Result<Vec<LiteratureEntry>> {
-        let mut stmt = self.conn.prepare("SELECT id, project_id, arxiv_id, title, authors, relevance, key_findings, url, created_at FROM literature WHERE project_id = ?1 ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, project_id, arxiv_id, title, authors, relevance, key_findings, url, created_at, venue, year, code_url, file_path, status, summary FROM literature WHERE project_id = ?1 ORDER BY id")?;
         let rows = stmt.query_map(params![project_id], |row| {
-            Ok(LiteratureEntry { id: row.get(0)?, project_id: row.get(1)?, arxiv_id: row.get(2)?, title: row.get(3)?, authors: row.get(4)?, relevance: row.get(5)?, key_findings: row.get(6)?, url: row.get(7)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(8)?) })
+            Ok(LiteratureEntry { id: row.get(0)?, project_id: row.get(1)?, arxiv_id: row.get(2)?, title: row.get(3)?, authors: row.get(4)?, relevance: row.get(5)?, key_findings: row.get(6)?, url: row.get(7)?, venue: row.get(9)?, year: row.get(10)?, code_url: row.get(11)?, file_path: row.get(12)?, status: row.get(13)?, summary: row.get(14)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(8)?) })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
@@ -601,7 +668,7 @@ impl Store for SqliteStore {
 
     fn list_decisions(&self, project_id: i64) -> Result<Vec<Decision>> {
         let mut stmt = self.conn.prepare(
-            "SELECT d.id, d.experiment_id, d.what, d.why, d.created_at FROM decisions d              LEFT JOIN experiments e ON d.experiment_id = e.id              LEFT JOIN phases p ON e.phase_id = p.id              WHERE d.experiment_id IS NULL OR p.project_id = ?1              ORDER BY d.id"
+            "SELECT d.id, d.experiment_id, d.what, d.why, d.created_at, d.project_id FROM decisions d              LEFT JOIN experiments e ON d.experiment_id = e.id              LEFT JOIN phases p ON e.phase_id = p.id              WHERE d.project_id = ?1 OR (d.project_id IS NULL AND (d.experiment_id IS NULL OR p.project_id = ?1))              ORDER BY d.id"
         )?;
         let rows = stmt.query_map([project_id], |row| Ok(Decision {
             id: row.get(0)?,
@@ -609,6 +676,7 @@ impl Store for SqliteStore {
             what: row.get(2)?,
             why: row.get(3)?,
             created_at: SqliteStore::parse_dt(&row.get::<_, String>(4)?),
+            project_id: row.get(5)?,
         }))?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
@@ -655,5 +723,102 @@ impl Store for SqliteStore {
         self.conn.execute("UPDATE research SET status = ?1, report = ?2 WHERE id = ?3",
             params![Self::research_status_str(&status), report, id])?;
         Ok(())
+    }
+
+    fn node_exists(&self, node_type: &str, node_id: i64) -> Result<bool> {
+        self.node_exists_check(node_type, node_id)
+    }
+
+    fn get_decision(&self, id: i64) -> Result<Decision> {
+        self.conn.query_row(
+            "SELECT id, experiment_id, what, why, created_at, project_id FROM decisions WHERE id = ?1",
+            params![id],
+            |row| Ok(Decision {
+                id: row.get(0)?,
+                experiment_id: row.get(1)?,
+                what: row.get(2)?,
+                why: row.get(3)?,
+                created_at: SqliteStore::parse_dt(&row.get::<_, String>(4)?),
+                project_id: row.get(5)?,
+            }),
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "decision".into(), id },
+            o => StoreError::Db(o),
+        })
+    }
+
+    fn get_principle(&self, id: i64) -> Result<Principle> {
+        self.conn.query_row(
+            "SELECT id, project_id, scope, text, status, superseded_by, created_at, rationale, enforcement_level FROM principles WHERE id = ?1",
+            params![id],
+            |row| {
+                let scope_str: String = row.get(2)?;
+                let scope = match scope_str.as_str() { "universal" => PrincipleScope::Universal, "phase" => PrincipleScope::Phase, _ => PrincipleScope::Project };
+                let status_str: String = row.get(4)?;
+                let status = match status_str.as_str() { "superseded" => PrincipleStatus::Superseded, "refined" => PrincipleStatus::Refined, _ => PrincipleStatus::Active };
+                Ok(Principle { id: row.get(0)?, project_id: row.get(1)?, scope, text: row.get(3)?, status, superseded_by: row.get(5)?, rationale: row.get(7)?, enforcement_level: row.get(8)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+            },
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "principle".into(), id },
+            o => StoreError::Db(o),
+        })
+    }
+
+    fn get_hypothesis(&self, id: i64) -> Result<Hypothesis> {
+        self.conn.query_row(
+            "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at, prediction, criteria, confidence FROM hypotheses WHERE id = ?1",
+            params![id],
+            |row| {
+                let status_str: String = row.get(3)?;
+                let status = match status_str.as_str() { "testing" => HypothesisStatus::Testing, "confirmed" => HypothesisStatus::Confirmed, "refuted" => HypothesisStatus::Refuted, _ => HypothesisStatus::Proposed };
+                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, prediction: row.get(7)?, criteria: row.get(8)?, confidence: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+            },
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "hypothesis".into(), id },
+            o => StoreError::Db(o),
+        })
+    }
+
+    fn get_constraint(&self, id: i64) -> Result<Constraint> {
+        self.conn.query_row(
+            "SELECT id, project_id, scope, text, source, created_at, severity, resource, measured_value, expires_at FROM constraints_tbl WHERE id = ?1",
+            params![id],
+            |row| {
+                let scope_str: String = row.get(2)?;
+                let scope = match scope_str.as_str() { "software" => ConstraintScope::Software, "process" => ConstraintScope::Process, _ => ConstraintScope::Hardware };
+                Ok(Constraint { id: row.get(0)?, project_id: row.get(1)?, scope, text: row.get(3)?, source: row.get(4)?, severity: row.get(6)?, resource: row.get(7)?, measured_value: row.get(8)?, expires_at: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?) })
+            },
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "constraint".into(), id },
+            o => StoreError::Db(o),
+        })
+    }
+
+    fn get_literature(&self, id: i64) -> Result<LiteratureEntry> {
+        self.conn.query_row(
+            "SELECT id, project_id, arxiv_id, title, authors, relevance, key_findings, url, created_at, venue, year, code_url, file_path, status, summary FROM literature WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(LiteratureEntry { id: row.get(0)?, project_id: row.get(1)?, arxiv_id: row.get(2)?, title: row.get(3)?, authors: row.get(4)?, relevance: row.get(5)?, key_findings: row.get(6)?, url: row.get(7)?, venue: row.get(9)?, year: row.get(10)?, code_url: row.get(11)?, file_path: row.get(12)?, status: row.get(13)?, summary: row.get(14)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(8)?) })
+            },
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "literature".into(), id },
+            o => StoreError::Db(o),
+        })
+    }
+
+    fn get_feedback_entry(&self, id: i64) -> Result<FeedbackEntry> {
+        self.conn.query_row(
+            "SELECT id, project_id, text, category, created_at FROM feedback WHERE id = ?1",
+            params![id],
+            |row| {
+                let cat_str: String = row.get(3)?;
+                let cat = match cat_str.as_str() { "confirmation" => FeedbackCategory::Confirmation, _ => FeedbackCategory::Correction };
+                Ok(FeedbackEntry { id: row.get(0)?, project_id: row.get(1)?, text: row.get(2)?, category: cat, created_at: SqliteStore::parse_dt(&row.get::<_, String>(4)?) })
+            },
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "feedback".into(), id },
+            o => StoreError::Db(o),
+        })
     }
 }

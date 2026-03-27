@@ -92,6 +92,10 @@ pub enum EdgeType {
     DependsOn,
     RelatedTo,
     CitedIn,
+    Contains,
+    DerivedFrom,
+    TestedBy,
+    ViolatedBy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -116,6 +120,7 @@ pub struct Project {
     pub name: String,
     pub alias: Option<String>,
     pub status: ProjectStatus,
+    pub parent_id: Option<i64>,
     pub created_at: NaiveDateTime,
 }
 
@@ -127,6 +132,11 @@ pub struct Phase {
     pub status: PhaseStatus,
     pub impact: i32,
     pub depends_on: Vec<i64>,
+    pub description: Option<String>,
+    pub goals: Option<String>,
+    pub success_criteria: Option<String>,
+    pub started_at: Option<NaiveDateTime>,
+    pub completed_at: Option<NaiveDateTime>,
     pub created_at: NaiveDateTime,
 }
 
@@ -164,6 +174,7 @@ pub struct Edge {
 pub struct Decision {
     pub id: i64,
     pub experiment_id: Option<i64>,
+    pub project_id: Option<i64>,
     pub what: String,
     pub why: Option<String>,
     pub created_at: NaiveDateTime,
@@ -188,6 +199,8 @@ pub struct Principle {
     pub text: String,
     pub status: PrincipleStatus,
     pub superseded_by: Option<i64>,
+    pub rationale: Option<String>,
+    pub enforcement_level: Option<String>,
     pub created_at: NaiveDateTime,
 }
 
@@ -199,6 +212,9 @@ pub struct Hypothesis {
     pub status: HypothesisStatus,
     pub experiment_id: Option<i64>,
     pub finding_id: Option<i64>,
+    pub prediction: Option<String>,
+    pub criteria: Option<String>,
+    pub confidence: Option<f64>,
     pub created_at: NaiveDateTime,
 }
 
@@ -209,6 +225,10 @@ pub struct Constraint {
     pub scope: ConstraintScope,
     pub text: String,
     pub source: Option<String>,
+    pub severity: Option<String>,
+    pub resource: Option<String>,
+    pub measured_value: Option<String>,
+    pub expires_at: Option<String>,
     pub created_at: NaiveDateTime,
 }
 
@@ -222,6 +242,12 @@ pub struct LiteratureEntry {
     pub relevance: Option<String>,
     pub key_findings: Option<String>,
     pub url: Option<String>,
+    pub venue: Option<String>,
+    pub year: Option<i32>,
+    pub code_url: Option<String>,
+    pub file_path: Option<String>,
+    pub status: Option<String>,
+    pub summary: Option<String>,
     pub created_at: NaiveDateTime,
 }
 
@@ -297,8 +323,20 @@ pub trait Store {
     // Feedback
     fn create_feedback(&self, project_id: i64, text: &str, category: FeedbackCategory) -> Result<FeedbackEntry>;
     fn list_feedback(&self, project_id: i64) -> Result<Vec<FeedbackEntry>>;
+
+    // Node existence check
+    fn node_exists(&self, node_type: &str, node_id: i64) -> Result<bool>;
+
+    // Get-by-id methods
+    fn get_decision(&self, id: i64) -> Result<Decision>;
+    fn get_principle(&self, id: i64) -> Result<Principle>;
+    fn get_hypothesis(&self, id: i64) -> Result<Hypothesis>;
+    fn get_constraint(&self, id: i64) -> Result<Constraint>;
+    fn get_literature(&self, id: i64) -> Result<LiteratureEntry>;
+    fn get_feedback_entry(&self, id: i64) -> Result<FeedbackEntry>;
 }
 
 #[cfg(test)]
 mod tests;
 pub mod sqlite;
+pub mod migrations;
