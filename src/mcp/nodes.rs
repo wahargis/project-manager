@@ -832,3 +832,69 @@ pub fn tool_phase_update(store: &SqliteStore, phase_id: i64, description: Option
     let pref2 = phase.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", phase_id));
     format!("Phase {} ({}) fields updated", pref2, phase.name)
 }
+
+/// Compound research step: auto-routes a finding to the best active experiment.
+/// Accepts project name + finding text, finds the highest-impact in-progress phase,
+/// picks its most recent pending/active experiment, and logs the finding there.
+pub fn tool_research_step(store: &SqliteStore, project_name: &str, text: &str) -> String {
+    let v = crate::validation::validate_finding(text);
+    if !v.is_ok() {
+        return format!("\u{274c} VALIDATION ERROR:\n{}", v.to_mcp_error());
+    }
+
+    // Find project
+    let projects = match store.list_projects() {
+        Ok(p) => p,
+        Err(e) => return format!("Error listing projects: {}", e),
+    };
+    let project = projects.iter().find(|p| {
+        p.name == project_name || p.alias.as_deref() == Some(project_name)
+    });
+    let project = match project {
+        Some(p) => p,
+        None => return format!("Project {} not found. Available: {}", project_name,
+            projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")),
+    };
+
+    // Find highest-impact in-progress phase
+    let phases = match store.list_phases(project.id) {
+        Ok(p) => p,
+        Err(e) => return format!("Error listing phases: {}", e),
+    };
+    let active_phase = phases.iter()
+        .filter(|p| p.status == crate::store::PhaseStatus::InProgress)
+        .max_by_key(|p| p.impact);
+    let active_phase = match active_phase {
+        Some(p) => p,
+        None => {
+            // Fall back to any phase with pending experiments
+            match phases.iter().filter(|p| p.status != crate::store::PhaseStatus::Complete && p.status != crate::store::PhaseStatus::Deprioritized).max_by_key(|p| p.impact) {
+                Some(p) => p,
+                None => return format!("No active phases in project {}", project_name),
+            }
+        }
+    };
+
+    // Find experiments in that phase, prefer pending ones
+    let experiments = match store.list_experiments(Some(active_phase.id)) {
+        Ok(e) => e,
+        Err(e) => return format!("Error listing experiments: {}", e),
+    };
+    let target_exp = experiments.iter()
+        .filter(|e| e.status == crate::store::ExperimentStatus::Pending)
+        .last()  // most recently created
+        .or_else(|| experiments.last());  // fallback to any
+
+    let eid = match target_exp {
+        Some(e) => e.id,
+        None => return format!("No experiments in phase {} (#{}) to route finding to", active_phase.name, active_phase.id),
+    };
+
+    // Delegate to existing tool_log_finding
+    let mut result = format!("Auto-routed to Phase #{} {} → Exp #{}\n\n",
+        active_phase.id, 
+        if active_phase.name.len() > 40 { &active_phase.name[..40] } else { &active_phase.name },
+        eid);
+    result += &tool_log_finding(store, eid, text);
+    result
+}

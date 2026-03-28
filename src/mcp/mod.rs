@@ -221,6 +221,11 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
             nodes::tool_log_finding(store, eid, text)
         },
+        "pm_research_step" => {
+            let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("");
+            let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            nodes::tool_research_step(store, project, text)
+        },
         "pm_decision" => {
             let what = args.get("what").and_then(|v| v.as_str()).unwrap_or("");
             let why = args.get("why").and_then(|v| v.as_str());
@@ -396,8 +401,13 @@ fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "pm_log_finding".into(),
-            description: "Create a finding for an experiment. Min 100 chars required. Returns finding ID + sibling findings for edge suggestions. Warns if no experiment_id (orphan).".into(),
-            input_schema: serde_json::json!({"type": "object", "properties": {"experiment_id": {"type": "integer"}, "text": {"type": "string", "description": "Finding text (min 100 chars). Include: what was observed, conditions, implications."}}, "required": ["text"]}),
+            description: "Create a finding for an experiment. Returns finding ID + sibling findings for edge suggestions.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"experiment_id": {"type": "integer"}, "text": {"type": "string"}}, "required": ["experiment_id", "text"]}),
+        },
+        ToolDef {
+            name: "pm_research_step".into(),
+            description: "Log a finding with auto-routing. Finds the best active experiment in the project and creates the finding there. No experiment_id needed.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string", "description": "Project name"}, "text": {"type": "string", "description": "Finding text"}}, "required": ["project", "text"]}),
         },
         ToolDef {
             name: "pm_decision".into(),
