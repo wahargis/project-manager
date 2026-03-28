@@ -357,7 +357,12 @@ pub fn tool_search(store: &SqliteStore, query: &str) -> String {
                     None => 0.0,
                 };
 
-                let text_match = 1.0_f64;
+                // Text relevance: fraction of query words found in the result text
+                let query_lower = query.to_lowercase();
+                let query_words: Vec<&str> = query_lower.split_whitespace().filter(|w| w.len() >= 2).collect();
+                let result_lower = r.text_excerpt.to_lowercase();
+                let matches = query_words.iter().filter(|w| result_lower.contains(*w)).count();
+                let text_match = if query_words.is_empty() { 1.0 } else { matches as f64 / query_words.len() as f64 };
                 let score = text_match * 1.0
                     + edge_count as f64 * 0.1
                     + evidence_weight as f64 * 0.2

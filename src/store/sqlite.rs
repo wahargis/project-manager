@@ -1668,7 +1668,14 @@ impl Store for SqliteStore {
 
 
     fn text_search(&self, query: &str) -> Result<Vec<SearchResult>> {
-        let pattern = format!("%{}%", query);
+        // Match any individual word for broader recall
+        let query_words: Vec<&str> = query.split_whitespace().filter(|w| w.len() >= 2).collect();
+        let pattern = if query_words.len() > 1 {
+            // Use first significant word for SQL filtering (broad recall)
+            format!("%{}%", query_words[0])
+        } else {
+            format!("%{}%", query)
+        };
         let mut results: Vec<SearchResult> = Vec::new();
 
         // findings.text
