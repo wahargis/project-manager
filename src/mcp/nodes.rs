@@ -11,6 +11,7 @@
 use crate::store::sqlite::SqliteStore;
 use crate::store::{Store, NodeType, EdgeType, HypothesisStatus, ExperimentStatus};
 use crate::validation;
+use crate::analysis::contradictions;
 use std::collections::HashSet;
 
 /// Helper: build the causal guidance section for a response.
@@ -157,6 +158,45 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
             ));
 
             out += &causal_guidance(&auto_edges, &suggestions);
+
+            // Contradiction detection (Layer 1) — scan project findings
+            if let Some(eid_val) = exp_id {
+                if let Ok(exp) = store.get_experiment(eid_val) {
+                    if let Some(phase_id) = exp.phase_id {
+                        if let Ok(phase) = store.get_phase(phase_id) {
+                            let mut cands = Vec::new();
+                            if let Ok(phases) = store.list_phases(phase.project_id) {
+                                for p in &phases {
+                                    if let Ok(exps) = store.list_experiments(Some(p.id)) {
+                                        for e in &exps {
+                                            if let Ok(findings) = store.list_findings(Some(e.id)) {
+                                                for ef in &findings {
+                                                    if ef.id == f.id { continue; }
+                                                    let (score, signals) = contradictions::score_pair(text, &ef.text);
+                                                    if score >= 0.3 {
+                                                        let excerpt = if ef.text.len() > 120 { format!("{}...", &ef.text[..120]) } else { ef.text.clone() };
+                                                        cands.push(contradictions::ContradictionCandidate {
+                                                            node_type: "Finding".to_string(), node_id: ef.id,
+                                                            text_excerpt: excerpt, signal_score: score, signals,
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !cands.is_empty() {
+                                cands.sort_by(|a, b| b.signal_score.partial_cmp(&a.signal_score).unwrap_or(std::cmp::Ordering::Equal));
+                                cands.truncate(5);
+                                let l1 = contradictions::Layer1Result { candidates: cands.clone(), subagent_prompt: Some(contradictions::generate_nli_prompt(text, &cands)) };
+                                out += &contradictions::format_layer1_results(text, &l1);
+                            }
+                        }
+                    }
+                }
+            }
+
             out
         }
         Err(e) => format!("Error: {}", e),
@@ -229,6 +269,45 @@ pub fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experim
             ));
 
             out += &causal_guidance(&auto_edges, &suggestions);
+
+            // Contradiction detection (Layer 1) — scan project findings
+            if let Some(eid_val) = exp_id {
+                if let Ok(exp) = store.get_experiment(eid_val) {
+                    if let Some(phase_id) = exp.phase_id {
+                        if let Ok(phase) = store.get_phase(phase_id) {
+                            let mut cands = Vec::new();
+                            if let Ok(phases) = store.list_phases(phase.project_id) {
+                                for p in &phases {
+                                    if let Ok(exps) = store.list_experiments(Some(p.id)) {
+                                        for e in &exps {
+                                            if let Ok(findings) = store.list_findings(Some(e.id)) {
+                                                for ef in &findings {
+                                                    if ef.id == f.id { continue; }
+                                                    let (score, signals) = contradictions::score_pair(text, &ef.text);
+                                                    if score >= 0.3 {
+                                                        let excerpt = if ef.text.len() > 120 { format!("{}...", &ef.text[..120]) } else { ef.text.clone() };
+                                                        cands.push(contradictions::ContradictionCandidate {
+                                                            node_type: "Finding".to_string(), node_id: ef.id,
+                                                            text_excerpt: excerpt, signal_score: score, signals,
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !cands.is_empty() {
+                                cands.sort_by(|a, b| b.signal_score.partial_cmp(&a.signal_score).unwrap_or(std::cmp::Ordering::Equal));
+                                cands.truncate(5);
+                                let l1 = contradictions::Layer1Result { candidates: cands.clone(), subagent_prompt: Some(contradictions::generate_nli_prompt(text, &cands)) };
+                                out += &contradictions::format_layer1_results(text, &l1);
+                            }
+                        }
+                    }
+                }
+            }
+
             out
         }
         Err(e) => format!("Error: {}", e),
@@ -502,6 +581,45 @@ pub fn tool_hyp_update(store: &SqliteStore, hid: i64, status_str: &str, experime
             }
 
             out += &causal_guidance(&auto_edges, &suggestions);
+
+            // Contradiction detection (Layer 1) — scan project findings
+            if let Some(eid_val) = exp_id {
+                if let Ok(exp) = store.get_experiment(eid_val) {
+                    if let Some(phase_id) = exp.phase_id {
+                        if let Ok(phase) = store.get_phase(phase_id) {
+                            let mut cands = Vec::new();
+                            if let Ok(phases) = store.list_phases(phase.project_id) {
+                                for p in &phases {
+                                    if let Ok(exps) = store.list_experiments(Some(p.id)) {
+                                        for e in &exps {
+                                            if let Ok(findings) = store.list_findings(Some(e.id)) {
+                                                for ef in &findings {
+                                                    if ef.id == f.id { continue; }
+                                                    let (score, signals) = contradictions::score_pair(text, &ef.text);
+                                                    if score >= 0.3 {
+                                                        let excerpt = if ef.text.len() > 120 { format!("{}...", &ef.text[..120]) } else { ef.text.clone() };
+                                                        cands.push(contradictions::ContradictionCandidate {
+                                                            node_type: "Finding".to_string(), node_id: ef.id,
+                                                            text_excerpt: excerpt, signal_score: score, signals,
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !cands.is_empty() {
+                                cands.sort_by(|a, b| b.signal_score.partial_cmp(&a.signal_score).unwrap_or(std::cmp::Ordering::Equal));
+                                cands.truncate(5);
+                                let l1 = contradictions::Layer1Result { candidates: cands.clone(), subagent_prompt: Some(contradictions::generate_nli_prompt(text, &cands)) };
+                                out += &contradictions::format_layer1_results(text, &l1);
+                            }
+                        }
+                    }
+                }
+            }
+
             out
         }
         Err(e) => format!("Error: {}", e),
@@ -563,6 +681,45 @@ pub fn tool_research_complete(store: &SqliteStore, rid: i64, status_str: &str, r
             ));
 
             out += &causal_guidance(&auto_edges, &suggestions);
+
+            // Contradiction detection (Layer 1) — scan project findings
+            if let Some(eid_val) = exp_id {
+                if let Ok(exp) = store.get_experiment(eid_val) {
+                    if let Some(phase_id) = exp.phase_id {
+                        if let Ok(phase) = store.get_phase(phase_id) {
+                            let mut cands = Vec::new();
+                            if let Ok(phases) = store.list_phases(phase.project_id) {
+                                for p in &phases {
+                                    if let Ok(exps) = store.list_experiments(Some(p.id)) {
+                                        for e in &exps {
+                                            if let Ok(findings) = store.list_findings(Some(e.id)) {
+                                                for ef in &findings {
+                                                    if ef.id == f.id { continue; }
+                                                    let (score, signals) = contradictions::score_pair(text, &ef.text);
+                                                    if score >= 0.3 {
+                                                        let excerpt = if ef.text.len() > 120 { format!("{}...", &ef.text[..120]) } else { ef.text.clone() };
+                                                        cands.push(contradictions::ContradictionCandidate {
+                                                            node_type: "Finding".to_string(), node_id: ef.id,
+                                                            text_excerpt: excerpt, signal_score: score, signals,
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !cands.is_empty() {
+                                cands.sort_by(|a, b| b.signal_score.partial_cmp(&a.signal_score).unwrap_or(std::cmp::Ordering::Equal));
+                                cands.truncate(5);
+                                let l1 = contradictions::Layer1Result { candidates: cands.clone(), subagent_prompt: Some(contradictions::generate_nli_prompt(text, &cands)) };
+                                out += &contradictions::format_layer1_results(text, &l1);
+                            }
+                        }
+                    }
+                }
+            }
+
             out
         }
         Err(e) => format!("Error: {}", e),
