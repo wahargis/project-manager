@@ -11,6 +11,7 @@
 use crate::store::sqlite::SqliteStore;
 use crate::store::{Store, NodeType, EdgeType, HypothesisStatus, ExperimentStatus};
 use crate::validation;
+use crate::analysis::contradictions;
 use std::collections::HashSet;
 
 /// Helper: build the causal guidance section for a response.
@@ -157,6 +158,58 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
             ));
 
             out += &causal_guidance(&auto_edges, &suggestions);
+
+            // Layer 1 contradiction detection: scan existing findings for contradictions
+            if let Some(eid_val) = exp_id {
+                if let Ok(exp) = store.get_experiment(eid_val) {
+                    if let Some(phase_id) = exp.phase_id {
+                        if let Ok(phase) = store.get_phase(phase_id) {
+                            let project_id = phase.project_id;
+                            let mut candidates: Vec<contradictions::ContradictionCandidate> = Vec::new();
+
+                            if let Ok(phases) = store.list_phases(project_id) {
+                                for p in &phases {
+                                    if let Ok(exps) = store.list_experiments(Some(p.id)) {
+                                        for ex in &exps {
+                                            if let Ok(findings) = store.list_findings(Some(ex.id)) {
+                                                for existing in &findings {
+                                                    if existing.id == f.id {
+                                                        continue;
+                                                    }
+                                                    let (score, signals) = contradictions::score_pair(text, &existing.text);
+                                                    if score > 0.3 {
+                                                        candidates.push(contradictions::ContradictionCandidate {
+                                                            node_type: "Finding".to_string(),
+                                                            node_id: existing.id,
+                                                            text_excerpt: existing.text.clone(),
+                                                            signal_score: score,
+                                                            signals,
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Sort by score descending, keep top 5
+                            candidates.sort_by(|a, b| b.signal_score.partial_cmp(&a.signal_score).unwrap_or(std::cmp::Ordering::Equal));
+                            candidates.truncate(5);
+
+                            if !candidates.is_empty() {
+                                let nli_prompt = contradictions::generate_nli_prompt(text, &candidates);
+                                let layer1 = contradictions::Layer1Result {
+                                    candidates,
+                                    subagent_prompt: Some(nli_prompt),
+                                };
+                                out += &contradictions::format_layer1_results(text, &layer1);
+                            }
+                        }
+                    }
+                }
+            }
+
             out
         }
         Err(e) => format!("Error: {}", e),
