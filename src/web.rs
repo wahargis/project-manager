@@ -4,6 +4,7 @@ use crate::store::Store;
 use crate::dag::DagEngine;
 use serde::Serialize;
 use std::sync::Arc;
+use std::collections::HashMap;
 
 #[derive(Serialize)]
 struct NodeCounts {
@@ -430,6 +431,49 @@ pub async fn serve(db_path: &str, port: u16) {
             }
         });
 
+
+    let db_search = db.clone();
+    let search = warp::path!("api" / "search")
+        .and(warp::get())
+        .and(warp::query::<HashMap<String, String>>())
+        .map(move |params: HashMap<String, String>| {
+            let store = SqliteStore::new(&db_search).unwrap();
+            let query = params.get("q").cloned().unwrap_or_default();
+            if query.is_empty() {
+                return warp::reply::json(&Vec::<serde_json::Value>::new());
+            }
+            let mut results = store.text_search(&query).unwrap_or_default();
+
+            // Post-score each result using edge count + evidence weight
+            // Capitalize node_type for edge queries (store expects "Finding", "Phase", etc.)
+            fn capitalize(s: &str) -> String {
+                let mut c = s.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                }
+            }
+
+            for result in results.iter_mut() {
+                let nt = capitalize(&result.node_type);
+                let edge_count = store.count_edges_for_node(&nt, result.node_id).unwrap_or(0);
+                let evidence = store.evidence_weight_for_node(&nt, result.node_id).unwrap_or(0);
+                // Composite score: edge connectivity + evidence support + recency bonus
+                let recency_bonus = result.modified_at.as_ref().map(|_| 0.1).unwrap_or(0.0);
+                let score = (edge_count as f64) * 1.0 + (evidence as f64) * 0.5 + recency_bonus;
+                result.score = Some(score);
+            }
+
+            // Sort descending by score
+            results.sort_by(|a, b| {
+                let sa = a.score.unwrap_or(0.0);
+                let sb = b.score.unwrap_or(0.0);
+                sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            warp::reply::json(&results)
+        });
+
     let db6 = db.clone();
     let dashboard = warp::path!("api" / "dashboard")
         .map(move || {
@@ -453,6 +497,7 @@ pub async fn serve(db_path: &str, port: u16) {
         .map(|| warp::reply::html(include_str!("web/index.html")));
 
     let routes = index
+        .or(search)
         .or(kg)
         .or(projects)
         .or(phases)

@@ -161,6 +161,8 @@ pub struct Finding {
     pub project_seq: Option<i64>,
     pub text: String,
     pub created_at: NaiveDateTime,
+    pub confidence: Option<f64>,
+    pub belief_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -182,6 +184,8 @@ pub struct Decision {
     pub what: String,
     pub why: Option<String>,
     pub created_at: NaiveDateTime,
+    pub confidence: Option<f64>,
+    pub belief_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,6 +212,8 @@ pub struct Principle {
     pub rationale: Option<String>,
     pub enforcement_level: Option<String>,
     pub created_at: NaiveDateTime,
+    pub confidence: Option<f64>,
+    pub belief_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +228,7 @@ pub struct Hypothesis {
     pub prediction: Option<String>,
     pub criteria: Option<String>,
     pub confidence: Option<f64>,
+    pub belief_status: Option<String>,
     pub created_at: NaiveDateTime,
 }
 
@@ -238,6 +245,8 @@ pub struct Constraint {
     pub measured_value: Option<String>,
     pub expires_at: Option<String>,
     pub created_at: NaiveDateTime,
+    pub confidence: Option<f64>,
+    pub belief_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,11 +323,23 @@ pub struct VelocityMetrics {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
     pub node_type: String,
     pub node_id: i64,
     pub project_seq: Option<i64>,
     pub text_excerpt: String,
     pub modified_at: Option<String>,
+    pub confidence: Option<f64>,
+    pub belief_status: Option<String>,
+}
+
+/// Result of creating an edge with TMS (Truth-Maintenance System) side effects.
+#[derive(Debug, Clone, Serialize)]
+pub struct TmsEdgeResult {
+    pub edge: Edge,
+    pub suspended_nodes: Vec<(String, i64)>,  // (node_type, node_id) pairs
+    pub confidence_updates: Vec<(String, i64, f64)>,  // (node_type, node_id, new_confidence)
 }
 
 // --- Store Trait ---

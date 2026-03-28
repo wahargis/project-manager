@@ -403,6 +403,165 @@ impl SqliteStore {
         Ok(weight)
     }
 
+
+
+    // ====== TMS (Truth-Maintenance System) Methods ======
+
+    /// Map a NodeType string to its table name.
+    fn node_type_to_table(node_type: &str) -> Option<&'static str> {
+        match node_type {
+            "Finding" => Some("findings"),
+            "Decision" => Some("decisions"),
+            "Hypothesis" => Some("hypotheses"),
+            "Principle" => Some("principles"),
+            "Constraint" => Some("constraints_tbl"),
+            _ => None,
+        }
+    }
+
+    /// Update confidence for a node.
+    pub fn update_confidence(&self, node_type: &str, node_id: i64, confidence: f64) -> Result<()> {
+        let table = Self::node_type_to_table(node_type)
+            .ok_or_else(|| StoreError::Constraint(format!("Node type {} does not support confidence", node_type)))?;
+        let sql = format!("UPDATE {} SET confidence = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2", table);
+        self.conn.execute(&sql, params![confidence, node_id])?;
+        Ok(())
+    }
+
+    /// Update belief status for a node.
+    pub fn update_belief_status(&self, node_type: &str, node_id: i64, status: &str) -> Result<()> {
+        if !["believed", "suspended", "retracted"].contains(&status) {
+            return Err(StoreError::Constraint(format!("Invalid belief status: {}. Must be believed, suspended, or retracted.", status)));
+        }
+        let table = Self::node_type_to_table(node_type)
+            .ok_or_else(|| StoreError::Constraint(format!("Node type {} does not support belief_status", node_type)))?;
+        let sql = format!("UPDATE {} SET belief_status = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2", table);
+        self.conn.execute(&sql, params![status, node_id])?;
+        Ok(())
+    }
+
+    /// Get current confidence of a node.
+    pub fn get_confidence(&self, node_type: &str, node_id: i64) -> Result<Option<f64>> {
+        let table = Self::node_type_to_table(node_type)
+            .ok_or_else(|| StoreError::Constraint(format!("Node type {} does not support confidence", node_type)))?;
+        let sql = format!("SELECT confidence FROM {} WHERE id = ?1", table);
+        self.conn.query_row(&sql, params![node_id], |row| row.get(0))
+            .map_err(StoreError::Db)
+    }
+
+    /// Get downstream dependents of a node by traversing forward through
+    /// Informed, Supports, DerivedFrom edges (BFS).
+    pub fn get_downstream_dependents(&self, node_type: &NodeType, node_id: i64) -> Result<Vec<(String, i64)>> {
+        let forward_relations = ["Informed", "Supports", "DerivedFrom"];
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        let mut dependents = Vec::new();
+
+        let start_key = (format!("{:?}", node_type), node_id);
+        visited.insert(start_key.clone());
+        queue.push_back((format!("{:?}", node_type), node_id));
+
+        while let Some((nt_str, nid)) = queue.pop_front() {
+            // Find edges where this node is the SOURCE and relation is a dependency type
+            let mut stmt = self.conn.prepare(
+                "SELECT target_type, target_id, relation FROM edges WHERE source_type = ?1 AND source_id = ?2"
+            )?;
+            let edges: Vec<(String, i64, String)> = stmt.query_map(params![nt_str, nid], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?))
+            })?.collect::<std::result::Result<Vec<_>, _>>()?;
+
+            for (target_type, target_id, relation) in edges {
+                if !forward_relations.contains(&relation.as_str()) {
+                    continue;
+                }
+                let key = (target_type.clone(), target_id);
+                if !visited.contains(&key) {
+                    visited.insert(key);
+                    dependents.push((target_type.clone(), target_id));
+                    queue.push_back((target_type, target_id));
+                }
+            }
+        }
+
+        Ok(dependents)
+    }
+
+    /// Count Supports edges pointing TO a node.
+    pub fn count_supports_edges(&self, node_type: &str, node_id: i64) -> Result<i64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM edges WHERE target_type = ?1 AND target_id = ?2 AND relation = 'Supports'",
+            params![node_type, node_id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
+    /// Create an edge with TMS side effects (confidence propagation + belief revision).
+    pub fn create_edge_with_tms(
+        &self,
+        source_type: NodeType,
+        source_id: i64,
+        target_type: NodeType,
+        target_id: i64,
+        relation: EdgeType,
+    ) -> Result<TmsEdgeResult> {
+        // Create the edge first
+        let edge = self.create_edge(source_type.clone(), source_id, target_type.clone(), target_id, relation.clone())?;
+
+        let mut suspended_nodes = Vec::new();
+        let mut confidence_updates = Vec::new();
+        let target_type_str = format!("{:?}", target_type);
+
+        match relation {
+            EdgeType::Supports => {
+                // Confidence propagation: count supports, update confidence
+                // Formula: min(0.95, 0.3 + 0.1 * support_count)
+                // Never decrease confidence from supports -- take max of current and formula
+                if Self::node_type_to_table(&target_type_str).is_some() {
+                    let support_count = self.count_supports_edges(&target_type_str, target_id)?;
+                    let formula_conf = (0.3 + 0.1 * support_count as f64).min(0.95);
+                    let current_conf = self.get_confidence(&target_type_str, target_id)?.unwrap_or(0.5);
+                    let new_confidence = formula_conf.max(current_conf);
+                    self.update_confidence(&target_type_str, target_id, new_confidence)?;
+                    confidence_updates.push((target_type_str.clone(), target_id, new_confidence));
+                }
+            }
+            EdgeType::Contradicts => {
+                // Reduce target confidence by 0.2
+                if Self::node_type_to_table(&target_type_str).is_some() {
+                    let current_conf = self.get_confidence(&target_type_str, target_id)?.unwrap_or(0.5);
+                    let new_confidence = (current_conf - 0.2).max(0.0);
+                    self.update_confidence(&target_type_str, target_id, new_confidence)?;
+                    confidence_updates.push((target_type_str.clone(), target_id, new_confidence));
+
+                    // If confidence drops below 0.3, suspend the target
+                    if new_confidence < 0.3 {
+                        self.update_belief_status(&target_type_str, target_id, "suspended")?;
+                        suspended_nodes.push((target_type_str.clone(), target_id));
+                    }
+
+                    // JTMS: suspend downstream dependents
+                    let dependents = self.get_downstream_dependents(&target_type, target_id)?;
+                    for (dep_type, dep_id) in &dependents {
+                        if Self::node_type_to_table(dep_type).is_some() {
+                            self.update_belief_status(dep_type, *dep_id, "suspended")?;
+                            suspended_nodes.push((dep_type.clone(), *dep_id));
+                        }
+                    }
+                }
+            }
+            _ => {
+                // No TMS side effects for other relation types
+            }
+        }
+
+        Ok(TmsEdgeResult {
+            edge,
+            suspended_nodes,
+            confidence_updates,
+        })
+    }
+
 }
 
 impl Store for SqliteStore {
@@ -587,7 +746,7 @@ impl Store for SqliteStore {
             self.next_finding_project_seq(eid).ok()
         } else { None };
         self.conn.execute(
-            "INSERT INTO findings (experiment_id, text, created_at, project_seq, modified_at) VALUES (?1, ?2, ?3, ?4, ?3)",
+            "INSERT INTO findings (experiment_id, text, created_at, project_seq, modified_at, confidence, belief_status) VALUES (?1, ?2, ?3, ?4, ?3, 0.5, 'believed')",
             params![experiment_id, text, now, seq],
         )?;
         self.get_finding(self.conn.last_insert_rowid())
@@ -595,7 +754,7 @@ impl Store for SqliteStore {
 
     fn get_finding(&self, id: i64) -> Result<Finding> {
         self.conn.query_row(
-            "SELECT id, experiment_id, text, created_at, project_seq FROM findings WHERE id = ?1",
+            "SELECT id, experiment_id, text, created_at, project_seq, confidence, belief_status FROM findings WHERE id = ?1",
             params![id],
             |row| Ok(Finding {
                 id: row.get(0)?,
@@ -603,6 +762,8 @@ impl Store for SqliteStore {
                 project_seq: row.get(4)?,
                 text: row.get(2)?,
                 created_at: SqliteStore::parse_dt(&row.get::<_, String>(3)?),
+                confidence: row.get(5)?,
+                belief_status: row.get(6)?,
             }),
         ).map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "finding".into(), id },
@@ -714,7 +875,7 @@ impl Store for SqliteStore {
             self.next_project_seq("decisions", pid).ok()
         } else { None };
         self.conn.execute(
-            "INSERT INTO decisions (experiment_id, what, why, created_at, project_id, project_seq, modified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?4)",
+            "INSERT INTO decisions (experiment_id, what, why, created_at, project_id, project_seq, modified_at, confidence, belief_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?4, 0.5, 'believed')",
             params![experiment_id, what, why, now, project_id, seq],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -726,6 +887,8 @@ impl Store for SqliteStore {
             what: what.to_string(),
             why: why.map(|s| s.to_string()),
             created_at: Self::parse_dt(&now),
+            confidence: Some(0.5),
+            belief_status: Some("believed".to_string()),
         })
     }
 
@@ -735,20 +898,20 @@ impl Store for SqliteStore {
         let el = enforcement_level.unwrap_or("advisory");
         let seq = self.next_project_seq("principles", project_id)?;
         self.conn.execute(
-            "INSERT INTO principles (project_id, scope, text, status, rationale, enforcement_level, created_at, project_seq, modified_at) VALUES (?1, ?2, ?3, 'active', ?4, ?5, ?6, ?7, ?6)",
+            "INSERT INTO principles (project_id, scope, text, status, rationale, enforcement_level, created_at, project_seq, modified_at, confidence, belief_status) VALUES (?1, ?2, ?3, 'active', ?4, ?5, ?6, ?7, ?6, 0.8, 'believed')",
             params![project_id, s, text, rationale, el, now, seq],
         )?;
         let id = self.conn.last_insert_rowid();
-        Ok(Principle { id, project_id, project_seq: Some(seq), scope, text: text.to_string(), status: PrincipleStatus::Active, superseded_by: None, rationale: rationale.map(|s| s.to_string()), enforcement_level: Some(el.to_string()), created_at: Self::parse_dt(&now) })
+        Ok(Principle { id, project_id, project_seq: Some(seq), scope, text: text.to_string(), status: PrincipleStatus::Active, superseded_by: None, rationale: rationale.map(|s| s.to_string()), enforcement_level: Some(el.to_string()), created_at: Self::parse_dt(&now), confidence: Some(0.8), belief_status: Some("believed".to_string()) })
     }
     fn list_principles(&self, project_id: i64) -> Result<Vec<Principle>> {
-        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, status, superseded_by, created_at, rationale, enforcement_level, project_seq FROM principles WHERE project_id = ?1 ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, status, superseded_by, created_at, rationale, enforcement_level, project_seq, confidence, belief_status FROM principles WHERE project_id = ?1 ORDER BY id")?;
         let rows = stmt.query_map(params![project_id], |row| {
             let scope_str: String = row.get(2)?;
             let scope = match scope_str.as_str() { "universal" => PrincipleScope::Universal, "phase" => PrincipleScope::Phase, _ => PrincipleScope::Project };
             let status_str: String = row.get(4)?;
             let status = match status_str.as_str() { "superseded" => PrincipleStatus::Superseded, "refined" => PrincipleStatus::Refined, _ => PrincipleStatus::Active };
-            Ok(Principle { id: row.get(0)?, project_id: row.get(1)?, project_seq: row.get(9)?, scope, text: row.get(3)?, status, superseded_by: row.get(5)?, rationale: row.get(7)?, enforcement_level: row.get(8)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+            Ok(Principle { id: row.get(0)?, project_id: row.get(1)?, project_seq: row.get(9)?, scope, text: row.get(3)?, status, superseded_by: row.get(5)?, rationale: row.get(7)?, enforcement_level: row.get(8)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?), confidence: row.get(10)?, belief_status: row.get(11)? })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
@@ -763,25 +926,25 @@ impl Store for SqliteStore {
         let seq = if let Some(pid) = phase_id {
             self.next_project_seq_via_phase("hypotheses", pid).ok()
         } else { None };
-        self.conn.execute("INSERT INTO hypotheses (phase_id, text, status, created_at, project_seq, modified_at) VALUES (?1, ?2, 'proposed', ?3, ?4, ?3)", params![phase_id, text, now, seq])?;
+        self.conn.execute("INSERT INTO hypotheses (phase_id, text, status, created_at, project_seq, modified_at, confidence, belief_status) VALUES (?1, ?2, 'proposed', ?3, ?4, ?3, 0.3, 'believed')", params![phase_id, text, now, seq])?;
         let id = self.conn.last_insert_rowid();
-        Ok(Hypothesis { id, phase_id, project_seq: seq, text: text.to_string(), status: HypothesisStatus::Proposed, experiment_id: None, finding_id: None, prediction: None, criteria: None, confidence: None, created_at: Self::parse_dt(&now) })
+        Ok(Hypothesis { id, phase_id, project_seq: seq, text: text.to_string(), status: HypothesisStatus::Proposed, experiment_id: None, finding_id: None, prediction: None, criteria: None, confidence: Some(0.3), belief_status: Some("believed".to_string()), created_at: Self::parse_dt(&now) })
     }
     fn list_hypotheses(&self, phase_id: Option<i64>) -> Result<Vec<Hypothesis>> {
-        let sql = if phase_id.is_some() { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at, prediction, criteria, confidence, project_seq FROM hypotheses WHERE phase_id = ?1 ORDER BY id" }
-                  else { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at, prediction, criteria, confidence, project_seq FROM hypotheses ORDER BY id" };
+        let sql = if phase_id.is_some() { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at, prediction, criteria, confidence, project_seq, belief_status FROM hypotheses WHERE phase_id = ?1 ORDER BY id" }
+                  else { "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at, prediction, criteria, confidence, project_seq, belief_status FROM hypotheses ORDER BY id" };
         let mut stmt = self.conn.prepare(sql)?;
         let rows = if let Some(pid) = phase_id {
             stmt.query_map(params![pid], |row| {
                 let status_str: String = row.get(3)?;
                 let status = match status_str.as_str() { "testing" => HypothesisStatus::Testing, "confirmed" => HypothesisStatus::Confirmed, "refuted" => HypothesisStatus::Refuted, _ => HypothesisStatus::Proposed };
-                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, project_seq: row.get(10)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, prediction: row.get(7)?, criteria: row.get(8)?, confidence: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, project_seq: row.get(10)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, prediction: row.get(7)?, criteria: row.get(8)?, confidence: row.get(9)?, belief_status: row.get(11)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
             })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
         } else {
             stmt.query_map([], |row| {
                 let status_str: String = row.get(3)?;
                 let status = match status_str.as_str() { "testing" => HypothesisStatus::Testing, "confirmed" => HypothesisStatus::Confirmed, "refuted" => HypothesisStatus::Refuted, _ => HypothesisStatus::Proposed };
-                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, project_seq: row.get(10)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, prediction: row.get(7)?, criteria: row.get(8)?, confidence: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, project_seq: row.get(10)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, prediction: row.get(7)?, criteria: row.get(8)?, confidence: row.get(9)?, belief_status: row.get(11)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
             })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
         };
         Ok(rows)
@@ -798,18 +961,18 @@ impl Store for SqliteStore {
         let sev = severity.unwrap_or("hard");
         let seq = self.next_project_seq("constraints_tbl", project_id)?;
         self.conn.execute(
-            "INSERT INTO constraints_tbl (project_id, scope, text, source, severity, resource, measured_value, expires_at, created_at, project_seq, modified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?9)",
+            "INSERT INTO constraints_tbl (project_id, scope, text, source, severity, resource, measured_value, expires_at, created_at, project_seq, modified_at, confidence, belief_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?9, 0.9, 'believed')",
             params![project_id, s, text, source, sev, resource, measured_value, expires_at, now, seq],
         )?;
         let id = self.conn.last_insert_rowid();
-        Ok(Constraint { id, project_id, project_seq: Some(seq), scope, text: text.to_string(), source: source.map(|s| s.to_string()), severity: Some(sev.to_string()), resource: resource.map(|s| s.to_string()), measured_value: measured_value.map(|s| s.to_string()), expires_at: expires_at.map(|s| s.to_string()), created_at: Self::parse_dt(&now) })
+        Ok(Constraint { id, project_id, project_seq: Some(seq), scope, text: text.to_string(), source: source.map(|s| s.to_string()), severity: Some(sev.to_string()), resource: resource.map(|s| s.to_string()), measured_value: measured_value.map(|s| s.to_string()), expires_at: expires_at.map(|s| s.to_string()), created_at: Self::parse_dt(&now), confidence: Some(0.9), belief_status: Some("believed".to_string()) })
     }
     fn list_constraints(&self, project_id: i64) -> Result<Vec<Constraint>> {
-        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, source, created_at, severity, resource, measured_value, expires_at, project_seq FROM constraints_tbl WHERE project_id = ?1 ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, project_id, scope, text, source, created_at, severity, resource, measured_value, expires_at, project_seq, confidence, belief_status FROM constraints_tbl WHERE project_id = ?1 ORDER BY id")?;
         let rows = stmt.query_map(params![project_id], |row| {
             let scope_str: String = row.get(2)?;
             let scope = match scope_str.as_str() { "software" => ConstraintScope::Software, "process" => ConstraintScope::Process, _ => ConstraintScope::Hardware };
-            Ok(Constraint { id: row.get(0)?, project_id: row.get(1)?, project_seq: row.get(10)?, scope, text: row.get(3)?, source: row.get(4)?, severity: row.get(6)?, resource: row.get(7)?, measured_value: row.get(8)?, expires_at: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?) })
+            Ok(Constraint { id: row.get(0)?, project_id: row.get(1)?, project_seq: row.get(10)?, scope, text: row.get(3)?, source: row.get(4)?, severity: row.get(6)?, resource: row.get(7)?, measured_value: row.get(8)?, expires_at: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?), confidence: row.get(11)?, belief_status: row.get(12)? })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
@@ -874,7 +1037,7 @@ impl Store for SqliteStore {
 
     fn list_decisions(&self, project_id: i64) -> Result<Vec<Decision>> {
         let mut stmt = self.conn.prepare(
-            "SELECT d.id, d.experiment_id, d.what, d.why, d.created_at, d.project_id, d.project_seq FROM decisions d WHERE d.project_id = ?1 OR d.project_id IS NULL ORDER BY d.id"
+            "SELECT d.id, d.experiment_id, d.what, d.why, d.created_at, d.project_id, d.project_seq, d.confidence, d.belief_status FROM decisions d WHERE d.project_id = ?1 OR d.project_id IS NULL ORDER BY d.id"
         )?;
         let rows = stmt.query_map([project_id], |row| Ok(Decision {
             id: row.get(0)?,
@@ -884,6 +1047,8 @@ impl Store for SqliteStore {
             why: row.get(3)?,
             created_at: SqliteStore::parse_dt(&row.get::<_, String>(4)?),
             project_id: row.get(5)?,
+            confidence: row.get(7)?,
+            belief_status: row.get(8)?,
         }))?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)
     }
@@ -942,7 +1107,7 @@ impl Store for SqliteStore {
 
     fn get_decision(&self, id: i64) -> Result<Decision> {
         self.conn.query_row(
-            "SELECT id, experiment_id, what, why, created_at, project_id, project_seq FROM decisions WHERE id = ?1",
+            "SELECT id, experiment_id, what, why, created_at, project_id, project_seq, confidence, belief_status FROM decisions WHERE id = ?1",
             params![id],
             |row| Ok(Decision {
                 id: row.get(0)?,
@@ -952,6 +1117,8 @@ impl Store for SqliteStore {
                 why: row.get(3)?,
                 created_at: SqliteStore::parse_dt(&row.get::<_, String>(4)?),
                 project_id: row.get(5)?,
+                confidence: row.get(7)?,
+                belief_status: row.get(8)?,
             }),
         ).map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "decision".into(), id },
@@ -961,14 +1128,14 @@ impl Store for SqliteStore {
 
     fn get_principle(&self, id: i64) -> Result<Principle> {
         self.conn.query_row(
-            "SELECT id, project_id, scope, text, status, superseded_by, created_at, rationale, enforcement_level, project_seq FROM principles WHERE id = ?1",
+            "SELECT id, project_id, scope, text, status, superseded_by, created_at, rationale, enforcement_level, project_seq, confidence, belief_status FROM principles WHERE id = ?1",
             params![id],
             |row| {
                 let scope_str: String = row.get(2)?;
                 let scope = match scope_str.as_str() { "universal" => PrincipleScope::Universal, "phase" => PrincipleScope::Phase, _ => PrincipleScope::Project };
                 let status_str: String = row.get(4)?;
                 let status = match status_str.as_str() { "superseded" => PrincipleStatus::Superseded, "refined" => PrincipleStatus::Refined, _ => PrincipleStatus::Active };
-                Ok(Principle { id: row.get(0)?, project_id: row.get(1)?, project_seq: row.get(9)?, scope, text: row.get(3)?, status, superseded_by: row.get(5)?, rationale: row.get(7)?, enforcement_level: row.get(8)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+                Ok(Principle { id: row.get(0)?, project_id: row.get(1)?, project_seq: row.get(9)?, scope, text: row.get(3)?, status, superseded_by: row.get(5)?, rationale: row.get(7)?, enforcement_level: row.get(8)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?), confidence: row.get(10)?, belief_status: row.get(11)? })
             },
         ).map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "principle".into(), id },
@@ -978,12 +1145,12 @@ impl Store for SqliteStore {
 
     fn get_hypothesis(&self, id: i64) -> Result<Hypothesis> {
         self.conn.query_row(
-            "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at, prediction, criteria, confidence, project_seq FROM hypotheses WHERE id = ?1",
+            "SELECT id, phase_id, text, status, experiment_id, finding_id, created_at, prediction, criteria, confidence, project_seq, belief_status FROM hypotheses WHERE id = ?1",
             params![id],
             |row| {
                 let status_str: String = row.get(3)?;
                 let status = match status_str.as_str() { "testing" => HypothesisStatus::Testing, "confirmed" => HypothesisStatus::Confirmed, "refuted" => HypothesisStatus::Refuted, _ => HypothesisStatus::Proposed };
-                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, project_seq: row.get(10)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, prediction: row.get(7)?, criteria: row.get(8)?, confidence: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
+                Ok(Hypothesis { id: row.get(0)?, phase_id: row.get(1)?, project_seq: row.get(10)?, text: row.get(2)?, status, experiment_id: row.get(4)?, finding_id: row.get(5)?, prediction: row.get(7)?, criteria: row.get(8)?, confidence: row.get(9)?, belief_status: row.get(11)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(6)?) })
             },
         ).map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "hypothesis".into(), id },
@@ -993,12 +1160,12 @@ impl Store for SqliteStore {
 
     fn get_constraint(&self, id: i64) -> Result<Constraint> {
         self.conn.query_row(
-            "SELECT id, project_id, scope, text, source, created_at, severity, resource, measured_value, expires_at, project_seq FROM constraints_tbl WHERE id = ?1",
+            "SELECT id, project_id, scope, text, source, created_at, severity, resource, measured_value, expires_at, project_seq, confidence, belief_status FROM constraints_tbl WHERE id = ?1",
             params![id],
             |row| {
                 let scope_str: String = row.get(2)?;
                 let scope = match scope_str.as_str() { "software" => ConstraintScope::Software, "process" => ConstraintScope::Process, _ => ConstraintScope::Hardware };
-                Ok(Constraint { id: row.get(0)?, project_id: row.get(1)?, project_seq: row.get(10)?, scope, text: row.get(3)?, source: row.get(4)?, severity: row.get(6)?, resource: row.get(7)?, measured_value: row.get(8)?, expires_at: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?) })
+                Ok(Constraint { id: row.get(0)?, project_id: row.get(1)?, project_seq: row.get(10)?, scope, text: row.get(3)?, source: row.get(4)?, severity: row.get(6)?, resource: row.get(7)?, measured_value: row.get(8)?, expires_at: row.get(9)?, created_at: SqliteStore::parse_dt(&row.get::<_, String>(5)?), confidence: row.get(11)?, belief_status: row.get(12)? })
             },
         ).map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => StoreError::NotFound { entity: "constraint".into(), id },
@@ -1507,7 +1674,7 @@ impl Store for SqliteStore {
         // findings.text
         {
             let mut stmt = self.conn.prepare(
-                "SELECT id, project_seq, text, modified_at FROM findings WHERE text LIKE ?1 LIMIT 50"
+                "SELECT id, project_seq, text, modified_at, confidence, belief_status FROM findings WHERE text LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
@@ -1515,14 +1682,14 @@ impl Store for SqliteStore {
             for r in rows {
                 let (id, seq, text, modified_at) = r?;
                 let excerpt: String = text.chars().take(150).collect();
-                results.push(SearchResult { node_type: "finding".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+                results.push(SearchResult { node_type: "finding".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
             }
         }
 
         // decisions.what, decisions.why
         {
             let mut stmt = self.conn.prepare(
-                "SELECT id, project_seq, what, why, modified_at FROM decisions WHERE what LIKE ?1 OR why LIKE ?1 LIMIT 50"
+                "SELECT id, project_seq, what, why, modified_at, confidence, belief_status FROM decisions WHERE what LIKE ?1 OR why LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
@@ -1530,14 +1697,14 @@ impl Store for SqliteStore {
             for r in rows {
                 let (id, seq, what, _why, modified_at) = r?;
                 let excerpt: String = what.chars().take(150).collect();
-                results.push(SearchResult { node_type: "decision".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+                results.push(SearchResult { node_type: "decision".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
             }
         }
 
         // hypotheses.text, hypotheses.prediction
         {
             let mut stmt = self.conn.prepare(
-                "SELECT id, project_seq, text, prediction, modified_at FROM hypotheses WHERE text LIKE ?1 OR prediction LIKE ?1 LIMIT 50"
+                "SELECT id, project_seq, text, prediction, modified_at, confidence, belief_status FROM hypotheses WHERE text LIKE ?1 OR prediction LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
@@ -1545,7 +1712,7 @@ impl Store for SqliteStore {
             for r in rows {
                 let (id, seq, text, _pred, modified_at) = r?;
                 let excerpt: String = text.chars().take(150).collect();
-                results.push(SearchResult { node_type: "hypothesis".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+                results.push(SearchResult { node_type: "hypothesis".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
             }
         }
 
@@ -1560,7 +1727,7 @@ impl Store for SqliteStore {
             for r in rows {
                 let (id, seq, title, _kf, modified_at) = r?;
                 let excerpt: String = title.chars().take(150).collect();
-                results.push(SearchResult { node_type: "literature".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+                results.push(SearchResult { node_type: "literature".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
             }
         }
 
@@ -1575,7 +1742,7 @@ impl Store for SqliteStore {
             for r in rows {
                 let (id, seq, name, _desc, modified_at) = r?;
                 let excerpt: String = name.chars().take(150).collect();
-                results.push(SearchResult { node_type: "phase".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+                results.push(SearchResult { node_type: "phase".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
             }
         }
 
@@ -1590,7 +1757,7 @@ impl Store for SqliteStore {
             for r in rows {
                 let (id, seq, name, _report, modified_at) = r?;
                 let excerpt: String = name.chars().take(150).collect();
-                results.push(SearchResult { node_type: "research".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+                results.push(SearchResult { node_type: "research".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
             }
         }
 
@@ -1605,14 +1772,14 @@ impl Store for SqliteStore {
             for r in rows {
                 let (id, seq, name, modified_at) = r?;
                 let excerpt: String = name.chars().take(150).collect();
-                results.push(SearchResult { node_type: "experiment".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+                results.push(SearchResult { node_type: "experiment".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
             }
         }
 
         // principles.text
         {
             let mut stmt = self.conn.prepare(
-                "SELECT id, project_seq, text, modified_at FROM principles WHERE text LIKE ?1 LIMIT 50"
+                "SELECT id, project_seq, text, modified_at, confidence, belief_status FROM principles WHERE text LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
@@ -1620,14 +1787,14 @@ impl Store for SqliteStore {
             for r in rows {
                 let (id, seq, text, modified_at) = r?;
                 let excerpt: String = text.chars().take(150).collect();
-                results.push(SearchResult { node_type: "principle".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+                results.push(SearchResult { node_type: "principle".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
             }
         }
 
         // constraints_tbl.text
         {
             let mut stmt = self.conn.prepare(
-                "SELECT id, project_seq, text, modified_at FROM constraints_tbl WHERE text LIKE ?1 LIMIT 50"
+                "SELECT id, project_seq, text, modified_at, confidence, belief_status FROM constraints_tbl WHERE text LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
@@ -1635,7 +1802,7 @@ impl Store for SqliteStore {
             for r in rows {
                 let (id, seq, text, modified_at) = r?;
                 let excerpt: String = text.chars().take(150).collect();
-                results.push(SearchResult { node_type: "constraint".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+                results.push(SearchResult { node_type: "constraint".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
             }
         }
 

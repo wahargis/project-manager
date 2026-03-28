@@ -73,6 +73,24 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 .legend-line { height: 2px; border-radius: 1px; }
 </style>
+
+/* Search styles */
+#kg-search-box { width: 100%; padding: 6px 8px; margin-bottom: 6px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; font-family: inherit; font-size: 11px; outline: none; }
+#kg-search-box:focus { border-color: #58a6ff; }
+#kg-search-box::placeholder { color: #484f58; }
+#clear-search-btn { display: none; width: 100%; padding: 4px 8px; margin-bottom: 8px; font-size: 10px; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 4px; cursor: pointer; }
+#clear-search-btn:hover { background: #30363d; color: #c9d1d9; }
+#search-results { display: none; max-height: 300px; overflow-y: auto; margin-bottom: 10px; border: 1px solid #30363d; border-radius: 4px; }
+.search-result-item { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; cursor: pointer; border-bottom: 1px solid #21262d; font-size: 11px; transition: background 0.1s; }
+.search-result-item:last-child { border-bottom: none; }
+.search-result-item:hover { background: #0d1117; }
+.search-result-item.top-result { border-left: 2px solid #58a6ff; }
+.sr-icon { flex-shrink: 0; width: 16px; height: 16px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: bold; color: #0d1117; }
+.sr-body { flex: 1; min-width: 0; }
+.sr-type { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #6e7681; }
+.sr-text { color: #c9d1d9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sr-score { flex-shrink: 0; font-size: 9px; color: #484f58; padding-top: 2px; }
+#search-count { font-size: 9px; color: #6e7681; padding: 4px 8px; border-bottom: 1px solid #21262d; }
 </head>
 <body>
 <div id="header">
@@ -85,6 +103,12 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 <div id="main">
   <div id="sidebar">
     <h2>Projects</h2>
+    <input type="text" id="kg-search-box" placeholder="Search KG..." onkeyup="if(event.key==='Enter') performSearch(this.value)">
+    <button id="clear-search-btn" onclick="clearSearch()">Clear Search</button>
+    <div id="search-results">
+      <div id="search-count"></div>
+      <div id="search-result-list"></div>
+    </div>
     <div id="project-tree"></div>
     <h2 style="margin-top:16px">Dashboard</h2>
     <div id="dashboard-text" style="font-size:11px;color:#8b949e;white-space:pre-wrap"></div>
@@ -1462,6 +1486,299 @@ window.addEventListener('resize', function() {
 });
 
 loadProjects();
+
+// --- Search-driven subgraph visualization ---
+let activeSearchResults = null;
+let searchHighlightActive = false;
+
+const TYPE_ICONS = {
+  finding: { letter: 'F', bg: '#58a6ff' },
+  experiment: { letter: 'E', bg: '#3fb950' },
+  decision: { letter: 'D', bg: '#e8883a' },
+  phase: { letter: 'P', bg: '#8b949e' },
+  hypothesis: { letter: 'H', bg: '#c084fc' },
+  literature: { letter: 'L', bg: '#93c5fd' },
+  principle: { letter: 'Pr', bg: '#fbbf24' },
+  constraint: { letter: 'C', bg: '#f87171' },
+  research: { letter: 'R', bg: '#2dd4bf' },
+  feedback: { letter: 'Fb', bg: '#a5b4fc' },
+};
+
+const typePrefix = {
+  'finding': 'f', 'experiment': 'e', 'phase': 'p', 'decision': 'd',
+  'research': 'r', 'principle': 'pr', 'hypothesis': 'h', 'constraint': 'co',
+  'literature': 'l', 'feedback': 'fb'
+};
+
+async function performSearch(query) {
+  query = query.trim();
+  if (!query) { clearSearch(); return; }
+
+  try {
+    const res = await fetch('/api/search?q=' + encodeURIComponent(query));
+    const results = await res.json();
+    activeSearchResults = results;
+    renderSearchResults(results);
+    applySearchHighlight(results);
+  } catch (e) {
+    console.error('Search failed:', e);
+  }
+}
+
+function renderSearchResults(results) {
+  const panel = document.getElementById('search-results');
+  const list = document.getElementById('search-result-list');
+  const countEl = document.getElementById('search-count');
+  const clearBtn = document.getElementById('clear-search-btn');
+
+  list.innerHTML = '';
+  if (results.length === 0) {
+    countEl.textContent = 'No results found';
+    panel.style.display = 'block';
+    clearBtn.style.display = 'block';
+    return;
+  }
+
+  countEl.textContent = results.length + ' result' + (results.length !== 1 ? 's' : '');
+  panel.style.display = 'block';
+  clearBtn.style.display = 'block';
+
+  const maxScore = results.length > 0 ? Math.max.apply(null, results.map(function(r) { return r.score || 0; })) : 1;
+
+  results.forEach(function(r, idx) {
+    const item = document.createElement('div');
+    item.className = 'search-result-item' + (idx < 5 ? ' top-result' : '');
+
+    const iconInfo = TYPE_ICONS[r.node_type] || { letter: '?', bg: '#484f58' };
+    const icon = document.createElement('div');
+    icon.className = 'sr-icon';
+    icon.style.background = iconInfo.bg;
+    icon.textContent = iconInfo.letter;
+
+    const body = document.createElement('div');
+    body.className = 'sr-body';
+
+    const typeLabel = document.createElement('div');
+    typeLabel.className = 'sr-type';
+    typeLabel.textContent = r.node_type + (r.project_seq ? ' #' + r.project_seq : ' id:' + r.node_id);
+
+    const text = document.createElement('div');
+    text.className = 'sr-text';
+    text.textContent = r.text_excerpt;
+    text.title = r.text_excerpt;
+
+    body.appendChild(typeLabel);
+    body.appendChild(text);
+
+    const score = document.createElement('div');
+    score.className = 'sr-score';
+    score.textContent = (r.score || 0).toFixed(1);
+
+    item.appendChild(icon);
+    item.appendChild(body);
+    item.appendChild(score);
+
+    item.onclick = function() { centerOnSearchResult(r); };
+    list.appendChild(item);
+  });
+}
+
+function applySearchHighlight(results) {
+  searchHighlightActive = true;
+
+  // Get the current D3 elements from the SVG
+  const container = document.getElementById('graph-container');
+  const svg = container.querySelector('svg');
+  if (!svg) return;
+
+  const gRoot = svg.querySelector('g');
+  if (!gRoot) return;
+
+  // Build a set of matched node IDs (D3-style: prefix-numId)
+  const matchedIds = new Set();
+  const matchScores = {};
+  var maxScore = 0;
+  results.forEach(function(r) {
+    var prefix = typePrefix[r.node_type] || 'x';
+    var nodeId = prefix + '-' + r.node_id;
+    matchedIds.add(nodeId);
+    matchScores[nodeId] = r.score || 0;
+    if ((r.score || 0) > maxScore) maxScore = r.score || 0;
+  });
+  if (maxScore === 0) maxScore = 1;
+
+  // Build 1-hop context set
+  var contextIds = new Set();
+  var allLinks = d3.select(gRoot).select('.links').selectAll('line');
+  allLinks.each(function(l) {
+    if (!l) return;
+    var srcId = typeof l.source === 'object' ? l.source.id : l.source;
+    var tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+    if (matchedIds.has(srcId) && !matchedIds.has(tgtId)) contextIds.add(tgtId);
+    if (matchedIds.has(tgtId) && !matchedIds.has(srcId)) contextIds.add(srcId);
+  });
+
+  // Top 5 result IDs for extra emphasis
+  var top5 = new Set();
+  results.slice(0, 5).forEach(function(r) {
+    top5.add((typePrefix[r.node_type] || 'x') + '-' + r.node_id);
+  });
+
+  // Apply node styles
+  var allNodes = d3.select(gRoot).select('.nodes').selectAll('g');
+  allNodes.each(function(d) {
+    if (!d) return;
+    var el = d3.select(this);
+    var shape = el.select('.node-shape');
+
+    if (matchedIds.has(d.id)) {
+      // Matched node: full opacity, boosted saturation, border
+      el.style('opacity', 1.0);
+      var normScore = (matchScores[d.id] || 0) / maxScore;
+      // Boost the color saturation via a filter
+      el.style('filter', top5.has(d.id) ? 'drop-shadow(0 0 4px ' + d.color + ') saturate(' + (1.0 + normScore * 0.5) + ')' : 'saturate(' + (1.0 + normScore * 0.3) + ')');
+      shape.attr('stroke', top5.has(d.id) ? '#fbbf24' : '#58a6ff');
+      shape.attr('stroke-width', top5.has(d.id) ? 3 : 1.5);
+    } else if (contextIds.has(d.id)) {
+      // 1-hop context: dimmed
+      el.style('opacity', 0.3);
+      el.style('filter', null);
+      shape.attr('stroke', null);
+      shape.attr('stroke-width', 0);
+    } else {
+      // Everything else: nearly hidden
+      el.style('opacity', 0.08);
+      el.style('filter', null);
+      shape.attr('stroke', null);
+      shape.attr('stroke-width', 0);
+    }
+  });
+
+  // Apply edge styles
+  allLinks.each(function(l) {
+    if (!l) return;
+    var srcId = typeof l.source === 'object' ? l.source.id : l.source;
+    var tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+    var bothMatched = matchedIds.has(srcId) && matchedIds.has(tgtId);
+    var oneMatchedOneContext = (matchedIds.has(srcId) && contextIds.has(tgtId)) || (matchedIds.has(tgtId) && contextIds.has(srcId));
+
+    if (bothMatched) {
+      d3.select(this).attr('stroke-opacity', 0.8).attr('stroke-width', 2);
+    } else if (oneMatchedOneContext) {
+      d3.select(this).attr('stroke-opacity', 0.25).attr('stroke-width', 1);
+    } else {
+      d3.select(this).attr('stroke-opacity', 0).attr('stroke-width', 0);
+    }
+  });
+}
+
+function clearSearch() {
+  activeSearchResults = null;
+  searchHighlightActive = false;
+
+  document.getElementById('kg-search-box').value = '';
+  document.getElementById('search-results').style.display = 'none';
+  document.getElementById('clear-search-btn').style.display = 'none';
+  document.getElementById('search-result-list').innerHTML = '';
+
+  // Reset all node and edge styles
+  var container = document.getElementById('graph-container');
+  var svg = container.querySelector('svg');
+  if (!svg) return;
+  var gRoot = svg.querySelector('g');
+  if (!gRoot) return;
+
+  var allNodes = d3.select(gRoot).select('.nodes').selectAll('g');
+  allNodes.each(function(d) {
+    var el = d3.select(this);
+    el.style('opacity', 1.0);
+    el.style('filter', null);
+    el.select('.node-shape').attr('stroke', null).attr('stroke-width', 0);
+  });
+
+  // Reset edges to their default styling
+  var allLinks = d3.select(gRoot).select('.links').selectAll('line');
+  allLinks.each(function(l) {
+    if (!l) return;
+    var rel = l.relation || 'structural';
+    var edgeStyle = {
+      'Contradicts': { width: 1.2, opacity: 0.6 },
+      'Supports': { width: 0.8, opacity: 0.4 },
+      'DependsOn': { width: 0.7, opacity: 0.35 },
+      'Informed': { width: 0.7, opacity: 0.35 },
+      'Supersedes': { width: 0.9, opacity: 0.45 },
+      'DerivedFrom': { width: 0.6, opacity: 0.3 },
+      'TestedBy': { width: 0.6, opacity: 0.3 },
+      'ViolatedBy': { width: 0.8, opacity: 0.4 },
+      'RelatedTo': { width: 0.4, opacity: 0.15 },
+      'ProducedBy': { width: 0.3, opacity: 0.1 },
+      'CitedIn': { width: 0.5, opacity: 0.25 },
+      'structural': { width: 0.3, opacity: 0.08 },
+    };
+    var style = edgeStyle[rel] || edgeStyle['structural'];
+    d3.select(this).attr('stroke-opacity', style.opacity).attr('stroke-width', style.width);
+  });
+}
+
+function centerOnSearchResult(result) {
+  var container = document.getElementById('graph-container');
+  var svg = d3.select(container).select('svg');
+  if (svg.empty()) return;
+
+  var prefix = typePrefix[result.node_type] || 'x';
+  var targetId = prefix + '-' + result.node_id;
+
+  // Find the node in the simulation data
+  var targetNode = null;
+  var gRoot = svg.select('g');
+  var allNodes = gRoot.select('.nodes').selectAll('g');
+
+  allNodes.each(function(d) {
+    if (d && d.id === targetId) {
+      targetNode = d;
+    }
+  });
+
+  if (!targetNode) return;
+
+  // Get SVG dimensions
+  var W = container.offsetWidth;
+  var H = container.offsetHeight;
+
+  // Zoom to center on the node
+  var scale = 2.5;
+  var tx = W / 2 - targetNode.x * scale;
+  var ty = H / 2 - targetNode.y * scale;
+
+  var zoom = d3.zoom().scaleExtent([0.1, 10]);
+  svg.transition().duration(500).call(
+    zoom.transform,
+    d3.zoomIdentity.translate(tx, ty).scale(scale)
+  );
+
+  // Trigger pin behavior on the node
+  allNodes.each(function(d) {
+    if (d && d.id === targetId) {
+      // Clear any existing pin
+      if (pinnedNodeEl) {
+        d3.select(pinnedNodeEl).select('.node-shape').attr('stroke', null).attr('stroke-width', 0);
+      }
+      pinnedNode = d;
+      pinnedNodeEl = this;
+      d3.select(this).select('.node-shape').attr('stroke', '#fbbf24').attr('stroke-width', 3);
+
+      // Show tooltip
+      tooltip.querySelector('.tt-type').textContent = d.type.toUpperCase();
+      tooltip.querySelector('.tt-type').style.color = d.color;
+      tooltip.querySelector('.tt-title').textContent = '#' + d.numId + ': ' + d.label;
+      tooltip.querySelector('.tt-body').innerHTML = buildTooltipHtml(d);
+      tooltip.style.display = 'block';
+      tooltip.style.left = (W / 2 + 20) + 'px';
+      tooltip.style.top = (H / 2 - 20) + 'px';
+    }
+  });
+}
+
 </script>
 </body>
 </html>
