@@ -72,7 +72,6 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 .legend-item { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
 .legend-line { height: 2px; border-radius: 1px; }
-</style>
 
 /* Search styles */
 #kg-search-box { width: 100%; padding: 6px 8px; margin-bottom: 6px; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; font-family: inherit; font-size: 11px; outline: none; }
@@ -91,6 +90,7 @@ button.active { background: #1f6feb; border-color: #1f6feb; }
 .sr-text { color: #c9d1d9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sr-score { flex-shrink: 0; font-size: 9px; color: #484f58; padding-top: 2px; }
 #search-count { font-size: 9px; color: #6e7681; padding: 4px 8px; border-bottom: 1px solid #21262d; }
+</style>
 </head>
 <body>
 <div id="header">
@@ -463,8 +463,32 @@ async function loadProjects() {
     tree.appendChild(section);
   }
 
-  const dash = await fetch('/api/dashboard').then(function(r) { return r.json(); });
-  document.getElementById('dashboard-text').textContent = dash.text;
+  const dash = await fetch("/api/dashboard").then(r => r.json());
+  const dashEl = document.getElementById('dashboard-text');
+  dashEl.innerHTML = '';
+  if (dash.items && dash.items.length > 0) {
+    dash.items.forEach(function(item) {
+      const card = document.createElement('div');
+      card.style.cssText = 'background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;margin-bottom:4px;font-size:11px;cursor:pointer;';
+      card.onmouseenter = function() { card.style.borderColor = '#58a6ff'; };
+      card.onmouseleave = function() { card.style.borderColor = '#30363d'; };
+      const proj = document.createElement('div');
+      proj.style.cssText = 'color:#58a6ff;font-size:9px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;';
+      proj.textContent = item.project;
+      const phase = document.createElement('div');
+      phase.style.cssText = 'color:#c9d1d9;';
+      phase.textContent = item.phase_name;
+      const impact = document.createElement('div');
+      impact.style.cssText = 'color:#6e7681;font-size:9px;margin-top:2px;';
+      impact.textContent = 'Phase #' + item.phase_id + ' · impact ' + item.impact;
+      card.appendChild(proj);
+      card.appendChild(phase);
+      card.appendChild(impact);
+      dashEl.appendChild(card);
+    });
+  } else {
+    dashEl.textContent = 'No active phases';
+  }
 
   // Select first active project
   if (activeTree.length > 0) {

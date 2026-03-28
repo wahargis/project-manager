@@ -478,19 +478,19 @@ pub async fn serve(db_path: &str, port: u16) {
     let dashboard = warp::path!("api" / "dashboard")
         .map(move || {
             let store = SqliteStore::new(&db6).unwrap();
-            let mut text = String::from("Cross-Project Dashboard\n\n");
+            let mut items = Vec::new();
             if let Ok(projects) = store.list_projects() {
                 for proj in &projects {
                     if proj.status != crate::store::ProjectStatus::Active { continue; }
                     let dag = DagEngine::new(&store, proj.id);
                     if let Ok(next) = dag.next_phases() {
                         if let Some(top) = next.first() {
-                            text += &format!("[{}] #{} [impact:{}] {}\n", proj.name, top.id, top.impact, top.name);
+                            items.push(serde_json::json!({"project": proj.name, "phase_id": top.id, "impact": top.impact, "phase_name": top.name}));
                         }
                     }
                 }
             }
-            warp::reply::json(&serde_json::json!({"text": text}))
+            warp::reply::json(&serde_json::json!({"items": items}))
         });
 
     let index = warp::path::end()
