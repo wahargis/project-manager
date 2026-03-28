@@ -57,6 +57,14 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
     let contradictions = kg.find_contradictions(&project_findings).unwrap_or_default();
     if !contradictions.is_empty() {
         text += &format!("\n## Contradictions: {}\n", contradictions.len());
+        for (f1, f2) in contradictions.iter().take(5) {
+            let t1: String = f1.text.chars().take(60).collect();
+            let t2: String = f2.text.chars().take(60).collect();
+            text += &format!("  F#{} vs F#{}: \"{}\" <-> \"{}\"\n", f1.id, f2.id, t1, t2);
+        }
+        if contradictions.len() > 5 {
+            text += &format!("  ... and {} more\n", contradictions.len() - 5);
+        }
     }
     // Enhanced checks
     let lit_count = store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0);
