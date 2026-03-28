@@ -8,3 +8,4 @@ pub mod files;
 
 pub mod mcp;
 pub mod web;
+pub mod analysis;
