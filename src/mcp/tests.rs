@@ -1312,3 +1312,28 @@ fn test_dispatch_constraint_with_experiment_id() {
     assert!(result.contains("Constraint #"), "result: {}", result);
     assert!(result.contains("TestedBy"), "Expected TestedBy edge in dispatch: {}", result);
 }
+
+// === pm_search tests ===
+
+#[test]
+fn test_search_finds_matching_text() {
+    let store = test_store();
+    let (_proj_id, _phase_id, exp_id) = setup_project(&store);
+    // Create a finding with distinctive text
+    let text = "a]".to_string() + &"MoE GEMV kernel fusion achieves 40% speedup on V100 with quantized weights using mul_mat_vec_q Q4_K implementation".to_string();
+    store.create_finding(Some(exp_id), &text).unwrap();
+    let result = super::review::tool_search(&store, "MoE GEMV");
+    assert!(result.contains("Search Results for"), "Expected header in: {}", result);
+    assert!(result.contains("Finding #"), "Expected finding result in: {}", result);
+    assert!(result.contains("MoE GEMV"), "Expected search text in excerpt: {}", result);
+    assert!(result.contains("pm_kg_traverse"), "Expected traverse hint in: {}", result);
+    assert!(result.contains("1 results found"), "Expected 1 result in: {}", result);
+}
+
+#[test]
+fn test_search_returns_empty_for_no_match() {
+    let store = test_store();
+    let _ = setup_project(&store);
+    let result = super::review::tool_search(&store, "xyzzy_nonexistent_garbage_12345");
+    assert!(result.contains("No results found"), "Expected no results in: {}", result);
+}

@@ -311,6 +311,16 @@ pub struct VelocityMetrics {
     pub hypothesis_lifecycle_days: Vec<(i64, f64)>,
 }
 
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchResult {
+    pub node_type: String,
+    pub node_id: i64,
+    pub project_seq: Option<i64>,
+    pub text_excerpt: String,
+    pub modified_at: Option<String>,
+}
+
 // --- Store Trait ---
 
 pub trait Store {
@@ -411,6 +421,9 @@ pub trait Store {
     fn nodes_since(&self, timestamp: &str) -> Result<TemporalDelta>;
     fn staleness_report(&self, project_id: i64) -> Result<StalenessReport>;
     fn get_velocity(&self, project_id: i64) -> Result<VelocityMetrics>;
+
+    // Text search across all KG node types
+    fn text_search(&self, query: &str) -> Result<Vec<SearchResult>>;
 }
 
 #[cfg(test)]

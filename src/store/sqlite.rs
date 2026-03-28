@@ -385,6 +385,24 @@ impl SqliteStore {
         self.conn.execute(&sql, params![id])?;
         Ok(())
     }
+    /// Count total edges (both directions) for a node. Used by search ranking.
+    pub fn count_edges_for_node(&self, node_type: &str, node_id: i64) -> Result<i64> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COUNT(*) FROM edges WHERE (source_type = ?1 AND source_id = ?2) OR (target_type = ?1 AND target_id = ?2)"
+        )?;
+        let count: i64 = stmt.query_row(params![node_type, node_id, node_type, node_id], |row| row.get(0))?;
+        Ok(count)
+    }
+
+    /// Evidence weight: count Supports edges minus Contradicts edges pointing TO this node.
+    pub fn evidence_weight_for_node(&self, node_type: &str, node_id: i64) -> Result<i64> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(SUM(CASE WHEN relation = 'Supports' THEN 1 WHEN relation = 'Contradicts' THEN -1 ELSE 0 END), 0) FROM edges WHERE target_type = ?1 AND target_id = ?2"
+        )?;
+        let weight: i64 = stmt.query_row(params![node_type, node_id], |row| row.get(0))?;
+        Ok(weight)
+    }
+
 }
 
 impl Store for SqliteStore {
@@ -1480,5 +1498,150 @@ impl Store for SqliteStore {
         Ok(metrics)
     }
 
+
+
+    fn text_search(&self, query: &str) -> Result<Vec<SearchResult>> {
+        let pattern = format!("%{}%", query);
+        let mut results: Vec<SearchResult> = Vec::new();
+
+        // findings.text
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, text, modified_at FROM findings WHERE text LIKE ?1 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
+            })?;
+            for r in rows {
+                let (id, seq, text, modified_at) = r?;
+                let excerpt: String = text.chars().take(150).collect();
+                results.push(SearchResult { node_type: "finding".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+            }
+        }
+
+        // decisions.what, decisions.why
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, what, why, modified_at FROM decisions WHERE what LIKE ?1 OR why LIKE ?1 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+            })?;
+            for r in rows {
+                let (id, seq, what, _why, modified_at) = r?;
+                let excerpt: String = what.chars().take(150).collect();
+                results.push(SearchResult { node_type: "decision".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+            }
+        }
+
+        // hypotheses.text, hypotheses.prediction
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, text, prediction, modified_at FROM hypotheses WHERE text LIKE ?1 OR prediction LIKE ?1 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+            })?;
+            for r in rows {
+                let (id, seq, text, _pred, modified_at) = r?;
+                let excerpt: String = text.chars().take(150).collect();
+                results.push(SearchResult { node_type: "hypothesis".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+            }
+        }
+
+        // literature.title, literature.key_findings
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, title, key_findings, modified_at FROM literature WHERE title LIKE ?1 OR key_findings LIKE ?1 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+            })?;
+            for r in rows {
+                let (id, seq, title, _kf, modified_at) = r?;
+                let excerpt: String = title.chars().take(150).collect();
+                results.push(SearchResult { node_type: "literature".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+            }
+        }
+
+        // phases.name, phases.description
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, name, description, modified_at FROM phases WHERE name LIKE ?1 OR description LIKE ?1 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+            })?;
+            for r in rows {
+                let (id, seq, name, _desc, modified_at) = r?;
+                let excerpt: String = name.chars().take(150).collect();
+                results.push(SearchResult { node_type: "phase".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+            }
+        }
+
+        // research.name, research.report
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, name, report, modified_at FROM research WHERE name LIKE ?1 OR report LIKE ?1 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+            })?;
+            for r in rows {
+                let (id, seq, name, _report, modified_at) = r?;
+                let excerpt: String = name.chars().take(150).collect();
+                results.push(SearchResult { node_type: "research".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+            }
+        }
+
+        // experiments.name
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, name, modified_at FROM experiments WHERE name LIKE ?1 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
+            })?;
+            for r in rows {
+                let (id, seq, name, modified_at) = r?;
+                let excerpt: String = name.chars().take(150).collect();
+                results.push(SearchResult { node_type: "experiment".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+            }
+        }
+
+        // principles.text
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, text, modified_at FROM principles WHERE text LIKE ?1 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
+            })?;
+            for r in rows {
+                let (id, seq, text, modified_at) = r?;
+                let excerpt: String = text.chars().take(150).collect();
+                results.push(SearchResult { node_type: "principle".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+            }
+        }
+
+        // constraints_tbl.text
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, text, modified_at FROM constraints_tbl WHERE text LIKE ?1 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
+            })?;
+            for r in rows {
+                let (id, seq, text, modified_at) = r?;
+                let excerpt: String = text.chars().take(150).collect();
+                results.push(SearchResult { node_type: "constraint".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at });
+            }
+        }
+
+        // Truncate to 50 total results
+        results.truncate(50);
+        Ok(results)
+    }
 
 }

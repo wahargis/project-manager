@@ -223,3 +223,86 @@ pub fn tool_stats(store: &SqliteStore, project: &str) -> String {
         edge_count);
     t
 }
+
+pub fn tool_search(store: &SqliteStore, query: &str) -> String {
+    match store.text_search(query) {
+        Ok(results) => {
+            if results.is_empty() {
+                return format!("=== Search Results for \"{}\" ===\n\nNo results found.\n", query);
+            }
+
+            // Post-query composite scoring
+            let now = chrono::Local::now().naive_local();
+            let mut scored: Vec<(f64, f64, f64, f64, &crate::store::SearchResult)> = Vec::new();
+
+            for r in &results {
+                // Capitalize node_type for edge table lookups (edges store "Finding", not "finding")
+                let edge_node_type = capitalize(&r.node_type);
+
+                // Edge count (graph connectivity)
+                let edge_count: i64 = store.count_edges_for_node(&edge_node_type, r.node_id).unwrap_or(0);
+
+                // Evidence weight: supports - contradicts edges pointing TO this node
+                let evidence_weight: i64 = store.evidence_weight_for_node(&edge_node_type, r.node_id).unwrap_or(0);
+
+                // Recency bonus: 1.0 for today, decays to 0.0 over 30 days
+                let recency_bonus = match &r.modified_at {
+                    Some(ts) => {
+                        if let Ok(modified) = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S") {
+                            let days_ago = (now - modified).num_days().max(0) as f64;
+                            (1.0 - days_ago / 30.0).max(0.0)
+                        } else {
+                            0.0
+                        }
+                    },
+                    None => 0.0,
+                };
+
+                let text_match = 1.0_f64;
+                let score = text_match * 1.0
+                    + edge_count as f64 * 0.1
+                    + evidence_weight as f64 * 0.2
+                    + recency_bonus * 0.3;
+
+                scored.push((score, edge_count as f64, evidence_weight as f64, recency_bonus, r));
+            }
+
+            // Sort by composite score descending
+            scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            let mut text = format!("=== Search Results for \"{}\" ===\n\n", query);
+            for (score, edges, evidence, recency, r) in &scored {
+                let type_label = capitalize(&r.node_type);
+                let seq_label = match r.project_seq {
+                    Some(s) => {
+                        let prefix = match r.node_type.as_str() {
+                            "finding" => "F",
+                            "decision" => "D",
+                            "hypothesis" => "H",
+                            "literature" => "L",
+                            "phase" => "Ph",
+                            "research" => "R",
+                            "experiment" => "E",
+                            "principle" => "P",
+                            "constraint" => "C",
+                            _ => "?",
+                        };
+                        format!(" ({}#{})", prefix, s)
+                    },
+                    None => String::new(),
+                };
+                let excerpt = if r.text_excerpt.len() >= 147 {
+                    format!("{}...", &r.text_excerpt)
+                } else {
+                    r.text_excerpt.clone()
+                };
+                text += &format!("  {} #{}{}: {}\n", type_label, r.node_id, seq_label, excerpt);
+                text += &format!("    score={:.2} [edges={:.0}, evidence={:.0}, recency={:.2}]\n", score, edges, evidence, recency);
+                text += &format!("    -> pm_kg_traverse node_type={} node_id={}\n\n", r.node_type, r.node_id);
+            }
+            text += &format!("{} results found.\n", scored.len());
+            text
+        },
+        Err(e) => format!("Search error: {}", e),
+    }
+}
