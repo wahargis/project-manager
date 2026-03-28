@@ -614,3 +614,181 @@ pub fn tool_since(store: &SqliteStore, since: Option<&str>, session_id: Option<i
         Err(e) => format!("Error: {}", e),
     }
 }
+
+// --- Session Context Tool (F3: graph-topology-based context retrieval) ---
+
+pub fn tool_session_context(store: &SqliteStore, project: &str) -> String {
+    // 1. Resolve project by name or alias
+    let proj = match store.list_projects().ok().and_then(|ps| {
+        ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))
+    }) {
+        Some(p) => p,
+        None => return format!("Project not found: {}", project),
+    };
+
+    // 2. Find the in-progress phase with highest impact
+    let dag = DagEngine::new(store, proj.id);
+    let phases = match dag.next_phases() {
+        Ok(p) => p,
+        Err(e) => return format!("Error loading phases: {}", e),
+    };
+
+    let active_phase = match phases.iter().find(|p| p.status == PhaseStatus::InProgress) {
+        Some(p) => p.clone(),
+        None => match phases.first() {
+            Some(p) => p.clone(),
+            None => return format!("No actionable phases found for project: {}", project),
+        },
+    };
+
+    let phase_ref = active_phase.project_seq
+        .map(|s| format!("#{}", s))
+        .unwrap_or_else(|| format!("#{}", active_phase.id));
+    let phase_status = match active_phase.status {
+        PhaseStatus::InProgress => "IN-PROGRESS",
+        PhaseStatus::Pending => "PENDING",
+        PhaseStatus::Paused => "PAUSED",
+        _ => "OTHER",
+    };
+
+    // 3. Call phase_subgraph to get all reachable nodes within 3 hops
+    let subgraph = crate::kg::traversal::phase_subgraph(store, active_phase.id, 3);
+
+    // 4. Group subgraph nodes by type
+    use crate::store::NodeType;
+    let mut finding_ids: Vec<i64> = Vec::new();
+    let mut hypothesis_ids: Vec<i64> = Vec::new();
+    let mut decision_ids: Vec<i64> = Vec::new();
+    let mut literature_ids: Vec<i64> = Vec::new();
+    let mut experiment_ids: Vec<i64> = Vec::new();
+
+    for node in &subgraph.nodes {
+        match node.node_type {
+            NodeType::Finding => finding_ids.push(node.node_id),
+            NodeType::Hypothesis => hypothesis_ids.push(node.node_id),
+            NodeType::Decision => decision_ids.push(node.node_id),
+            NodeType::Literature => literature_ids.push(node.node_id),
+            NodeType::Experiment => experiment_ids.push(node.node_id),
+            _ => {}
+        }
+    }
+
+    // Build output
+    let mut out = format!("=== Session Context: {} \u{2014} Phase {}: {} ===\n\n", project, phase_ref, active_phase.name);
+
+    // ## Active Phase
+    out += "## Active Phase\n";
+    out += &format!("{} [{}] [impact:{}]\n", active_phase.name, phase_status, active_phase.impact);
+    if let Some(ref desc) = active_phase.description {
+        out += &format!("  {}\n", desc);
+    }
+    // Experiment rollup
+    if let Ok(exps) = store.list_experiments(Some(active_phase.id)) {
+        let pending = exps.iter().filter(|e| e.status == ExperimentStatus::Pending).count();
+        let pass = exps.iter().filter(|e| e.status == ExperimentStatus::Pass).count();
+        let fail = exps.iter().filter(|e| e.status == ExperimentStatus::Fail).count();
+        out += &format!("  Experiments: {} total ({} pending, {} pass, {} fail)\n", exps.len(), pending, pass, fail);
+    }
+    out += "\n";
+
+    // 5. Findings: sort by created_at descending, take top 5
+    if !finding_ids.is_empty() {
+        let mut findings: Vec<crate::store::Finding> = finding_ids.iter()
+            .filter_map(|id| store.get_finding(*id).ok())
+            .collect();
+        findings.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        let top_findings: Vec<_> = findings.iter().take(5).collect();
+        if !top_findings.is_empty() {
+            out += &format!("## Recent Findings (top {})\n", top_findings.len());
+            for f in &top_findings {
+                let fref = f.project_seq.map(|s| format!("F#{}", s)).unwrap_or_else(|| format!("F#{}", f.id));
+                let excerpt = if f.text.len() > 120 { format!("{}...", &f.text[..120]) } else { f.text.clone() };
+                out += &format!("  {}: {}\n", fref, excerpt);
+            }
+            out += "\n";
+        }
+    }
+
+    // 6. Hypotheses: filter to proposed/testing
+    if !hypothesis_ids.is_empty() {
+        let active_hyps: Vec<crate::store::Hypothesis> = hypothesis_ids.iter()
+            .filter_map(|id| store.get_hypothesis(*id).ok())
+            .filter(|h| h.status == HypothesisStatus::Proposed || h.status == HypothesisStatus::Testing)
+            .collect();
+        if !active_hyps.is_empty() {
+            out += "## Active Hypotheses\n";
+            for h in &active_hyps {
+                let href = h.project_seq.map(|s| format!("H#{}", s)).unwrap_or_else(|| format!("H#{}", h.id));
+                let status_str = match h.status {
+                    HypothesisStatus::Proposed => "proposed",
+                    HypothesisStatus::Testing => "testing",
+                    _ => "other",
+                };
+                let excerpt = if h.text.len() > 120 { format!("{}...", &h.text[..120]) } else { h.text.clone() };
+                out += &format!("  {} [{}]: {}\n", href, status_str, excerpt);
+            }
+            out += "\n";
+        }
+    }
+
+    // 7. Decisions: take all
+    if !decision_ids.is_empty() {
+        let decisions: Vec<crate::store::Decision> = decision_ids.iter()
+            .filter_map(|id| store.get_decision(*id).ok())
+            .collect();
+        if !decisions.is_empty() {
+            out += "## Key Decisions\n";
+            for d in &decisions {
+                let dref = d.project_seq.map(|s| format!("D#{}", s)).unwrap_or_else(|| format!("D#{}", d.id));
+                let excerpt = if d.what.len() > 120 { format!("{}...", &d.what[..120]) } else { d.what.clone() };
+                out += &format!("  {}: {}\n", dref, excerpt);
+            }
+            out += "\n";
+        }
+    }
+
+    // 8. Literature: take top 3
+    if !literature_ids.is_empty() {
+        let lit: Vec<crate::store::LiteratureEntry> = literature_ids.iter()
+            .filter_map(|id| store.get_literature(*id).ok())
+            .collect();
+        let top_lit: Vec<_> = lit.iter().take(3).collect();
+        if !top_lit.is_empty() {
+            out += "## Relevant Literature\n";
+            for l in &top_lit {
+                let lref = l.project_seq.map(|s| format!("L#{}", s)).unwrap_or_else(|| format!("L#{}", l.id));
+                out += &format!("  {}: {}\n", lref, l.title);
+            }
+            out += "\n";
+        }
+    }
+
+    // 9. Suggested next actions based on phase status
+    out += "## Suggested Next Actions\n";
+    if let Ok(exps) = store.list_experiments(Some(active_phase.id)) {
+        let pending: Vec<_> = exps.iter().filter(|e| e.status == ExperimentStatus::Pending).collect();
+        if !pending.is_empty() {
+            out += &format!("  - {} pending experiments to execute\n", pending.len());
+            if let Some(top) = pending.first() {
+                let eref = top.project_seq.map(|s| format!("E#{}", s)).unwrap_or_else(|| format!("E#{}", top.id));
+                out += &format!("  - Next: {} \u{2014} {}\n", eref, top.name);
+            }
+        } else if active_phase.status == PhaseStatus::InProgress {
+            out += "  - All experiments resolved \u{2014} review results and consider completing this phase\n";
+        }
+    }
+
+    // Check for stale hypotheses in the subgraph
+    let stale_hyps: Vec<_> = hypothesis_ids.iter()
+        .filter_map(|id| store.get_hypothesis(*id).ok())
+        .filter(|h| h.status == HypothesisStatus::Proposed && is_stale(&h.created_at, 7))
+        .collect();
+    if !stale_hyps.is_empty() {
+        out += &format!("  - {} stale hypothesis(es) (proposed >7 days) \u{2014} test, refine, or close\n", stale_hyps.len());
+    }
+
+    // Subgraph stats
+    out += &format!("\n[Graph: {} nodes, {} edges within 3 hops of phase]\n", subgraph.nodes.len(), subgraph.edges.len());
+
+    out
+}

@@ -1337,3 +1337,62 @@ fn test_search_returns_empty_for_no_match() {
     let result = super::review::tool_search(&store, "xyzzy_nonexistent_garbage_12345");
     assert!(result.contains("No results found"), "Expected no results in: {}", result);
 }
+
+// === pm_session_context tests ===
+
+#[test]
+fn test_session_context_returns_full_briefing() {
+    let store = test_store();
+    let proj = store.create_project("ctx-test", Some("ct"), None).unwrap();
+    let phase = store.create_phase(proj.id, "Kernel Optimization", 50, &[]).unwrap();
+    store.update_phase_status(phase.id, PhaseStatus::InProgress).unwrap();
+
+    // Create experiment under phase
+    let exp = store.create_experiment(Some(phase.id), "Fused MoE benchmark").unwrap();
+
+    // Create finding under experiment
+    let finding = store.create_finding(Some(exp.id),
+        "a]Fused MoE GEMV kernel achieves 40% speedup on V100 with quantized weights — validates the hypothesis that fusing expert selection with GEMV reduces memory bandwidth pressure."
+    ).unwrap();
+
+    // Create decision linked to project
+    let decision = store.create_decision(Some(exp.id), "Use fused MoE kernel as default path for V100 inference",
+        Some("40% speedup confirmed across multiple quant types"), Some(proj.id)).unwrap();
+
+    // Create hypothesis on the phase
+    let hyp = store.create_hypothesis(Some(phase.id),
+        "a]Fusing expert gate routing with GEMV will reduce global memory reads by 30-50% on memory-bound V100 workloads"
+    ).unwrap();
+
+    // Create literature on the project
+    let lit = store.create_literature(proj.id, "Efficient MoE Inference on GPUs",
+        Some("2401.12345"), Some("Directly relevant to kernel fusion approach"),
+        Some("Demonstrates 2x throughput improvement via fused expert selection"),
+        Some("Smith et al."), Some("NeurIPS"), Some(2025), None, None, None).unwrap();
+
+    // Wire up KG edges so the graph traversal finds them
+    store.create_edge(NodeType::Phase, phase.id, NodeType::Experiment, exp.id, EdgeType::Contains).unwrap();
+    store.create_edge(NodeType::Experiment, exp.id, NodeType::Finding, finding.id, EdgeType::ProducedBy).unwrap();
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Decision, decision.id, EdgeType::Informed).unwrap();
+    store.create_edge(NodeType::Phase, phase.id, NodeType::Hypothesis, hyp.id, EdgeType::Contains).unwrap();
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Literature, lit.id, EdgeType::Supports).unwrap();
+
+    // Call session_context
+    let result = super::dashboard::tool_session_context(&store, "ctx-test");
+
+    // Verify all sections present
+    assert!(result.contains("Session Context: ctx-test"), "Missing header in: {}", result);
+    assert!(result.contains("Kernel Optimization"), "Missing phase name in: {}", result);
+    assert!(result.contains("## Active Phase"), "Missing active phase section in: {}", result);
+    assert!(result.contains("IN-PROGRESS"), "Missing phase status in: {}", result);
+    assert!(result.contains("## Recent Findings"), "Missing findings section in: {}", result);
+    assert!(result.contains("Fused MoE GEMV"), "Missing finding text in: {}", result);
+    assert!(result.contains("## Active Hypotheses"), "Missing hypotheses section in: {}", result);
+    assert!(result.contains("proposed"), "Missing hypothesis status in: {}", result);
+    assert!(result.contains("## Key Decisions"), "Missing decisions section in: {}", result);
+    assert!(result.contains("fused MoE kernel"), "Missing decision text in: {}", result);
+    assert!(result.contains("## Relevant Literature"), "Missing literature section in: {}", result);
+    assert!(result.contains("Efficient MoE Inference"), "Missing literature title in: {}", result);
+    assert!(result.contains("## Suggested Next Actions"), "Missing next actions section in: {}", result);
+    assert!(result.contains("[Graph:"), "Missing graph stats in: {}", result);
+}

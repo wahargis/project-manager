@@ -181,6 +181,10 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             dashboard::tool_scaffold(store, p, pid)
         },
         "pm_session_init" => dashboard::tool_session_init(store),
+        "pm_session_context" => {
+            let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("");
+            dashboard::tool_session_context(store, project)
+        },
 
         // Review tools
         "pm_review" => {
@@ -373,6 +377,17 @@ fn tool_definitions() -> Vec<ToolDef> {
             name: "pm_session_init".into(),
             description: "Returns TaskCreate-ready actionable tasks from DAG for all active projects. Detects stale hypotheses and orphaned findings. Call at session start.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        },
+        ToolDef {
+            name: "pm_session_context".into(),
+            description: "Get focused context for the current session u{2014} extracts the active phase's knowledge subgraph with recent findings, decisions, hypotheses, and blocking issues.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "required": ["project"],
+                "properties": {
+                    "project": {"type": "string", "description": "Project name or alias"}
+                }
+            }),
         },
         ToolDef {
             name: "pm_exp_complete".into(),
