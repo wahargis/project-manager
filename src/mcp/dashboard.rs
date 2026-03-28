@@ -16,47 +16,6 @@ fn is_stale(ts: &NaiveDateTime, days: i64) -> bool {
     diff.num_days() >= days
 }
 
-
-/// Compute effective impact for a phase: raw_impact * avg_confidence * belief_penalty.
-/// Connects the TMS knowledge layer to the action selection layer (Decision #23 + Finding #142).
-fn effective_impact(store: &SqliteStore, phase: &crate::store::Phase) -> f64 {
-    let raw = phase.impact as f64;
-
-    // Get all findings linked to this phase's experiments
-    let phase_id = phase.id;
-    let experiments = store.list_experiments(Some(phase_id)).unwrap_or_default();
-
-    let mut total_confidence = 0.0;
-    let mut count = 0;
-    let mut has_suspended = false;
-    let mut has_retracted = false;
-
-    for exp in &experiments {
-        if let Ok(findings) = store.list_findings(Some(exp.id)) {
-            for f in &findings {
-                if let Some(c) = f.confidence {
-                    total_confidence += c;
-                    count += 1;
-                }
-                if let Some(ref bs) = f.belief_status {
-                    if bs == "suspended" { has_suspended = true; }
-                    if bs == "retracted" { has_retracted = true; }
-                }
-            }
-        }
-    }
-
-    // If no findings, return raw impact (no evidence to modulate)
-    if count == 0 {
-        return raw;
-    }
-
-    let avg_confidence = total_confidence / count as f64;
-    let belief_penalty = if has_retracted { 0.1 } else if has_suspended { 0.5 } else { 1.0 };
-
-    raw * avg_confidence * belief_penalty
-}
-
 pub fn tool_dashboard(store: &SqliteStore) -> String {
     let mut out = String::from("=== Cross-Project Dashboard ===\n\n");
     if let Ok(projects) = store.list_projects() {
@@ -73,11 +32,7 @@ pub fn tool_dashboard(store: &SqliteStore) -> String {
                     if let Some(top) = next.first() {
                         let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
                         let pref = top.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", top.id));
-                        let eff = effective_impact(store, &top);
-                        let eff_str = if (eff - top.impact as f64).abs() > 0.5 {
-                            format!(" eff:{:.0}", eff)
-                        } else { String::new() };
-                        out += &format!("  [{}] {} {} [impact:{}{}] {}\n", parent.name, s, pref, top.impact, eff_str, top.name);
+                        out += &format!("  [{}] {} {} [impact:{}] {}\n", parent.name, s, pref, top.impact, top.name);
                     }
                 }
             } else {
