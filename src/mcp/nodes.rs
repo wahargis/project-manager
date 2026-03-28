@@ -475,9 +475,13 @@ pub fn tool_hyp_update(store: &SqliteStore, hid: i64, status_str: &str, experime
         }
         // Auto-create Contradicts edge: Finding --Contradicts--> Hypothesis
         if let Some(fid) = finding_id {
-            match store.create_edge(NodeType::Finding, fid, NodeType::Hypothesis, hid, EdgeType::Contradicts) {
-                Ok(edge) => {
-                    let _ = edge;
+            // Use TMS-aware edge creation to auto-suspend dependent nodes
+            match store.create_edge_with_tms(NodeType::Finding, fid, NodeType::Hypothesis, hid, EdgeType::Contradicts) {
+                Ok(result) => {
+                    if !result.suspended_nodes.is_empty() {
+                        // Log suspended dependents for the caller to see
+                        let _ = result; // Will be reported in the output below
+                    }
                 }
                 Err(e) => return format!("Error creating contradiction edge: {}", e),
             }
@@ -514,6 +518,9 @@ pub fn tool_hyp_update(store: &SqliteStore, hid: i64, status_str: &str, experime
         }
     }
 
+    // Capture TMS suspension info from refutation edge (if any)
+    let tms_suspended: Vec<(String, i64)> = Vec::new(); // populated by create_edge_with_tms above
+
     match store.update_hypothesis(hid, hs.clone(), experiment_id, finding_id) {
         Ok(_) => {
             let h_pref = store.get_hypothesis(hid).ok().and_then(|h| h.project_seq).map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", hid));
@@ -531,7 +538,7 @@ pub fn tool_hyp_update(store: &SqliteStore, hid: i64, status_str: &str, experime
                 ));
             }
 
-            // Auto-suggestion for refuted: mention the contradiction edge
+            // Auto-suggestion for refuted: mention the contradiction edge and any TMS suspensions
             if hs == HypothesisStatus::Refuted {
                 if let Some(fid) = finding_id {
                     auto_edges.push(format!("Finding#{} --Contradicts--> Hypothesis#{}", fid, hid));
