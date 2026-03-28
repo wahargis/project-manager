@@ -105,17 +105,23 @@ fn antonym_signal(text_a: &str, text_b: &str) -> (bool, f64) {
 
 /// Extract numbers from text and check for divergence.
 fn numeric_signal(text_a: &str, text_b: &str) -> (bool, f64) {
-    let nums_a = extract_numbers(text_a);
-    let nums_b = extract_numbers(text_b);
+    let nums_a = extract_numbers_with_context(text_a);
+    let nums_b = extract_numbers_with_context(text_b);
 
     if nums_a.is_empty() || nums_b.is_empty() {
         return (false, 0.0);
     }
 
-    // Check if any number in A diverges significantly from closest number in B
-    for &na in &nums_a {
-        for &nb in &nums_b {
-            if na > 0.0 && nb > 0.0 {
+    // Only compare numbers when surrounding context shares keywords.
+    // "3.5 bits per element" vs "900 GB/s bandwidth" should NOT fire
+    // because context words (bits/element vs GB/bandwidth) don't overlap.
+    // "97.2 tok/s" vs "45.6 tok/s" SHOULD fire because "tok" matches.
+    for (na, ctx_a) in &nums_a {
+        for (nb, ctx_b) in &nums_b {
+            let shared = ctx_a.iter().any(|wa| ctx_b.iter().any(|wb| wa == wb && wa.len() >= 3));
+            if !shared { continue; }
+
+            if *na > 0.0 && *nb > 0.0 {
                 let ratio = na / nb;
                 if ratio > 1.5 || ratio < 0.67 {
                     return (true, 0.5);
@@ -124,6 +130,27 @@ fn numeric_signal(text_a: &str, text_b: &str) -> (bool, f64) {
         }
     }
     (false, 0.0)
+}
+
+/// Extract numbers with surrounding context words (2 words before + after).
+fn extract_numbers_with_context(text: &str) -> Vec<(f64, Vec<String>)> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let mut results = Vec::new();
+    for (i, word) in words.iter().enumerate() {
+        let cleaned: String = word.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+        if let Ok(n) = cleaned.parse::<f64>() {
+            if n > 1.0 {
+                let start = if i >= 2 { i - 2 } else { 0 };
+                let end = std::cmp::min(i + 3, words.len());
+                let ctx: Vec<String> = words[start..end].iter()
+                    .map(|w| w.to_lowercase().trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+                    .filter(|w| w.len() >= 2)
+                    .collect();
+                results.push((n, ctx));
+            }
+        }
+    }
+    results
 }
 
 /// Simple number extraction via character scanning.
@@ -354,8 +381,8 @@ mod tests {
     #[test]
     fn test_score_pair_no_contradiction() {
         let (score, signals) = score_pair(
-            "TurboQuant achieves quality-neutral compression",
-            "The algorithm uses recursive decomposition"
+            "TurboQuant achieves 3.5 bits per element",
+            "The V100 has 900 GB/s HBM2 bandwidth"
         );
         assert!(score < 0.3, "Unrelated texts should have low score, got {}", score);
         assert!(signals.is_empty());
