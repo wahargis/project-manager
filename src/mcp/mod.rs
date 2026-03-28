@@ -315,6 +315,20 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             dashboard::tool_since(store, since, session_id)
         },
 
+        // TMS (Truth-Maintenance System) tools
+        "pm_set_confidence" => {
+            let nt = args.get("node_type").and_then(|v| v.as_str()).unwrap_or("finding");
+            let nid = args.get("node_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let conf = args.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
+            edges::tool_set_confidence(store, nt, nid, conf)
+        },
+        "pm_set_belief" => {
+            let nt = args.get("node_type").and_then(|v| v.as_str()).unwrap_or("finding");
+            let nid = args.get("node_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let status = args.get("status").and_then(|v| v.as_str()).unwrap_or("believed");
+            edges::tool_set_belief(store, nt, nid, status)
+        },
+
         _ => format!("Unknown tool: {}", tool_name),
     }
 }
@@ -467,6 +481,16 @@ fn tool_definitions() -> Vec<ToolDef> {
             name: "pm_session_end".into(),
             description: "End the current research session with an optional summary. Records end timestamp.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"summary": {"type": "string", "description": "Brief summary of what was accomplished this session"}}}),
+        },
+        ToolDef {
+            name: "pm_set_confidence".into(),
+            description: "Set confidence level on any TMS-enabled node (finding, decision, hypothesis, principle, constraint). Value 0.0-1.0.".into(),
+            input_schema: serde_json::json!({"type": "object", "required": ["node_type", "node_id", "confidence"], "properties": {"node_type": {"type": "string", "description": "finding, decision, hypothesis, principle, or constraint"}, "node_id": {"type": "integer"}, "confidence": {"type": "number", "description": "Confidence level 0.0-1.0"}}}),
+        },
+        ToolDef {
+            name: "pm_set_belief".into(),
+            description: "Set belief status on any TMS-enabled node. When a node is contradicted, TMS auto-suspends dependents. Use this to manually believed/suspended/retracted.".into(),
+            input_schema: serde_json::json!({"type": "object", "required": ["node_type", "node_id", "status"], "properties": {"node_type": {"type": "string", "description": "finding, decision, hypothesis, principle, or constraint"}, "node_id": {"type": "integer"}, "status": {"type": "string", "description": "believed, suspended, or retracted"}}}),
         },
         ToolDef {
             name: "pm_since".into(),

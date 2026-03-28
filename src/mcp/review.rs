@@ -175,6 +175,105 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
         }
     }
 
+
+
+    // === TMS: Suspended/Retracted Nodes ===
+    {
+        let mut suspended_items = Vec::new();
+        let mut retracted_items = Vec::new();
+
+        // Check findings
+        if let Ok(phases) = store.list_phases(proj.id) {
+            for phase in &phases {
+                if let Ok(exps) = store.list_experiments(Some(phase.id)) {
+                    for exp in &exps {
+                        if let Ok(findings) = store.list_findings(Some(exp.id)) {
+                            for f in &findings {
+                                match f.belief_status.as_deref() {
+                                    Some("suspended") => {
+                                        let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
+                                        suspended_items.push(format!("  F#{}: {} (conf={:.2})", f.id, t, f.confidence.unwrap_or(0.0)));
+                                    }
+                                    Some("retracted") => {
+                                        let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
+                                        retracted_items.push(format!("  F#{}: {} (conf={:.2})", f.id, t, f.confidence.unwrap_or(0.0)));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check hypotheses
+        for h in &project_hyps {
+            match h.belief_status.as_deref() {
+                Some("suspended") => {
+                    let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text };
+                    let href = h.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", h.id));
+                    suspended_items.push(format!("  H{}: {} (conf={:.2})", href, t, h.confidence.unwrap_or(0.0)));
+                }
+                Some("retracted") => {
+                    let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text };
+                    let href = h.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", h.id));
+                    retracted_items.push(format!("  H{}: {} (conf={:.2})", href, t, h.confidence.unwrap_or(0.0)));
+                }
+                _ => {}
+            }
+        }
+
+        // Check decisions
+        if let Ok(decisions) = store.list_decisions(proj.id) {
+            for d in &decisions {
+                match d.belief_status.as_deref() {
+                    Some("suspended") => {
+                        let t = if d.what.len() > 60 { &d.what[..60] } else { &d.what };
+                        let dref = d.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", d.id));
+                        suspended_items.push(format!("  D{}: {} (conf={:.2})", dref, t, d.confidence.unwrap_or(0.0)));
+                    }
+                    Some("retracted") => {
+                        let t = if d.what.len() > 60 { &d.what[..60] } else { &d.what };
+                        let dref = d.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", d.id));
+                        retracted_items.push(format!("  D{}: {} (conf={:.2})", dref, t, d.confidence.unwrap_or(0.0)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Check principles
+        if let Ok(principles) = store.list_principles(proj.id) {
+            for p in &principles {
+                match p.belief_status.as_deref() {
+                    Some("suspended") => {
+                        let t = if p.text.len() > 60 { &p.text[..60] } else { &p.text };
+                        suspended_items.push(format!("  P#{}: {} (conf={:.2})", p.id, t, p.confidence.unwrap_or(0.0)));
+                    }
+                    Some("retracted") => {
+                        let t = if p.text.len() > 60 { &p.text[..60] } else { &p.text };
+                        retracted_items.push(format!("  P#{}: {} (conf={:.2})", p.id, t, p.confidence.unwrap_or(0.0)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if !suspended_items.is_empty() {
+            text += &format!("\n## Suspended Nodes (TMS): {}\n", suspended_items.len());
+            for item in &suspended_items {
+                text += &format!("{}\n", item);
+            }
+        }
+        if !retracted_items.is_empty() {
+            text += &format!("\n## Retracted Nodes (TMS): {}\n", retracted_items.len());
+            for item in &retracted_items {
+                text += &format!("{}\n", item);
+            }
+        }
+    }
+
     text
 }
 
@@ -297,7 +396,15 @@ pub fn tool_search(store: &SqliteStore, query: &str) -> String {
                     r.text_excerpt.clone()
                 };
                 text += &format!("  {} #{}{}: {}\n", type_label, r.node_id, seq_label, excerpt);
-                text += &format!("    score={:.2} [edges={:.0}, evidence={:.0}, recency={:.2}]\n", score, edges, evidence, recency);
+                                let conf_str = match r.confidence {
+                    Some(c) => format!(", conf={:.2}", c),
+                    None => String::new(),
+                };
+                let belief_str = match &r.belief_status {
+                    Some(s) if s != "believed" => format!(", {}", s),
+                    _ => String::new(),
+                };
+                text += &format!("    score={:.2} [edges={:.0}, evidence={:.0}, recency={:.2}{}{}]\n", score, edges, evidence, recency, conf_str, belief_str);
                 text += &format!("    -> pm_kg_traverse node_type={} node_id={}\n\n", r.node_type, r.node_id);
             }
             text += &format!("{} results found.\n", scored.len());

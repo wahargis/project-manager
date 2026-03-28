@@ -7,7 +7,7 @@
 use rusqlite::Connection;
 
 /// Current highest migration version.
-const LATEST_VERSION: i64 = 10;
+const LATEST_VERSION: i64 = 11;
 
 /// Run all pending migrations on the database connection.
 /// Creates the schema_version table if it doesn't exist, checks the current
@@ -60,6 +60,7 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), Box<dyn std::e
         8 => migrate_v8_subprojects(&tx)?,
         9 => migrate_v9_project_seq(&tx)?,
         10 => migrate_v10_temporal(&tx)?,
+        11 => migrate_v11_tms(&tx)?,
         _ => return Err(format!("Unknown migration version: {}", version).into()),
     }
 
@@ -287,6 +288,34 @@ fn migrate_v10_temporal(conn: &Connection) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+// --- Migration v11: TMS (Truth-Maintenance System) ---
+// Add confidence and belief_status to findings, decisions, hypotheses, principles, constraints_tbl
+fn migrate_v11_tms(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    // Findings: default confidence 0.5
+    add_column_if_not_exists(conn, "findings", "confidence", "REAL DEFAULT 0.5")?;
+    add_column_if_not_exists(conn, "findings", "belief_status", "TEXT DEFAULT 'believed'")?;
+
+    // Decisions: default confidence 0.5
+    add_column_if_not_exists(conn, "decisions", "confidence", "REAL DEFAULT 0.5")?;
+    add_column_if_not_exists(conn, "decisions", "belief_status", "TEXT DEFAULT 'believed'")?;
+
+    // Hypotheses: default confidence 0.3 (hypotheses start lower)
+    // Note: confidence column already exists from v4 migration, but without default.
+    // Add belief_status. Update existing NULL confidence to 0.3.
+    add_column_if_not_exists(conn, "hypotheses", "belief_status", "TEXT DEFAULT 'believed'")?;
+    conn.execute_batch("UPDATE hypotheses SET confidence = 0.3 WHERE confidence IS NULL;")?;
+
+    // Principles: default confidence 0.8
+    add_column_if_not_exists(conn, "principles", "confidence", "REAL DEFAULT 0.8")?;
+    add_column_if_not_exists(conn, "principles", "belief_status", "TEXT DEFAULT 'believed'")?;
+
+    // Constraints: default confidence 0.9
+    add_column_if_not_exists(conn, "constraints_tbl", "confidence", "REAL DEFAULT 0.9")?;
+    add_column_if_not_exists(conn, "constraints_tbl", "belief_status", "TEXT DEFAULT 'believed'")?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,10 +502,10 @@ mod tests {
 
         // Verify schema_version recorded all 8 migrations
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 10);
+        assert_eq!(count, 11);
 
         let max_version: i64 = conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(max_version, 10);
+        assert_eq!(max_version, 11);
     }
 
     #[test]
@@ -488,7 +517,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 10, "Should still have exactly 10 version records after idempotent run");
+        assert_eq!(count, 11, "Should still have exactly 11 version records after idempotent run");
     }
 
     #[test]
@@ -532,7 +561,7 @@ mod tests {
 
         // Hypothesis new columns should be NULL
         let confidence: Option<f64> = conn.query_row("SELECT confidence FROM hypotheses WHERE id = 1", [], |r| r.get(0)).unwrap();
-        assert!(confidence.is_none(), "confidence should be NULL for pre-existing hypothesis");
+        assert_eq!(confidence, Some(0.3), "confidence should be 0.3 for pre-existing hypothesis after v11 TMS backfill");
 
         // Constraints new columns should have defaults
         let severity: Option<String> = conn.query_row("SELECT severity FROM constraints_tbl WHERE id = 1", [], |r| r.get(0)).unwrap();
@@ -578,7 +607,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 10, "Should have 10 total version records (3 pre-existing + 7 new)");
+        assert_eq!(count, 11, "Should have 11 total version records (3 pre-existing + 8 new)");
 
         // Verify v4 columns exist
         conn.execute(

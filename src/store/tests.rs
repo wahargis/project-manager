@@ -258,7 +258,7 @@ fn test_store_migration_creates_new_columns() {
     let hyp = store.create_hypothesis(None, "test hypothesis").unwrap();
     assert!(hyp.prediction.is_none());
     assert!(hyp.criteria.is_none());
-    assert!(hyp.confidence.is_none());
+    assert_eq!(hyp.confidence, Some(0.3), "hypothesis default confidence should be 0.3 after TMS migration");
 
     // Verify constraint new fields default to "hard" severity, rest None
     let con = store.create_constraint(proj.id, ConstraintScope::Hardware, "32GB VRAM", None, None, None, None, None).unwrap();
@@ -320,7 +320,7 @@ fn test_store_new_fields_round_trip_via_raw_sql() {
     assert_eq!(hyps.len(), 1);
     assert_eq!(hyps[0].text, "FP16 is faster");
     assert!(hyps[0].prediction.is_none());
-    assert!(hyps[0].confidence.is_none());
+    assert_eq!(hyps[0].confidence, Some(0.3), "hypothesis default confidence should be 0.3 after TMS migration");
 }
 
 
@@ -1298,4 +1298,272 @@ fn test_velocity_findings_per_session() {
 
     let velocity = store.get_velocity(proj.id).unwrap();
     assert!(velocity.findings_per_session.len() >= 2, "should have entries for at least 2 sessions");
+}
+
+
+// =========================================================
+// TMS v6: Truth-Maintenance System Tests
+// =========================================================
+
+#[test]
+fn test_tms_migration_adds_columns() {
+    // Verify migration v11 adds confidence + belief_status to all node tables
+    let store = test_store();
+    // After SqliteStore::in_memory(), all migrations run. Verify columns exist by querying them.
+    let proj = store.create_project("tms-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase 1", 10, &[]).unwrap();
+
+    // Finding: should have confidence (default 0.5) and belief_status (default "believed")
+    let finding = store.create_finding(Some({
+        let e = store.create_experiment(Some(phase.id), "E1").unwrap();
+        e.id
+    }), "Test finding for TMS").unwrap();
+    assert_eq!(finding.confidence, Some(0.5));
+    assert_eq!(finding.belief_status, Some("believed".to_string()));
+
+    // Decision: default confidence 0.5
+    let decision = store.create_decision(None, "Test decision for TMS", Some("Because TMS"), Some(proj.id)).unwrap();
+    assert_eq!(decision.confidence, Some(0.5));
+    assert_eq!(decision.belief_status, Some("believed".to_string()));
+
+    // Hypothesis: default confidence 0.3 (lower start)
+    let hyp = store.create_hypothesis(Some(phase.id), "Test hypothesis for TMS").unwrap();
+    assert_eq!(hyp.confidence, Some(0.3));
+    assert_eq!(hyp.belief_status, Some("believed".to_string()));
+
+    // Principle: default confidence 0.8
+    let principle = store.create_principle(proj.id, crate::store::PrincipleScope::Project, "Test principle for TMS", Some("TMS test"), None).unwrap();
+    assert_eq!(principle.confidence, Some(0.8));
+    assert_eq!(principle.belief_status, Some("believed".to_string()));
+
+    // Constraint: default confidence 0.9
+    let constraint = store.create_constraint(proj.id, crate::store::ConstraintScope::Hardware, "Test constraint for TMS", Some("test"), None, None, None, None).unwrap();
+    assert_eq!(constraint.confidence, Some(0.9));
+    assert_eq!(constraint.belief_status, Some("believed".to_string()));
+}
+
+#[test]
+fn test_default_confidence_by_type() {
+    let store = test_store();
+    let proj = store.create_project("conf-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "E1").unwrap();
+
+    let f = store.create_finding(Some(exp.id), "Finding for confidence test").unwrap();
+    assert!((f.confidence.unwrap() - 0.5).abs() < 0.01, "Finding default confidence should be 0.5");
+
+    let h = store.create_hypothesis(Some(phase.id), "Hyp for confidence test").unwrap();
+    assert!((h.confidence.unwrap() - 0.3).abs() < 0.01, "Hypothesis default confidence should be 0.3");
+
+    let p = store.create_principle(proj.id, crate::store::PrincipleScope::Project, "Principle for confidence test", None, None).unwrap();
+    assert!((p.confidence.unwrap() - 0.8).abs() < 0.01, "Principle default confidence should be 0.8");
+
+    let c = store.create_constraint(proj.id, crate::store::ConstraintScope::Hardware, "Constraint for confidence test", None, None, None, None, None).unwrap();
+    assert!((c.confidence.unwrap() - 0.9).abs() < 0.01, "Constraint default confidence should be 0.9");
+
+    let d = store.create_decision(None, "Decision for confidence test", Some("why"), Some(proj.id)).unwrap();
+    assert!((d.confidence.unwrap() - 0.5).abs() < 0.01, "Decision default confidence should be 0.5");
+}
+
+#[test]
+fn test_update_confidence() {
+    let store = test_store();
+    let proj = store.create_project("upd-conf", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "E1").unwrap();
+    let f = store.create_finding(Some(exp.id), "Confidence update test finding").unwrap();
+
+    // Update confidence to 0.8
+    store.update_confidence("Finding", f.id, 0.8).unwrap();
+    let f2 = store.get_finding(f.id).unwrap();
+    assert!((f2.confidence.unwrap() - 0.8).abs() < 0.01);
+
+    // Also test for Decision
+    let d = store.create_decision(None, "Decision conf test", Some("why"), Some(proj.id)).unwrap();
+    store.update_confidence("Decision", d.id, 0.95).unwrap();
+    let d2 = store.get_decision(d.id).unwrap();
+    assert!((d2.confidence.unwrap() - 0.95).abs() < 0.01);
+}
+
+#[test]
+fn test_update_belief_status() {
+    let store = test_store();
+    let proj = store.create_project("upd-belief", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "E1").unwrap();
+    let f = store.create_finding(Some(exp.id), "Belief status test finding").unwrap();
+    assert_eq!(f.belief_status.as_deref(), Some("believed"));
+
+    store.update_belief_status("Finding", f.id, "suspended").unwrap();
+    let f2 = store.get_finding(f.id).unwrap();
+    assert_eq!(f2.belief_status.as_deref(), Some("suspended"));
+
+    store.update_belief_status("Finding", f.id, "retracted").unwrap();
+    let f3 = store.get_finding(f.id).unwrap();
+    assert_eq!(f3.belief_status.as_deref(), Some("retracted"));
+}
+
+#[test]
+fn test_contradicts_edge_suspends_dependents() {
+    let store = test_store();
+    let proj = store.create_project("contra-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "E1").unwrap();
+
+    // Create a chain: finding1 -> (Supports) -> finding2 -> (Informed) -> decision1
+    let f1 = store.create_finding(Some(exp.id), "Original finding that will be contradicted").unwrap();
+    let f2 = store.create_finding(Some(exp.id), "Finding that depends on f1 via Supports edge").unwrap();
+    let d1 = store.create_decision(None, "Decision that depends on f2 via Informed edge", Some("Because f2"), Some(proj.id)).unwrap();
+
+    // Create dependency edges
+    store.create_edge(NodeType::Finding, f1.id, NodeType::Finding, f2.id, EdgeType::Supports).unwrap();
+    store.create_edge(NodeType::Finding, f2.id, NodeType::Decision, d1.id, EdgeType::Informed).unwrap();
+
+    // All nodes should be "believed" initially
+    assert_eq!(store.get_finding(f2.id).unwrap().belief_status.as_deref(), Some("believed"));
+    assert_eq!(store.get_decision(d1.id).unwrap().belief_status.as_deref(), Some("believed"));
+
+    // Create a new finding that contradicts f1
+    let f_contra = store.create_finding(Some(exp.id), "Contradicting finding that disproves f1").unwrap();
+
+    // Create Contradicts edge: f_contra contradicts f1
+    let result = store.create_edge_with_tms(
+        NodeType::Finding, f_contra.id,
+        NodeType::Finding, f1.id,
+        EdgeType::Contradicts,
+    ).unwrap();
+
+    // f1 itself should have reduced confidence
+    let f1_after = store.get_finding(f1.id).unwrap();
+    assert!(f1_after.confidence.unwrap() < 0.5, "f1 confidence should be reduced after contradiction");
+
+    // f2 and d1 (downstream dependents) should be suspended
+    let f2_after = store.get_finding(f2.id).unwrap();
+    let d1_after = store.get_decision(d1.id).unwrap();
+    assert_eq!(f2_after.belief_status.as_deref(), Some("suspended"), "f2 should be suspended as dependent");
+    assert_eq!(d1_after.belief_status.as_deref(), Some("suspended"), "d1 should be suspended as dependent");
+
+    // Verify suspended nodes are returned in the TMS result
+    assert!(!result.suspended_nodes.is_empty(), "Should return list of suspended nodes");
+}
+
+#[test]
+fn test_supports_edge_increases_confidence() {
+    let store = test_store();
+    let proj = store.create_project("support-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "E1").unwrap();
+
+    // Use a hypothesis (default confidence 0.3) where even 1 support triggers an increase
+    // Formula: min(0.95, 0.3 + 0.1 * support_count), max(current, formula)
+    // Hypothesis starts at 0.3. With 1 support: formula = 0.4, max(0.3, 0.4) = 0.4 -- increase!
+    let h = store.create_hypothesis(Some(phase.id), "Hypothesis that will get supporting evidence").unwrap();
+    let initial_conf = h.confidence.unwrap();
+    assert!((initial_conf - 0.3).abs() < 0.01);
+
+    // Create supporting evidence
+    let s1 = store.create_finding(Some(exp.id), "Supporting evidence 1 for hypothesis").unwrap();
+    store.create_edge_with_tms(NodeType::Finding, s1.id, NodeType::Hypothesis, h.id, EdgeType::Supports).unwrap();
+
+    let h_after = store.get_hypothesis(h.id).unwrap();
+    assert!(h_after.confidence.unwrap() > initial_conf,
+        "Confidence should increase with support: was {} now {}", initial_conf, h_after.confidence.unwrap());
+
+    // Also verify: with a Finding (default 0.5), need 3 supports to increase
+    let target = store.create_finding(Some(exp.id), "Target finding for support test").unwrap();
+    let f_initial = target.confidence.unwrap(); // 0.5
+    for i in 0..3 {
+        let s = store.create_finding(Some(exp.id), &format!("Support {} for finding", i)).unwrap();
+        store.create_edge_with_tms(NodeType::Finding, s.id, NodeType::Finding, target.id, EdgeType::Supports).unwrap();
+    }
+    let target_after = store.get_finding(target.id).unwrap();
+    assert!(target_after.confidence.unwrap() > f_initial,
+        "Finding confidence should increase after 3 supports: was {} now {}", f_initial, target_after.confidence.unwrap());
+}
+
+#[test]
+fn test_confidence_cap_at_095() {
+    let store = test_store();
+    let proj = store.create_project("cap-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "E1").unwrap();
+
+    let target = store.create_finding(Some(exp.id), "Target finding for confidence cap test").unwrap();
+
+    // Add many supporting edges (formula: min(0.95, 0.3 + 0.1 * count))
+    // At 7 supports: 0.3 + 0.7 = 1.0 -> capped at 0.95
+    for i in 0..10 {
+        let s = store.create_finding(Some(exp.id), &format!("Support {} for cap test", i)).unwrap();
+        store.create_edge_with_tms(NodeType::Finding, s.id, NodeType::Finding, target.id, EdgeType::Supports).unwrap();
+    }
+
+    let target_final = store.get_finding(target.id).unwrap();
+    assert!(target_final.confidence.unwrap() <= 0.95,
+        "Confidence should be capped at 0.95, got {}", target_final.confidence.unwrap());
+    assert!((target_final.confidence.unwrap() - 0.95).abs() < 0.01,
+        "Confidence should be exactly 0.95 with 10 supports, got {}", target_final.confidence.unwrap());
+}
+
+#[test]
+fn test_low_confidence_triggers_suspension() {
+    let store = test_store();
+    let proj = store.create_project("low-conf-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "E1").unwrap();
+
+    // Create a hypothesis (starts at 0.3 confidence)
+    let h = store.create_hypothesis(Some(phase.id), "Hypothesis that will be contradicted").unwrap();
+    assert!((h.confidence.unwrap() - 0.3).abs() < 0.01);
+
+    // Contradict it (reduces by 0.2 -> 0.1, which is < 0.3 threshold)
+    let f_contra = store.create_finding(Some(exp.id), "Finding that contradicts the hypothesis").unwrap();
+    store.create_edge_with_tms(
+        NodeType::Finding, f_contra.id,
+        NodeType::Hypothesis, h.id,
+        EdgeType::Contradicts,
+    ).unwrap();
+
+    let h_after = store.get_hypothesis(h.id).unwrap();
+    assert!(h_after.confidence.unwrap() < 0.3,
+        "Hypothesis confidence should be below 0.3 after contradiction: {}", h_after.confidence.unwrap());
+    assert_eq!(h_after.belief_status.as_deref(), Some("suspended"),
+        "Hypothesis should be auto-suspended when confidence drops below 0.3");
+}
+
+#[test]
+fn test_review_shows_suspended_nodes() {
+    let store = test_store();
+    let proj = store.create_project("review-sus-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "E1").unwrap();
+
+    let f = store.create_finding(Some(exp.id), "A finding that will be suspended in the review test to verify display").unwrap();
+    store.update_belief_status("Finding", f.id, "suspended").unwrap();
+
+    let h = store.create_hypothesis(Some(phase.id), "A hypothesis that is retracted in the review test for display verification").unwrap();
+    store.update_belief_status("Hypothesis", h.id, "retracted").unwrap();
+
+    let review_output = crate::mcp::review::tool_review(&store, "review-sus-test");
+    assert!(review_output.contains("Suspended") || review_output.contains("suspended"),
+        "Review should mention suspended nodes. Output:\n{}", review_output);
+    assert!(review_output.contains("Retracted") || review_output.contains("retracted"),
+        "Review should mention retracted nodes. Output:\n{}", review_output);
+}
+
+#[test]
+fn test_search_includes_confidence() {
+    let store = test_store();
+    let proj = store.create_project("search-conf-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "E1").unwrap();
+
+    let f = store.create_finding(Some(exp.id), "Unique xylophone finding for search confidence verification test").unwrap();
+    store.update_confidence("Finding", f.id, 0.85).unwrap();
+    store.update_belief_status("Finding", f.id, "suspended").unwrap();
+
+    let search_output = crate::mcp::review::tool_search(&store, "xylophone");
+    assert!(search_output.contains("0.85") || search_output.contains("confidence"),
+        "Search results should include confidence. Output:\n{}", search_output);
+    assert!(search_output.contains("suspended"),
+        "Search results should include belief status. Output:\n{}", search_output);
 }

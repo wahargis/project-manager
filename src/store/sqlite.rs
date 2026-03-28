@@ -1677,12 +1677,12 @@ impl Store for SqliteStore {
                 "SELECT id, project_seq, text, modified_at, confidence, belief_status FROM findings WHERE text LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<f64>>(4)?, row.get::<_, Option<String>>(5)?))
             })?;
             for r in rows {
-                let (id, seq, text, modified_at) = r?;
+                let (id, seq, text, modified_at, confidence, belief_status) = r?;
                 let excerpt: String = text.chars().take(150).collect();
-                results.push(SearchResult { node_type: "finding".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
+                results.push(SearchResult { node_type: "finding".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
             }
         }
 
@@ -1692,12 +1692,12 @@ impl Store for SqliteStore {
                 "SELECT id, project_seq, what, why, modified_at, confidence, belief_status FROM decisions WHERE what LIKE ?1 OR why LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, Option<f64>>(5)?, row.get::<_, Option<String>>(6)?))
             })?;
             for r in rows {
-                let (id, seq, what, _why, modified_at) = r?;
+                let (id, seq, what, _why, modified_at, confidence, belief_status) = r?;
                 let excerpt: String = what.chars().take(150).collect();
-                results.push(SearchResult { node_type: "decision".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
+                results.push(SearchResult { node_type: "decision".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
             }
         }
 
@@ -1707,12 +1707,12 @@ impl Store for SqliteStore {
                 "SELECT id, project_seq, text, prediction, modified_at, confidence, belief_status FROM hypotheses WHERE text LIKE ?1 OR prediction LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, Option<f64>>(5)?, row.get::<_, Option<String>>(6)?))
             })?;
             for r in rows {
-                let (id, seq, text, _pred, modified_at) = r?;
+                let (id, seq, text, _pred, modified_at, confidence, belief_status) = r?;
                 let excerpt: String = text.chars().take(150).collect();
-                results.push(SearchResult { node_type: "hypothesis".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
+                results.push(SearchResult { node_type: "hypothesis".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
             }
         }
 
@@ -1782,12 +1782,12 @@ impl Store for SqliteStore {
                 "SELECT id, project_seq, text, modified_at, confidence, belief_status FROM principles WHERE text LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<f64>>(4)?, row.get::<_, Option<String>>(5)?))
             })?;
             for r in rows {
-                let (id, seq, text, modified_at) = r?;
+                let (id, seq, text, modified_at, confidence, belief_status) = r?;
                 let excerpt: String = text.chars().take(150).collect();
-                results.push(SearchResult { node_type: "principle".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
+                results.push(SearchResult { node_type: "principle".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
             }
         }
 
@@ -1797,12 +1797,12 @@ impl Store for SqliteStore {
                 "SELECT id, project_seq, text, modified_at, confidence, belief_status FROM constraints_tbl WHERE text LIKE ?1 LIMIT 50"
             )?;
             let rows = stmt.query_map(params![pattern], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<f64>>(4)?, row.get::<_, Option<String>>(5)?))
             })?;
             for r in rows {
-                let (id, seq, text, modified_at) = r?;
+                let (id, seq, text, modified_at, confidence, belief_status) = r?;
                 let excerpt: String = text.chars().take(150).collect();
-                results.push(SearchResult { node_type: "constraint".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
+                results.push(SearchResult { node_type: "constraint".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
             }
         }
 
