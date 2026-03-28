@@ -148,6 +148,33 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
         }
     }
 
+
+    // === Staleness Report (Feature 5) ===
+    if let Ok(report) = store.staleness_report(proj.id) {
+        if !report.stale_hypotheses.is_empty() {
+            text += &format!("\n## Stale Hypotheses (proposed >7 days, untested): {}\n", report.stale_hypotheses.len());
+            for (h, days) in report.stale_hypotheses.iter().take(5) {
+                let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text };
+                let href = h.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", h.id));
+                text += &format!("  H{}: {} ({} days stale)\n", href, t, days);
+            }
+        }
+        if !report.stale_experiments.is_empty() {
+            text += &format!("\n## Stale Experiments (pending >14 days): {}\n", report.stale_experiments.len());
+            for (e, days) in report.stale_experiments.iter().take(5) {
+                let eref = e.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", e.id));
+                text += &format!("  E{}: {} ({} days stale)\n", eref, e.name, days);
+            }
+        }
+        if !report.unconnected_findings.is_empty() {
+            text += &format!("\n## Unconnected Findings (>30 days, no edges): {}\n", report.unconnected_findings.len());
+            for f in report.unconnected_findings.iter().take(5) {
+                let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
+                text += &format!("  F#{}: {}\n", f.id, t);
+            }
+        }
+    }
+
     text
 }
 

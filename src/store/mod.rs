@@ -270,6 +270,47 @@ pub struct FeedbackEntry {
     pub created_at: NaiveDateTime,
 }
 
+
+// --- Temporal Awareness Types (Feature 5) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    pub id: i64,
+    pub project_id: Option<i64>,
+    pub started_at: NaiveDateTime,
+    pub ended_at: Option<NaiveDateTime>,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporalDelta {
+    pub since: String,
+    pub phases: Vec<Phase>,
+    pub experiments: Vec<Experiment>,
+    pub findings: Vec<Finding>,
+    pub decisions: Vec<Decision>,
+    pub hypotheses: Vec<Hypothesis>,
+    pub research: Vec<Research>,
+    pub literature: Vec<LiteratureEntry>,
+    pub principles: Vec<Principle>,
+    pub constraints: Vec<Constraint>,
+    pub feedback: Vec<FeedbackEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StalenessReport {
+    pub stale_hypotheses: Vec<(Hypothesis, i64)>,
+    pub stale_experiments: Vec<(Experiment, i64)>,
+    pub unconnected_findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VelocityMetrics {
+    pub findings_per_session: Vec<(i64, usize)>,
+    pub experiments_per_week: Vec<(String, usize, usize)>,
+    pub hypothesis_lifecycle_days: Vec<(i64, f64)>,
+}
+
 // --- Store Trait ---
 
 pub trait Store {
@@ -361,6 +402,15 @@ pub trait Store {
     // Per-project ordinal resolution
     fn get_project_by_name(&self, name: &str) -> Result<Project>;
     fn resolve_node_id(&self, table: &str, seq: i64, project_name: Option<&str>) -> Result<i64>;
+
+    // --- Temporal Awareness (Feature 5) ---
+    fn create_session(&self, project_id: Option<i64>) -> Result<Session>;
+    fn end_session(&self, id: i64, summary: Option<&str>) -> Result<()>;
+    fn list_sessions(&self, project_id: Option<i64>) -> Result<Vec<Session>>;
+    fn get_current_session(&self) -> Result<Option<Session>>;
+    fn nodes_since(&self, timestamp: &str) -> Result<TemporalDelta>;
+    fn staleness_report(&self, project_id: i64) -> Result<StalenessReport>;
+    fn get_velocity(&self, project_id: i64) -> Result<VelocityMetrics>;
 }
 
 #[cfg(test)]

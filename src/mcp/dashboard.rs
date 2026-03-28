@@ -493,3 +493,124 @@ pub fn tool_project_set_status(store: &SqliteStore, name: &str, active: bool) ->
         None => format!("Project '{}' not found. Use pm_project_list to see available projects.", name),
     }
 }
+
+
+// --- Temporal Awareness Tools (Feature 5) ---
+
+pub fn tool_session_start(store: &SqliteStore, project: Option<&str>) -> String {
+    let project_id = if let Some(name) = project {
+        match store.list_projects() {
+            Ok(projects) => projects.iter()
+                .find(|p| p.name == name || p.alias.as_deref() == Some(name))
+                .map(|p| p.id),
+            Err(e) => return format!("Error: {}", e),
+        }
+    } else {
+        None
+    };
+
+    match store.create_session(project_id) {
+        Ok(session) => {
+            let proj_str = project_id.map(|_| format!(" (project: {})", project.unwrap_or("?"))).unwrap_or_default();
+            format!("Session #{} started at {}{}", session.id, session.started_at.format("%Y-%m-%d %H:%M:%S"), proj_str)
+        }
+        Err(e) => format!("Error creating session: {}", e),
+    }
+}
+
+pub fn tool_session_end(store: &SqliteStore, summary: Option<&str>) -> String {
+    match store.get_current_session() {
+        Ok(Some(session)) => {
+            match store.end_session(session.id, summary) {
+                Ok(()) => {
+                    let sum_str = summary.map(|s| format!("
+Summary: {}", s)).unwrap_or_default();
+                    format!("Session #{} ended.{}", session.id, sum_str)
+                }
+                Err(e) => format!("Error ending session: {}", e),
+            }
+        }
+        Ok(None) => "No active session to end. Start one with pm_session_start.".to_string(),
+        Err(e) => format!("Error: {}", e),
+    }
+}
+
+pub fn tool_since(store: &SqliteStore, since: Option<&str>, session_id: Option<i64>) -> String {
+    let timestamp = if let Some(sid) = session_id {
+        // Look up session start time
+        match store.list_sessions(None) {
+            Ok(sessions) => {
+                match sessions.iter().find(|s| s.id == sid) {
+                    Some(session) => session.started_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    None => return format!("Session #{} not found.", sid),
+                }
+            }
+            Err(e) => return format!("Error: {}", e),
+        }
+    } else if let Some(s) = since {
+        // Pad date-only to datetime
+        if s.len() == 10 { format!("{} 00:00:00", s) } else { s.to_string() }
+    } else {
+        return "Error: provide either 'since' (date) or 'session_id'.".to_string();
+    };
+
+    match store.nodes_since(&timestamp) {
+        Ok(delta) => {
+            let mut out = format!("=== Changes since {} ===\n\n", delta.since);
+
+            let mut total = 0;
+            let sections: Vec<(&str, usize)> = vec![
+                ("Phases", delta.phases.len()),
+                ("Experiments", delta.experiments.len()),
+                ("Findings", delta.findings.len()),
+                ("Decisions", delta.decisions.len()),
+                ("Hypotheses", delta.hypotheses.len()),
+                ("Research", delta.research.len()),
+                ("Literature", delta.literature.len()),
+                ("Principles", delta.principles.len()),
+                ("Constraints", delta.constraints.len()),
+                ("Feedback", delta.feedback.len()),
+            ];
+
+            for (name, count) in &sections {
+                if *count > 0 {
+                    total += count;
+                    out += &format!("  {}: {} new/modified\n", name, count);
+                }
+            }
+
+            if total == 0 {
+                out += "  No changes found.\n";
+            } else {
+                out += &format!("\n  Total: {} nodes changed\n", total);
+            }
+
+            // Show details for small deltas
+            if total <= 20 {
+                if !delta.findings.is_empty() {
+                    out += "\n--- Findings ---\n";
+                    for f in &delta.findings {
+                        let t = if f.text.len() > 80 { &f.text[..80] } else { &f.text };
+                        out += &format!("  F#{}: {}\n", f.id, t);
+                    }
+                }
+                if !delta.decisions.is_empty() {
+                    out += "\n--- Decisions ---\n";
+                    for d in &delta.decisions {
+                        let t = if d.what.len() > 80 { &d.what[..80] } else { &d.what };
+                        out += &format!("  D#{}: {}\n", d.id, t);
+                    }
+                }
+                if !delta.experiments.is_empty() {
+                    out += "\n--- Experiments ---\n";
+                    for e in &delta.experiments {
+                        out += &format!("  E#{}: {} ({:?})\n", e.id, e.name, e.status);
+                    }
+                }
+            }
+
+            out
+        }
+        Err(e) => format!("Error: {}", e),
+    }
+}

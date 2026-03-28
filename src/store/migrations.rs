@@ -7,7 +7,7 @@
 use rusqlite::Connection;
 
 /// Current highest migration version.
-const LATEST_VERSION: i64 = 9;
+const LATEST_VERSION: i64 = 10;
 
 /// Run all pending migrations on the database connection.
 /// Creates the schema_version table if it doesn't exist, checks the current
@@ -59,6 +59,7 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), Box<dyn std::e
         7 => migrate_v7_edges_uniqueness(&tx)?,
         8 => migrate_v8_subprojects(&tx)?,
         9 => migrate_v9_project_seq(&tx)?,
+        10 => migrate_v10_temporal(&tx)?,
         _ => return Err(format!("Unknown migration version: {}", version).into()),
     }
 
@@ -250,6 +251,42 @@ fn migrate_v9_project_seq(conn: &Connection) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+// --- Migration v10: Temporal awareness (Feature 5) ---
+// Add sessions table, modified_at column to all node tables
+fn migrate_v10_temporal(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    // Sessions table
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER REFERENCES projects(id),
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            summary TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );"
+    )?;
+
+    // modified_at on all node tables
+    let tables = [
+        "phases", "experiments", "findings", "decisions",
+        "hypotheses", "research", "literature", "principles",
+        "constraints_tbl", "feedback",
+    ];
+    for table in &tables {
+        add_column_if_not_exists(conn, table, "modified_at", "TEXT")?;
+    }
+
+    // Backfill modified_at from created_at where NULL
+    for table in &tables {
+        conn.execute_batch(&format!(
+            "UPDATE {} SET modified_at = created_at WHERE modified_at IS NULL;",
+            table
+        ))?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,10 +473,10 @@ mod tests {
 
         // Verify schema_version recorded all 8 migrations
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 9);
+        assert_eq!(count, 10);
 
         let max_version: i64 = conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(max_version, 9);
+        assert_eq!(max_version, 10);
     }
 
     #[test]
@@ -451,7 +488,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 9, "Should still have exactly 9 version records after idempotent run");
+        assert_eq!(count, 10, "Should still have exactly 10 version records after idempotent run");
     }
 
     #[test]
@@ -541,7 +578,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 9, "Should have 9 total version records (3 pre-existing + 6 new)");
+        assert_eq!(count, 10, "Should have 10 total version records (3 pre-existing + 7 new)");
 
         // Verify v4 columns exist
         conn.execute(

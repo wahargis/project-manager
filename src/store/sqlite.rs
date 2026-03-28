@@ -368,6 +368,23 @@ impl SqliteStore {
         self.conn.query_row(&sql, params![node_id], |row| row.get(0))
             .map_err(StoreError::Db)
     }
+
+    /// Get modified_at for a row in a table (test helper / MCP use).
+    pub fn get_modified_at(&self, table: &str, id: i64) -> Result<Option<String>> {
+        let sql = format!("SELECT modified_at FROM {} WHERE id = ?1", table);
+        self.conn.query_row(&sql, params![id], |row| row.get(0))
+            .map_err(StoreError::Db)
+    }
+
+    /// Backdate created_at by `days` for testing staleness. Also backdates modified_at.
+    pub fn backdate_created_at(&self, table: &str, id: i64, days: i64) -> Result<()> {
+        let sql = format!(
+            "UPDATE {} SET created_at = datetime(created_at, '-{} days'), modified_at = datetime(modified_at, '-{} days') WHERE id = ?1",
+            table, days, days
+        );
+        self.conn.execute(&sql, params![id])?;
+        Ok(())
+    }
 }
 
 impl Store for SqliteStore {
@@ -440,7 +457,7 @@ impl Store for SqliteStore {
         let now = Self::now();
         let seq = self.next_project_seq("phases", project_id)?;
         self.conn.execute(
-            "INSERT INTO phases (project_id, name, impact, status, created_at, project_seq) VALUES (?1, ?2, ?3, 'pending', ?4, ?5)",
+            "INSERT INTO phases (project_id, name, impact, status, created_at, project_seq, modified_at) VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?4)",
             params![project_id, name, impact, now, seq],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -491,7 +508,7 @@ impl Store for SqliteStore {
     }
 
     fn update_phase_status(&self, id: i64, status: PhaseStatus) -> Result<()> {
-        self.conn.execute("UPDATE phases SET status = ?1 WHERE id = ?2",
+        self.conn.execute("UPDATE phases SET status = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2",
             params![Self::phase_status_str(&status), id])?;
         Ok(())
     }
@@ -502,7 +519,7 @@ impl Store for SqliteStore {
             self.next_project_seq_via_phase("experiments", pid).ok()
         } else { None };
         self.conn.execute(
-            "INSERT INTO experiments (phase_id, name, status, created_at, project_seq) VALUES (?1, ?2, 'pending', ?3, ?4)",
+            "INSERT INTO experiments (phase_id, name, status, created_at, project_seq, modified_at) VALUES (?1, ?2, 'pending', ?3, ?4, ?3)",
             params![phase_id, name, now, seq],
         )?;
         self.get_experiment(self.conn.last_insert_rowid())
@@ -541,7 +558,7 @@ impl Store for SqliteStore {
     }
 
     fn update_experiment_status(&self, id: i64, status: ExperimentStatus, result: Option<&str>) -> Result<()> {
-        self.conn.execute("UPDATE experiments SET status = ?1, result = ?2 WHERE id = ?3",
+        self.conn.execute("UPDATE experiments SET status = ?1, result = ?2, modified_at = datetime('now', 'localtime') WHERE id = ?3",
             params![Self::exp_status_str(&status), result, id])?;
         Ok(())
     }
@@ -552,7 +569,7 @@ impl Store for SqliteStore {
             self.next_finding_project_seq(eid).ok()
         } else { None };
         self.conn.execute(
-            "INSERT INTO findings (experiment_id, text, created_at, project_seq) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO findings (experiment_id, text, created_at, project_seq, modified_at) VALUES (?1, ?2, ?3, ?4, ?3)",
             params![experiment_id, text, now, seq],
         )?;
         self.get_finding(self.conn.last_insert_rowid())
@@ -679,7 +696,7 @@ impl Store for SqliteStore {
             self.next_project_seq("decisions", pid).ok()
         } else { None };
         self.conn.execute(
-            "INSERT INTO decisions (experiment_id, what, why, created_at, project_id, project_seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO decisions (experiment_id, what, why, created_at, project_id, project_seq, modified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?4)",
             params![experiment_id, what, why, now, project_id, seq],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -700,7 +717,7 @@ impl Store for SqliteStore {
         let el = enforcement_level.unwrap_or("advisory");
         let seq = self.next_project_seq("principles", project_id)?;
         self.conn.execute(
-            "INSERT INTO principles (project_id, scope, text, status, rationale, enforcement_level, created_at, project_seq) VALUES (?1, ?2, ?3, 'active', ?4, ?5, ?6, ?7)",
+            "INSERT INTO principles (project_id, scope, text, status, rationale, enforcement_level, created_at, project_seq, modified_at) VALUES (?1, ?2, ?3, 'active', ?4, ?5, ?6, ?7, ?6)",
             params![project_id, s, text, rationale, el, now, seq],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -719,7 +736,7 @@ impl Store for SqliteStore {
     }
     fn update_principle_status(&self, id: i64, status: PrincipleStatus, superseded_by: Option<i64>) -> Result<()> {
         let s = match status { PrincipleStatus::Active => "active", PrincipleStatus::Superseded => "superseded", PrincipleStatus::Refined => "refined" };
-        self.conn.execute("UPDATE principles SET status = ?1, superseded_by = ?2 WHERE id = ?3", params![s, superseded_by, id])?;
+        self.conn.execute("UPDATE principles SET status = ?1, superseded_by = ?2, modified_at = datetime('now', 'localtime') WHERE id = ?3", params![s, superseded_by, id])?;
         Ok(())
     }
 
@@ -728,7 +745,7 @@ impl Store for SqliteStore {
         let seq = if let Some(pid) = phase_id {
             self.next_project_seq_via_phase("hypotheses", pid).ok()
         } else { None };
-        self.conn.execute("INSERT INTO hypotheses (phase_id, text, status, created_at, project_seq) VALUES (?1, ?2, 'proposed', ?3, ?4)", params![phase_id, text, now, seq])?;
+        self.conn.execute("INSERT INTO hypotheses (phase_id, text, status, created_at, project_seq, modified_at) VALUES (?1, ?2, 'proposed', ?3, ?4, ?3)", params![phase_id, text, now, seq])?;
         let id = self.conn.last_insert_rowid();
         Ok(Hypothesis { id, phase_id, project_seq: seq, text: text.to_string(), status: HypothesisStatus::Proposed, experiment_id: None, finding_id: None, prediction: None, criteria: None, confidence: None, created_at: Self::parse_dt(&now) })
     }
@@ -753,7 +770,7 @@ impl Store for SqliteStore {
     }
     fn update_hypothesis(&self, id: i64, status: HypothesisStatus, experiment_id: Option<i64>, finding_id: Option<i64>) -> Result<()> {
         let s = match status { HypothesisStatus::Proposed => "proposed", HypothesisStatus::Testing => "testing", HypothesisStatus::Confirmed => "confirmed", HypothesisStatus::Refuted => "refuted" };
-        self.conn.execute("UPDATE hypotheses SET status = ?1, experiment_id = ?2, finding_id = ?3 WHERE id = ?4", params![s, experiment_id, finding_id, id])?;
+        self.conn.execute("UPDATE hypotheses SET status = ?1, experiment_id = ?2, finding_id = ?3, modified_at = datetime('now', 'localtime') WHERE id = ?4", params![s, experiment_id, finding_id, id])?;
         Ok(())
     }
 
@@ -763,7 +780,7 @@ impl Store for SqliteStore {
         let sev = severity.unwrap_or("hard");
         let seq = self.next_project_seq("constraints_tbl", project_id)?;
         self.conn.execute(
-            "INSERT INTO constraints_tbl (project_id, scope, text, source, severity, resource, measured_value, expires_at, created_at, project_seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO constraints_tbl (project_id, scope, text, source, severity, resource, measured_value, expires_at, created_at, project_seq, modified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?9)",
             params![project_id, s, text, source, sev, resource, measured_value, expires_at, now, seq],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -783,7 +800,7 @@ impl Store for SqliteStore {
         let now = Self::now();
         let seq = self.next_project_seq("literature", project_id)?;
         self.conn.execute(
-            "INSERT INTO literature (project_id, title, arxiv_id, relevance, key_findings, authors, venue, year, url, code_url, summary, status, created_at, project_seq) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'unread', ?12, ?13)",
+            "INSERT INTO literature (project_id, title, arxiv_id, relevance, key_findings, authors, venue, year, url, code_url, summary, status, created_at, project_seq, modified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'unread', ?12, ?13, ?12)",
             params![project_id, title, arxiv_id, relevance, key_findings, authors, venue, year, url, code_url, summary, now, seq],
         )?;
         let id = self.conn.last_insert_rowid();
@@ -805,7 +822,7 @@ impl Store for SqliteStore {
         })
     }
     fn update_literature_status(&self, id: i64, status: &str) -> Result<()> {
-        let rows = self.conn.execute("UPDATE literature SET status = ?1 WHERE id = ?2", params![status, id])?;
+        let rows = self.conn.execute("UPDATE literature SET status = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2", params![status, id])?;
         if rows == 0 {
             return Err(StoreError::NotFound { entity: "literature".into(), id });
         }
@@ -823,7 +840,7 @@ impl Store for SqliteStore {
         let now = Self::now();
         let c = match category { FeedbackCategory::Correction => "correction", FeedbackCategory::Confirmation => "confirmation" };
         let seq = self.next_project_seq("feedback", project_id)?;
-        self.conn.execute("INSERT INTO feedback (project_id, text, category, created_at, project_seq) VALUES (?1, ?2, ?3, ?4, ?5)", params![project_id, text, c, now, seq])?;
+        self.conn.execute("INSERT INTO feedback (project_id, text, category, created_at, project_seq, modified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?4)", params![project_id, text, c, now, seq])?;
         let id = self.conn.last_insert_rowid();
         Ok(FeedbackEntry { id, project_id, project_seq: Some(seq), text: text.to_string(), category, created_at: Self::parse_dt(&now) })
     }
@@ -859,7 +876,7 @@ impl Store for SqliteStore {
             self.next_project_seq_via_phase("research", pid).ok()
         } else { None };
         self.conn.execute(
-            "INSERT INTO research (phase_id, name, status, created_at, project_seq) VALUES (?1, ?2, 'pending', ?3, ?4)",
+            "INSERT INTO research (phase_id, name, status, created_at, project_seq, modified_at) VALUES (?1, ?2, 'pending', ?3, ?4, ?3)",
             params![phase_id, name, now, seq],
         )?;
         self.get_research(self.conn.last_insert_rowid())
@@ -896,7 +913,7 @@ impl Store for SqliteStore {
     }
 
     fn update_research(&self, id: i64, status: ResearchStatus, report: Option<&str>) -> Result<()> {
-        self.conn.execute("UPDATE research SET status = ?1, report = ?2 WHERE id = ?3",
+        self.conn.execute("UPDATE research SET status = ?1, report = ?2, modified_at = datetime('now', 'localtime') WHERE id = ?3",
             params![Self::research_status_str(&status), report, id])?;
         Ok(())
     }
@@ -1002,26 +1019,26 @@ impl Store for SqliteStore {
 
     fn update_phase_fields(&self, id: i64, description: Option<&str>, goals: Option<&str>, success_criteria: Option<&str>) -> Result<()> {
         if let Some(desc) = description {
-            self.conn.execute("UPDATE phases SET description = ?1 WHERE id = ?2", params![desc, id])?;
+            self.conn.execute("UPDATE phases SET description = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2", params![desc, id])?;
         }
         if let Some(g) = goals {
-            self.conn.execute("UPDATE phases SET goals = ?1 WHERE id = ?2", params![g, id])?;
+            self.conn.execute("UPDATE phases SET goals = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2", params![g, id])?;
         }
         if let Some(sc) = success_criteria {
-            self.conn.execute("UPDATE phases SET success_criteria = ?1 WHERE id = ?2", params![sc, id])?;
+            self.conn.execute("UPDATE phases SET success_criteria = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2", params![sc, id])?;
         }
         Ok(())
     }
 
     fn set_phase_started(&self, id: i64) -> Result<()> {
         let now = Self::now();
-        self.conn.execute("UPDATE phases SET started_at = ?1 WHERE id = ?2", params![now, id])?;
+        self.conn.execute("UPDATE phases SET started_at = ?1, modified_at = ?1 WHERE id = ?2", params![now, id])?;
         Ok(())
     }
 
     fn set_phase_completed(&self, id: i64) -> Result<()> {
         let now = Self::now();
-        self.conn.execute("UPDATE phases SET completed_at = ?1 WHERE id = ?2", params![now, id])?;
+        self.conn.execute("UPDATE phases SET completed_at = ?1, modified_at = ?1 WHERE id = ?2", params![now, id])?;
         Ok(())
     }
 
@@ -1029,13 +1046,13 @@ impl Store for SqliteStore {
 
     fn update_hypothesis_fields(&self, id: i64, prediction: Option<&str>, criteria: Option<&str>, confidence: Option<f64>) -> Result<()> {
         if let Some(p) = prediction {
-            self.conn.execute("UPDATE hypotheses SET prediction = ?1 WHERE id = ?2", params![p, id])?;
+            self.conn.execute("UPDATE hypotheses SET prediction = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2", params![p, id])?;
         }
         if let Some(c) = criteria {
-            self.conn.execute("UPDATE hypotheses SET criteria = ?1 WHERE id = ?2", params![c, id])?;
+            self.conn.execute("UPDATE hypotheses SET criteria = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2", params![c, id])?;
         }
         if let Some(conf) = confidence {
-            self.conn.execute("UPDATE hypotheses SET confidence = ?1 WHERE id = ?2", params![conf, id])?;
+            self.conn.execute("UPDATE hypotheses SET confidence = ?1, modified_at = datetime('now', 'localtime') WHERE id = ?2", params![conf, id])?;
         }
         Ok(())
     }
@@ -1161,5 +1178,307 @@ impl Store for SqliteStore {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(ids)
     }
+
+    // --- Temporal Awareness (Feature 5) ---
+
+    fn create_session(&self, project_id: Option<i64>) -> Result<Session> {
+        let now = Self::now();
+        self.conn.execute(
+            "INSERT INTO sessions (project_id, started_at, created_at) VALUES (?1, ?2, ?2)",
+            params![project_id, now],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        Ok(Session {
+            id,
+            project_id,
+            started_at: Self::parse_dt(&now),
+            ended_at: None,
+            summary: None,
+        })
+    }
+
+    fn end_session(&self, id: i64, summary: Option<&str>) -> Result<()> {
+        let now = Self::now();
+        let rows = self.conn.execute(
+            "UPDATE sessions SET ended_at = ?1, summary = ?2 WHERE id = ?3",
+            params![now, summary, id],
+        )?;
+        if rows == 0 {
+            return Err(StoreError::NotFound { entity: "session".into(), id });
+        }
+        Ok(())
+    }
+
+    fn list_sessions(&self, project_id: Option<i64>) -> Result<Vec<Session>> {
+        let sql = if project_id.is_some() {
+            "SELECT id, project_id, started_at, ended_at, summary FROM sessions WHERE project_id = ?1 ORDER BY id"
+        } else {
+            "SELECT id, project_id, started_at, ended_at, summary FROM sessions ORDER BY id"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = if let Some(pid) = project_id {
+            stmt.query_map(params![pid], |row| {
+                let ended_at: Option<String> = row.get(3)?;
+                Ok(Session {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    started_at: SqliteStore::parse_dt(&row.get::<_, String>(2)?),
+                    ended_at: ended_at.map(|s| SqliteStore::parse_dt(&s)),
+                    summary: row.get(4)?,
+                })
+            })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
+        } else {
+            stmt.query_map([], |row| {
+                let ended_at: Option<String> = row.get(3)?;
+                Ok(Session {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    started_at: SqliteStore::parse_dt(&row.get::<_, String>(2)?),
+                    ended_at: ended_at.map(|s| SqliteStore::parse_dt(&s)),
+                    summary: row.get(4)?,
+                })
+            })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
+        };
+        Ok(rows)
+    }
+
+    fn get_current_session(&self) -> Result<Option<Session>> {
+        let result = self.conn.query_row(
+            "SELECT id, project_id, started_at, ended_at, summary FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            [],
+            |row| {
+                let ended_at: Option<String> = row.get(3)?;
+                Ok(Session {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    started_at: SqliteStore::parse_dt(&row.get::<_, String>(2)?),
+                    ended_at: ended_at.map(|s| SqliteStore::parse_dt(&s)),
+                    summary: row.get(4)?,
+                })
+            },
+        );
+        match result {
+            Ok(session) => Ok(Some(session)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StoreError::Db(e)),
+        }
+    }
+
+    fn nodes_since(&self, timestamp: &str) -> Result<TemporalDelta> {
+        let mut delta = TemporalDelta {
+            since: timestamp.to_string(),
+            phases: vec![], experiments: vec![], findings: vec![],
+            decisions: vec![], hypotheses: vec![], research: vec![],
+            literature: vec![], principles: vec![], constraints: vec![],
+            feedback: vec![],
+        };
+
+        // Phases created or modified since timestamp
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM phases WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.phases.push(self.get_phase(id)?); }
+        }
+
+        // Experiments
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM experiments WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.experiments.push(self.get_experiment(id)?); }
+        }
+
+        // Findings
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM findings WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.findings.push(self.get_finding(id)?); }
+        }
+
+        // Decisions
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM decisions WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.decisions.push(self.get_decision(id)?); }
+        }
+
+        // Hypotheses
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM hypotheses WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.hypotheses.push(self.get_hypothesis(id)?); }
+        }
+
+        // Research
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM research WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.research.push(self.get_research(id)?); }
+        }
+
+        // Literature
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM literature WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.literature.push(self.get_literature(id)?); }
+        }
+
+        // Principles
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM principles WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.principles.push(self.get_principle(id)?); }
+        }
+
+        // Constraints
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM constraints_tbl WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.constraints.push(self.get_constraint(id)?); }
+        }
+
+        // Feedback
+        {
+            let mut stmt = self.conn.prepare("SELECT id FROM feedback WHERE created_at > ?1 OR modified_at > ?1 ORDER BY id")?;
+            let ids: Vec<i64> = stmt.query_map(params![timestamp], |r| r.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            for id in ids { delta.feedback.push(self.get_feedback_entry(id)?); }
+        }
+
+        Ok(delta)
+    }
+
+    fn staleness_report(&self, project_id: i64) -> Result<StalenessReport> {
+        let now = chrono::Local::now().naive_local();
+        let mut report = StalenessReport {
+            stale_hypotheses: vec![],
+            stale_experiments: vec![],
+            unconnected_findings: vec![],
+        };
+
+        // Stale hypotheses: proposed > 7 days without testing
+        if let Ok(phases) = self.list_phases(project_id) {
+            for phase in &phases {
+                if let Ok(hyps) = self.list_hypotheses(Some(phase.id)) {
+                    for h in hyps {
+                        if h.status == HypothesisStatus::Proposed {
+                            let days = now.signed_duration_since(h.created_at).num_days();
+                            if days >= 7 {
+                                report.stale_hypotheses.push((h, days));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Stale experiments: pending > 14 days
+        if let Ok(phases) = self.list_phases(project_id) {
+            for phase in &phases {
+                if let Ok(exps) = self.list_experiments(Some(phase.id)) {
+                    for e in exps {
+                        if e.status == ExperimentStatus::Pending {
+                            let days = now.signed_duration_since(e.created_at).num_days();
+                            if days >= 14 {
+                                report.stale_experiments.push((e, days));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Unconnected findings: > 30 days old with no edges
+        if let Ok(orphan_ids) = self.get_orphaned_nodes("finding", project_id) {
+            for fid in orphan_ids {
+                if let Ok(f) = self.get_finding(fid) {
+                    let days = now.signed_duration_since(f.created_at).num_days();
+                    if days >= 30 {
+                        report.unconnected_findings.push(f);
+                    }
+                }
+            }
+        }
+
+        Ok(report)
+    }
+
+    fn get_velocity(&self, project_id: i64) -> Result<VelocityMetrics> {
+        let mut metrics = VelocityMetrics {
+            findings_per_session: vec![],
+            experiments_per_week: vec![],
+            hypothesis_lifecycle_days: vec![],
+        };
+
+        // Findings per session: count findings created during each session window
+        let sessions = self.list_sessions(Some(project_id))?;
+        for session in &sessions {
+            let started = session.started_at.format("%Y-%m-%d %H:%M:%S").to_string();
+            let ended = session.ended_at.map(|e| e.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "9999-12-31 23:59:59".to_string());
+
+            let count: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM findings WHERE created_at >= ?1 AND created_at <= ?2",
+                params![started, ended],
+                |row| row.get(0),
+            )?;
+            metrics.findings_per_session.push((session.id, count as usize));
+        }
+
+        // Experiments per week: group by ISO week
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT strftime('%Y-W%W', e.created_at) as week, e.status FROM experiments e
+                 JOIN phases p ON e.phase_id = p.id
+                 WHERE p.project_id = ?1 AND e.status IN ('pass', 'fail')
+                 ORDER BY week"
+            )?;
+            let mut week_map: std::collections::BTreeMap<String, (usize, usize)> = std::collections::BTreeMap::new();
+            let rows = stmt.query_map(params![project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for row in rows {
+                let (week, status) = row?;
+                let entry = week_map.entry(week).or_insert((0, 0));
+                match status.as_str() {
+                    "pass" => entry.0 += 1,
+                    "fail" => entry.1 += 1,
+                    _ => {}
+                }
+            }
+            for (week, (pass, fail)) in week_map {
+                metrics.experiments_per_week.push((week, pass, fail));
+            }
+        }
+
+        // Hypothesis lifecycle: time from proposed to confirmed/refuted
+        if let Ok(phases) = self.list_phases(project_id) {
+            for phase in &phases {
+                if let Ok(hyps) = self.list_hypotheses(Some(phase.id)) {
+                    for h in hyps {
+                        if h.status == HypothesisStatus::Confirmed || h.status == HypothesisStatus::Refuted {
+                            // Get modified_at as resolution timestamp
+                            if let Ok(Some(modified_str)) = self.get_modified_at("hypotheses", h.id) {
+                                let modified = Self::parse_dt(&modified_str);
+                                let days = modified.signed_duration_since(h.created_at).num_days() as f64;
+                                metrics.hypothesis_lifecycle_days.push((h.id, days));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(metrics)
+    }
+
 
 }

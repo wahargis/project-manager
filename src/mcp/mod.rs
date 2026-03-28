@@ -119,7 +119,7 @@ fn handle_request(req: &JsonRpcRequest, db_path: &str) -> JsonRpcResponse {
             result: Some(serde_json::json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": { "tools": {} },
-                "serverInfo": { "name": "pm", "version": "4.0.0" }
+                "serverInfo": { "name": "pm", "version": "5.0.0" }
             })),
             error: None,
         },
@@ -295,6 +295,22 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             dashboard::tool_project_set_status(store, n, false)
         }
 
+
+        // Temporal Awareness tools (Feature 5)
+        "pm_session_start" => {
+            let project = args.get("project").and_then(|v| v.as_str());
+            dashboard::tool_session_start(store, project)
+        },
+        "pm_session_end" => {
+            let summary = args.get("summary").and_then(|v| v.as_str());
+            dashboard::tool_session_end(store, summary)
+        },
+        "pm_since" => {
+            let since = args.get("since").and_then(|v| v.as_str());
+            let session_id = args.get("session_id").and_then(|v| v.as_i64());
+            dashboard::tool_since(store, since, session_id)
+        },
+
         _ => format!("Unknown tool: {}", tool_name),
     }
 }
@@ -431,6 +447,22 @@ fn tool_definitions() -> Vec<ToolDef> {
             name: "pm_phase_update".into(),
             description: "Update phase details and status. Completion gating: all experiments must be resolved before completing. Auto-sets started_at/completed_at timestamps.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"phase_id": {"type": "integer"}, "description": {"type": "string"}, "goals": {"type": "string"}, "success_criteria": {"type": "string"}, "status": {"type": "string", "description": "pending, in_progress, complete, or paused"}}, "required": ["phase_id"]}),
+        },
+
+        ToolDef {
+            name: "pm_session_start".into(),
+            description: "Start a research session. Creates a timestamped session record. Call at the beginning of a work session.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string", "description": "Project name or alias (optional, scopes session to a project)"}}}),
+        },
+        ToolDef {
+            name: "pm_session_end".into(),
+            description: "End the current research session with an optional summary. Records end timestamp.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"summary": {"type": "string", "description": "Brief summary of what was accomplished this session"}}}),
+        },
+        ToolDef {
+            name: "pm_since".into(),
+            description: "Show all nodes created or modified since a date or session. Delta query for catching up on changes.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"since": {"type": "string", "description": "ISO date or datetime (e.g., '2026-03-20' or '2026-03-20 14:00:00')"}, "session_id": {"type": "integer", "description": "Show changes since this session started (alternative to 'since')"}}}),
         },
     ]
 }

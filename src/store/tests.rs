@@ -1115,3 +1115,187 @@ fn project_seq_migration_backfill() {
     assert_eq!(f.project_seq, Some(1));
     assert_eq!(d.project_seq, Some(1));
 }
+
+// === Feature 5: Temporal Awareness ===
+
+#[test]
+fn test_session_create_and_end() {
+    let store = test_store();
+    let proj = store.create_project("temporal-test", None, None).unwrap();
+    let session = store.create_session(Some(proj.id)).unwrap();
+    assert!(session.id > 0);
+    assert_eq!(session.project_id, Some(proj.id));
+    assert!(session.ended_at.is_none());
+
+    store.end_session(session.id, Some("Completed initial experiments")).unwrap();
+    let sessions = store.list_sessions(Some(proj.id)).unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert!(sessions[0].ended_at.is_some());
+    assert_eq!(sessions[0].summary.as_deref(), Some("Completed initial experiments"));
+}
+
+#[test]
+fn test_session_list_by_project() {
+    let store = test_store();
+    let proj1 = store.create_project("proj-a", None, None).unwrap();
+    let proj2 = store.create_project("proj-b", None, None).unwrap();
+    store.create_session(Some(proj1.id)).unwrap();
+    store.create_session(Some(proj1.id)).unwrap();
+    store.create_session(Some(proj2.id)).unwrap();
+
+    let s1 = store.list_sessions(Some(proj1.id)).unwrap();
+    let s2 = store.list_sessions(Some(proj2.id)).unwrap();
+    let all = store.list_sessions(None).unwrap();
+
+    assert_eq!(s1.len(), 2);
+    assert_eq!(s2.len(), 1);
+    assert_eq!(all.len(), 3);
+}
+
+#[test]
+fn test_get_current_session_returns_open() {
+    let store = test_store();
+    let proj = store.create_project("current-test", None, None).unwrap();
+    let s1 = store.create_session(Some(proj.id)).unwrap();
+    store.end_session(s1.id, None).unwrap();
+    let s2 = store.create_session(Some(proj.id)).unwrap();
+
+    let current = store.get_current_session().unwrap();
+    assert!(current.is_some());
+    assert_eq!(current.unwrap().id, s2.id);
+}
+
+#[test]
+fn test_get_current_session_none_when_all_ended() {
+    let store = test_store();
+    let proj = store.create_project("all-ended", None, None).unwrap();
+    let s = store.create_session(Some(proj.id)).unwrap();
+    store.end_session(s.id, None).unwrap();
+
+    let current = store.get_current_session().unwrap();
+    assert!(current.is_none());
+}
+
+#[test]
+fn test_modified_at_set_on_create() {
+    let store = test_store();
+    let proj = store.create_project("modified-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
+    // modified_at should be set on creation
+    let modified: Option<String> = store.get_modified_at("phases", phase.id).unwrap();
+    assert!(modified.is_some(), "modified_at should be set on phase creation");
+}
+
+#[test]
+fn test_modified_at_updated_on_status_change() {
+    let store = test_store();
+    let proj = store.create_project("modified-update", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
+    let before: String = store.get_modified_at("phases", phase.id).unwrap().unwrap();
+
+    // Small delay to ensure timestamp difference
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    store.update_phase_status(phase.id, super::PhaseStatus::InProgress).unwrap();
+    let after: String = store.get_modified_at("phases", phase.id).unwrap().unwrap();
+    assert!(after >= before, "modified_at should be updated after status change: {} >= {}", after, before);
+}
+
+#[test]
+fn test_nodes_since_returns_new_nodes() {
+    let store = test_store();
+    let proj = store.create_project("since-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
+
+    // Get timestamp before creating more nodes
+    let before_ts = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S").to_string();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    let exp = store.create_experiment(Some(phase.id), "New Exp").unwrap();
+    let _finding = store.create_finding(Some(exp.id), "A new finding discovered").unwrap();
+    let _decision = store.create_decision(None, "New decision", Some("because"), Some(proj.id)).unwrap();
+
+    let delta = store.nodes_since(&before_ts).unwrap();
+    // The phase was created before the timestamp, but exp/finding/decision after
+    assert!(!delta.experiments.is_empty(), "should have new experiments");
+    assert!(!delta.findings.is_empty(), "should have new findings");
+    assert!(!delta.decisions.is_empty(), "should have new decisions");
+}
+
+#[test]
+fn test_nodes_since_excludes_old_nodes() {
+    let store = test_store();
+    let proj = store.create_project("exclude-test", None, None).unwrap();
+    let _phase = store.create_phase(proj.id, "Old Phase", 40, &[]).unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let after_ts = chrono::Local::now().naive_local().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let delta = store.nodes_since(&after_ts).unwrap();
+    assert!(delta.phases.is_empty(), "old phase should not appear in delta");
+}
+
+#[test]
+fn test_staleness_hypothesis_7_days() {
+    let store = test_store();
+    let proj = store.create_project("stale-hyp", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
+    let h = store.create_hypothesis(Some(phase.id), "Stale hypothesis that should be flagged").unwrap();
+
+    // Manually backdate the hypothesis to 10 days ago
+    store.backdate_created_at("hypotheses", h.id, 10).unwrap();
+
+    let report = store.staleness_report(proj.id).unwrap();
+    assert!(!report.stale_hypotheses.is_empty(), "hypothesis >7 days should appear as stale");
+    assert!(report.stale_hypotheses[0].1 >= 7, "days stale should be >= 7");
+}
+
+#[test]
+fn test_staleness_experiment_14_days() {
+    let store = test_store();
+    let proj = store.create_project("stale-exp", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "Stale experiment").unwrap();
+
+    // Manually backdate the experiment to 20 days ago
+    store.backdate_created_at("experiments", exp.id, 20).unwrap();
+
+    let report = store.staleness_report(proj.id).unwrap();
+    assert!(!report.stale_experiments.is_empty(), "experiment >14 days should appear as stale");
+    assert!(report.stale_experiments[0].1 >= 14, "days stale should be >= 14");
+}
+
+#[test]
+fn test_staleness_unconnected_findings() {
+    let store = test_store();
+    let proj = store.create_project("unconnected-f", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "Exp 1").unwrap();
+    let f = store.create_finding(Some(exp.id), "Unconnected finding").unwrap();
+
+    // Backdate finding to 35 days ago (>30 day threshold)
+    store.backdate_created_at("findings", f.id, 35).unwrap();
+
+    let report = store.staleness_report(proj.id).unwrap();
+    assert!(!report.unconnected_findings.is_empty(), "finding >30 days without edges should appear as unconnected");
+}
+
+#[test]
+fn test_velocity_findings_per_session() {
+    let store = test_store();
+    let proj = store.create_project("velocity-test", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase 1", 40, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "Exp 1").unwrap();
+
+    let s1 = store.create_session(Some(proj.id)).unwrap();
+    store.create_finding(Some(exp.id), "Finding in session 1").unwrap();
+    store.create_finding(Some(exp.id), "Another finding in session 1").unwrap();
+    store.end_session(s1.id, None).unwrap();
+
+    let s2 = store.create_session(Some(proj.id)).unwrap();
+    store.create_finding(Some(exp.id), "Finding in session 2").unwrap();
+    store.end_session(s2.id, None).unwrap();
+
+    let velocity = store.get_velocity(proj.id).unwrap();
+    assert!(velocity.findings_per_session.len() >= 2, "should have entries for at least 2 sessions");
+}
