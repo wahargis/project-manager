@@ -199,6 +199,10 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
             review::tool_search(store, q)
         },
+        "pm_query" => {
+            let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+            review::tool_query(store, q)
+        },
 
         // Edge tools
         "pm_kg_traverse" => {
@@ -458,6 +462,11 @@ fn tool_definitions() -> Vec<ToolDef> {
             name: "pm_search".into(),
             description: "Search across all KG node types by text content. Returns ranked results with graph connectivity and evidence scoring. Use to find nodes without knowing IDs.".into(),
             input_schema: serde_json::json!({"type": "object", "required": ["query"], "properties": {"query": {"type": "string", "description": "Text to search for across all KG node types"}}}),
+        },
+        ToolDef {
+            name: "pm_query".into(),
+            description: "Natural language KG query. Searches, ranks, shows top 3 results with graph neighbors.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
         },
         ToolDef {
             name: "pm_project_create".into(),

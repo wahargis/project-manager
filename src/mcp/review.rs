@@ -426,3 +426,68 @@ pub fn tool_search(store: &SqliteStore, query: &str) -> String {
         Err(e) => format!("Search error: {}", e),
     }
 }
+
+/// Natural language KG query — search + auto-traverse top results + synthesize.
+pub fn tool_query(store: &SqliteStore, query: &str) -> String {
+    // Step 1: Search
+    let results = match store.text_search(query) {
+        Ok(r) => r,
+        Err(e) => return format!("Search error: {}", e),
+    };
+    if results.is_empty() {
+        return format!("No results found for: {}", query);
+    }
+
+    // Step 2: Score and rank (same as tool_search but simplified)
+    let query_lower = query.to_lowercase();
+    let query_words: Vec<&str> = query_lower.split_whitespace().filter(|w| w.len() >= 2).collect();
+
+    let mut scored: Vec<(f64, &crate::store::SearchResult)> = results.iter().map(|r| {
+        let result_lower = r.text_excerpt.to_lowercase();
+        let matches = query_words.iter().filter(|w| result_lower.contains(*w)).count();
+        let text_match = if query_words.is_empty() { 1.0 } else { matches as f64 / query_words.len() as f64 };
+        let edge_count = store.count_edges_for_node(&capitalize(&r.node_type), r.node_id).unwrap_or(0) as f64;
+        let score = text_match * 2.0 + edge_count * 0.1;
+        (score, r)
+    }).collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Step 3: Take top 3 results and expand their neighborhoods
+    let mut text = format!("=== Query: \"{}\" ===\n\n", query);
+    let top = scored.iter().take(3);
+
+    for (score, r) in top {
+        let type_cap = capitalize(&r.node_type);
+        text += &format!("--- {} #{} (score={:.2}) ---\n", type_cap, r.node_id, score);
+        text += &format!("{}\n\n", r.text_excerpt);
+
+        // Get neighbors
+        let nt = match r.node_type.as_str() {
+            "finding" => crate::store::NodeType::Finding,
+            "decision" => crate::store::NodeType::Decision,
+            "hypothesis" => crate::store::NodeType::Hypothesis,
+            "principle" => crate::store::NodeType::Principle,
+            "experiment" => crate::store::NodeType::Experiment,
+            "phase" => crate::store::NodeType::Phase,
+            "literature" => crate::store::NodeType::Literature,
+            "constraint" => crate::store::NodeType::Constraint,
+            _ => continue,
+        };
+
+        // Show outgoing edges
+        if let Ok(edges) = store.get_edges_from(nt.clone(), r.node_id) {
+            for e in edges.iter().take(3) {
+                text += &format!("  -> {:?} {:?} #{}\n", e.relation, e.target_type, e.target_id);
+            }
+        }
+        if let Ok(edges) = store.get_edges_to(nt, r.node_id) {
+            for e in edges.iter().take(3) {
+                text += &format!("  <- {:?} {:?} #{}\n", e.relation, e.source_type, e.source_id);
+            }
+        }
+        text += "\n";
+    }
+
+    text += &format!("{} total results. Showing top 3 with neighbors.\n", scored.len());
+    text
+}
