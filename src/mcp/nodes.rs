@@ -49,7 +49,32 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
     if !v.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", v.to_mcp_error());
     }
-    let exp_id = if eid > 0 { Some(eid) } else { None };
+    // CAUSAL BACKBONE ENFORCEMENT: findings MUST have an experiment
+    if eid <= 0 {
+        // List active experiments to help the caller
+        let mut help = String::from("\u{274c} CAUSAL BACKBONE ERROR: Finding requires experiment_id.\n");
+        help += "Every finding must be produced by a specific experiment.\n\n";
+        help += "Active experiments (most recent first):\n";
+        if let Ok(projects) = store.list_projects() {
+            for proj in projects.iter().filter(|p| p.status == crate::store::ProjectStatus::Active) {
+                if let Ok(phases) = store.list_phases(proj.id) {
+                    for phase in phases.iter().filter(|p| p.status == crate::store::PhaseStatus::InProgress) {
+                        if let Ok(exps) = store.list_experiments(Some(phase.id)) {
+                            for exp in exps.iter().rev().take(5) {
+                                let name_short: String = exp.name.chars().take(60).collect();
+                                help += &format!("  Exp #{}: {} [{:?}]\n", exp.id, name_short, exp.status);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        help += "\nEither:\n";
+        help += "  1. Use existing: pm_log_finding experiment_id=<id> text=\"...\"\n";
+        help += "  2. Create new experiment first, then log finding to it\n";
+        return help;
+    }
+    let exp_id = Some(eid);
     match store.create_finding(exp_id, text) {
         Ok(f) => {
             let fref = f.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", f.id));
@@ -840,10 +865,21 @@ pub fn tool_phase_update(store: &SqliteStore, phase_id: i64, description: Option
     format!("Phase {} ({}) fields updated", pref2, phase.name)
 }
 
-/// Compound research step: auto-routes a finding to the best active experiment.
+/// DEPRECATED: use pm_experiment_create + pm_log_finding instead.
+/// Auto-routing broke the causal backbone by dumping findings into wrong experiments.
+/// This tool now redirects to the proper workflow.
 /// Accepts project name + finding text, finds the highest-impact in-progress phase,
 /// picks its most recent pending/active experiment, and logs the finding there.
 pub fn tool_research_step(store: &SqliteStore, project_name: &str, text: &str) -> String {
+    // DEPRECATED: auto-routing breaks causal backbone
+    let mut help = String::from("\u{26a0} pm_research_step is deprecated — it breaks the causal backbone.\n\n");
+    help += "Use this workflow instead:\n";
+    help += "  1. pm_experiment_create phase_id=<id> name=\"<what you are investigating>\" informed_by_finding=<id>\n";
+    help += "  2. pm_log_finding experiment_id=<new_exp_id> text=\"<your finding>\"\n\n";
+    help += "This ensures every finding traces back through a causal chain.\n";
+    return help;
+
+    // Original auto-routing code below (dead code, kept for reference)
     let v = crate::validation::validate_finding(text);
     if !v.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", v.to_mcp_error());
@@ -904,4 +940,80 @@ pub fn tool_research_step(store: &SqliteStore, project_name: &str, text: &str) -
         eid);
     result += &tool_log_finding(store, eid, text);
     result
+}
+
+/// Create a new experiment with REQUIRED causal upstream linkage.
+/// Every experiment must be causally linked to what motivated it.
+pub fn tool_experiment_create(store: &SqliteStore, phase_id: i64, name: &str,
+    informed_by_finding: Option<i64>,
+    informed_by_decision: Option<i64>,
+    informed_by_experiment: Option<i64>,
+) -> String {
+    // Validate name
+    if name.len() < 10 {
+        return "\u{274c} Experiment name too short (min 10 chars). Describe what investigation this experiment represents.".to_string();
+    }
+
+    // CAUSAL BACKBONE ENFORCEMENT: must have at least one upstream link
+    let has_upstream = informed_by_finding.is_some()
+        || informed_by_decision.is_some()
+        || informed_by_experiment.is_some();
+
+    // Check if this is the first experiment in the phase (root is OK)
+    let is_first = match store.list_experiments(Some(phase_id)) {
+        Ok(exps) => exps.is_empty(),
+        Err(_) => false,
+    };
+
+    if !has_upstream && !is_first {
+        let mut help = String::from("\u{274c} CAUSAL BACKBONE ERROR: Experiment requires causal upstream.\n");
+        help += "Every experiment (except the first in a phase) must link to what motivated it.\n\n";
+        help += "Provide one of:\n";
+        help += "  informed_by_finding=<id>     — this experiment investigates finding #N\n";
+        help += "  informed_by_decision=<id>    — this experiment was directed by decision #N\n";
+        help += "  informed_by_experiment=<id>  — this experiment continues/branches from experiment #N\n";
+        return help;
+    }
+
+    match store.create_experiment(Some(phase_id), name) {
+        Ok(exp) => {
+            let mut out = format!("Experiment #{} created: {}\n", exp.id, name);
+            let mut edges: Vec<String> = Vec::new();
+
+            // Auto-create Phase --Contains--> Experiment edge
+            match store.create_edge(NodeType::Phase, phase_id, NodeType::Experiment, exp.id, EdgeType::Contains) {
+                Ok(_) => edges.push(format!("Phase#{} --Contains--> Exp#{}", phase_id, exp.id)),
+                Err(_) => {},
+            }
+
+            // Create causal upstream edges
+            if let Some(fid) = informed_by_finding {
+                match store.create_edge(NodeType::Finding, fid, NodeType::Experiment, exp.id, EdgeType::Informed) {
+                    Ok(_) => edges.push(format!("Finding#{} --Informed--> Exp#{}", fid, exp.id)),
+                    Err(e) => out += &format!("  (edge error: {})\n", e),
+                }
+            }
+            if let Some(did) = informed_by_decision {
+                match store.create_edge(NodeType::Decision, did, NodeType::Experiment, exp.id, EdgeType::Informed) {
+                    Ok(_) => edges.push(format!("Decision#{} --Informed--> Exp#{}", did, exp.id)),
+                    Err(e) => out += &format!("  (edge error: {})\n", e),
+                }
+            }
+            if let Some(eid) = informed_by_experiment {
+                match store.create_edge(NodeType::Experiment, eid, NodeType::Experiment, exp.id, EdgeType::Informed) {
+                    Ok(_) => edges.push(format!("Exp#{} --Informed--> Exp#{}", eid, exp.id)),
+                    Err(e) => out += &format!("  (edge error: {})\n", e),
+                }
+            }
+
+            if !edges.is_empty() {
+                out += "\nCausal links:\n";
+                for e in &edges {
+                    out += &format!("  + {}\n", e);
+                }
+            }
+            out
+        }
+        Err(e) => format!("Error creating experiment: {}", e),
+    }
 }

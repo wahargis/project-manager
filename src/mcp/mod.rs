@@ -238,6 +238,14 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             let project = args.get("project").and_then(|v| v.as_str());
             nodes::tool_decision(store, what, why, eid, finding_ids, project)
         },
+        "pm_experiment_create" => {
+            let phase_id = args.get("phase_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let ibf = args.get("informed_by_finding").and_then(|v| v.as_i64());
+            let ibd = args.get("informed_by_decision").and_then(|v| v.as_i64());
+            let ibe = args.get("informed_by_experiment").and_then(|v| v.as_i64());
+            nodes::tool_experiment_create(store, phase_id, name, ibf, ibd, ibe)
+        },
         "pm_exp_complete" => {
             let eid = args.get("experiment_id").and_then(|v| v.as_i64()).unwrap_or(0);
             let status = args.get("status").and_then(|v| v.as_str()).unwrap_or("pass");
@@ -397,6 +405,17 @@ fn tool_definitions() -> Vec<ToolDef> {
                     "project": {"type": "string", "description": "Project name or alias"}
                 }
             }),
+        },
+        ToolDef {
+            name: "pm_experiment_create".into(),
+            description: "Create experiment with REQUIRED causal upstream. Every experiment must link to what motivated it (finding, decision, or prior experiment). First experiment in a phase is exempt.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {
+                "phase_id": {"type": "integer", "description": "Phase this experiment belongs to"},
+                "name": {"type": "string", "description": "What investigation this experiment represents (min 10 chars)"},
+                "informed_by_finding": {"type": "integer", "description": "Finding that motivated this experiment"},
+                "informed_by_decision": {"type": "integer", "description": "Decision that directed this experiment"},
+                "informed_by_experiment": {"type": "integer", "description": "Prior experiment this continues/branches from"}
+            }, "required": ["phase_id", "name"]}),
         },
         ToolDef {
             name: "pm_exp_complete".into(),
