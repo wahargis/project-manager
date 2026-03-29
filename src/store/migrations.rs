@@ -61,6 +61,7 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), Box<dyn std::e
         9 => migrate_v9_project_seq(&tx)?,
         10 => migrate_v10_temporal(&tx)?,
         11 => migrate_v11_tms(&tx)?,
+        12 => migrate_v12_session_experiment(&tx)?,
         _ => return Err(format!("Unknown migration version: {}", version).into()),
     }
 
@@ -618,4 +619,12 @@ mod tests {
             [],
         ).unwrap();
     }
+}
+
+pub fn migrate_v12_session_experiment(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let version: i64 = conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))?;
+    if version >= 12 { return Ok(()); }
+    conn.execute_batch("ALTER TABLE sessions ADD COLUMN active_experiment_id INTEGER REFERENCES experiments(id);")?;
+    conn.execute("INSERT INTO schema_version (version, applied_at) VALUES (12, datetime(now))", [])?;
+    Ok(())
 }

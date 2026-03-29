@@ -289,6 +289,7 @@ pub struct Session {
     pub started_at: NaiveDateTime,
     pub ended_at: Option<NaiveDateTime>,
     pub summary: Option<String>,
+    pub active_experiment_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -439,6 +440,7 @@ pub trait Store {
     fn end_session(&self, id: i64, summary: Option<&str>) -> Result<()>;
     fn list_sessions(&self, project_id: Option<i64>) -> Result<Vec<Session>>;
     fn get_current_session(&self) -> Result<Option<Session>>;
+    fn set_session_experiment(&self, experiment_id: i64) -> Result<()>;
     fn nodes_since(&self, timestamp: &str) -> Result<TemporalDelta>;
     fn staleness_report(&self, project_id: i64) -> Result<StalenessReport>;
     fn get_velocity(&self, project_id: i64) -> Result<VelocityMetrics>;

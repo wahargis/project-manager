@@ -1379,6 +1379,7 @@ impl Store for SqliteStore {
             started_at: Self::parse_dt(&now),
             ended_at: None,
             summary: None,
+            active_experiment_id: None,
         })
     }
 
@@ -1396,9 +1397,9 @@ impl Store for SqliteStore {
 
     fn list_sessions(&self, project_id: Option<i64>) -> Result<Vec<Session>> {
         let sql = if project_id.is_some() {
-            "SELECT id, project_id, started_at, ended_at, summary FROM sessions WHERE project_id = ?1 ORDER BY id"
+            "SELECT id, project_id, started_at, ended_at, summary, active_experiment_id FROM sessions WHERE project_id = ?1 ORDER BY id"
         } else {
-            "SELECT id, project_id, started_at, ended_at, summary FROM sessions ORDER BY id"
+            "SELECT id, project_id, started_at, ended_at, summary, active_experiment_id FROM sessions ORDER BY id"
         };
         let mut stmt = self.conn.prepare(sql)?;
         let rows = if let Some(pid) = project_id {
@@ -1410,6 +1411,7 @@ impl Store for SqliteStore {
                     started_at: SqliteStore::parse_dt(&row.get::<_, String>(2)?),
                     ended_at: ended_at.map(|s| SqliteStore::parse_dt(&s)),
                     summary: row.get(4)?,
+                    active_experiment_id: row.get(5).ok().unwrap_or(None),
                 })
             })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
         } else {
@@ -1421,6 +1423,7 @@ impl Store for SqliteStore {
                     started_at: SqliteStore::parse_dt(&row.get::<_, String>(2)?),
                     ended_at: ended_at.map(|s| SqliteStore::parse_dt(&s)),
                     summary: row.get(4)?,
+                    active_experiment_id: row.get(5).ok().unwrap_or(None),
                 })
             })?.collect::<std::result::Result<Vec<_>, _>>().map_err(StoreError::Db)?
         };
@@ -1429,7 +1432,7 @@ impl Store for SqliteStore {
 
     fn get_current_session(&self) -> Result<Option<Session>> {
         let result = self.conn.query_row(
-            "SELECT id, project_id, started_at, ended_at, summary FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1",
+            "SELECT id, project_id, started_at, ended_at, summary, active_experiment_id FROM sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1",
             [],
             |row| {
                 let ended_at: Option<String> = row.get(3)?;
@@ -1439,6 +1442,7 @@ impl Store for SqliteStore {
                     started_at: SqliteStore::parse_dt(&row.get::<_, String>(2)?),
                     ended_at: ended_at.map(|s| SqliteStore::parse_dt(&s)),
                     summary: row.get(4)?,
+                    active_experiment_id: row.get(5).ok().unwrap_or(None),
                 })
             },
         );
@@ -1818,4 +1822,16 @@ impl Store for SqliteStore {
         Ok(results)
     }
 
+    fn set_session_experiment(&self, experiment_id: i64) -> Result<()> {
+        let rows = self.conn.execute(
+            "UPDATE sessions SET active_experiment_id = ?1 WHERE ended_at IS NULL",
+            params![experiment_id],
+        )?;
+        if rows == 0 {
+            return Err(StoreError::NotFound { entity: "active session".into(), id: 0 });
+        }
+        Ok(())
+    }
+
 }
+

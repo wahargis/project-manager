@@ -22,6 +22,7 @@ use crate::validation;
 use std::io::{BufRead, Write};
 
 use crate::store::sqlite::SqliteStore;
+use crate::store::Store;
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -326,6 +327,13 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             let project = args.get("project").and_then(|v| v.as_str());
             dashboard::tool_session_start(store, project)
         },
+        "pm_session_set_experiment" => {
+            let eid = args.get("experiment_id").and_then(|v| v.as_i64()).unwrap_or(0);
+            match store.set_session_experiment(eid) {
+                Ok(()) => format!("Session active experiment set to #{}", eid),
+                Err(e) => format!("Error: {}", e),
+            }
+        },
         "pm_session_end" => {
             let summary = args.get("summary").and_then(|v| v.as_str());
             dashboard::tool_session_end(store, summary)
@@ -525,6 +533,11 @@ fn tool_definitions() -> Vec<ToolDef> {
             input_schema: serde_json::json!({"type": "object", "properties": {"phase_id": {"type": "integer"}, "description": {"type": "string"}, "goals": {"type": "string"}, "success_criteria": {"type": "string"}, "status": {"type": "string", "description": "pending, in_progress, complete, or paused"}}, "required": ["phase_id"]}),
         },
 
+        ToolDef {
+            name: "pm_session_set_experiment".into(),
+            description: "Set the active experiment for the current session. Findings without explicit experiment_id will auto-route here.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"experiment_id": {"type": "integer"}}, "required": ["experiment_id"]}),
+        },
         ToolDef {
             name: "pm_session_start".into(),
             description: "Start a research session. Creates a timestamped session record. Call at the beginning of a work session.".into(),

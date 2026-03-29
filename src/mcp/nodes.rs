@@ -76,7 +76,14 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
         help += "  Or link after creation: pm_add_edge source_type=<type> source_id=<id> target_type=finding target_id=<new_id> relation=informed\n";
         // Continue with creation but include warning in output
     }
-    let exp_id = if eid > 0 { Some(eid) } else { None };
+    // Session experiment fallback: if no explicit experiment_id, check active session
+    let exp_id = if eid > 0 {
+        Some(eid)
+    } else if let Ok(Some(session)) = store.get_current_session() {
+        session.active_experiment_id
+    } else {
+        None
+    };
     match store.create_finding(exp_id, text) {
         Ok(f) => {
             let fref = f.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", f.id));
