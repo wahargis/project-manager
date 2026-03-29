@@ -49,11 +49,13 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
     if !v.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", v.to_mcp_error());
     }
-    // CAUSAL BACKBONE ENFORCEMENT: findings MUST have an experiment
+    // CAUSAL BACKBONE: findings SHOULD have a causal upstream (experiment preferred)
+    // Warn but allow if no experiment — the finding can be linked to other node types
     if eid <= 0 {
-        // List active experiments to help the caller
-        let mut help = String::from("\u{274c} CAUSAL BACKBONE ERROR: Finding requires experiment_id.\n");
-        help += "Every finding must be produced by a specific experiment.\n\n";
+        // Soft warning with guidance, not hard rejection
+        let mut help = String::from("\u{26a0} CAUSAL BACKBONE WARNING: No experiment_id provided.\n");
+        help += "Findings are stronger when linked to the experiment that produced them.\n";
+        help += "The finding will be created but marked as needing causal linkage.\n\n";
         help += "Active experiments (most recent first):\n";
         if let Ok(projects) = store.list_projects() {
             for proj in projects.iter().filter(|p| p.status == crate::store::ProjectStatus::Active) {
@@ -69,12 +71,12 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                 }
             }
         }
-        help += "\nEither:\n";
-        help += "  1. Use existing: pm_log_finding experiment_id=<id> text=\"...\"\n";
-        help += "  2. Create new experiment first, then log finding to it\n";
-        return help;
+        help += "\nRecommended:\n";
+        help += "  pm_log_finding experiment_id=<id> text=\"...\"\n";
+        help += "  Or link after creation: pm_add_edge source_type=<type> source_id=<id> target_type=finding target_id=<new_id> relation=informed\n";
+        // Continue with creation but include warning in output
     }
-    let exp_id = Some(eid);
+    let exp_id = if eid > 0 { Some(eid) } else { None };
     match store.create_finding(exp_id, text) {
         Ok(f) => {
             let fref = f.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", f.id));
