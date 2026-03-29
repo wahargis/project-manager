@@ -283,7 +283,7 @@ pub fn validate_constraint(text: &str, source: Option<&str>) -> ValidationResult
 const VALID_EDGE_RELATIONS: &[&str] = &[
     "supports", "contradicts", "depends", "informed", "supersedes",
     "related", "produced", "cited", "contains", "derived_from",
-    "tested_by", "violated_by",
+    "tested_by", "violated_by", "branches_from", "converges_into",
 ];
 
 pub fn validate_edge_relation(relation: &str) -> ValidationResult {

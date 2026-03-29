@@ -7,7 +7,7 @@
 use rusqlite::Connection;
 
 /// Current highest migration version.
-const LATEST_VERSION: i64 = 11;
+const LATEST_VERSION: i64 = 12;
 
 /// Run all pending migrations on the database connection.
 /// Creates the schema_version table if it doesn't exist, checks the current
@@ -503,10 +503,10 @@ mod tests {
 
         // Verify schema_version recorded all 8 migrations
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 11);
+        assert_eq!(count, 12);
 
         let max_version: i64 = conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(max_version, 11);
+        assert_eq!(max_version, 12);
     }
 
     #[test]
@@ -518,7 +518,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 11, "Should still have exactly 11 version records after idempotent run");
+        assert_eq!(count, 12, "Should still have exactly 12 version records after idempotent run");
     }
 
     #[test]
@@ -608,7 +608,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 11, "Should have 11 total version records (3 pre-existing + 8 new)");
+        assert_eq!(count, 12, "Should have 12 total version records (3 pre-existing + 9 new)");
 
         // Verify v4 columns exist
         conn.execute(
@@ -622,9 +622,10 @@ mod tests {
 }
 
 pub fn migrate_v12_session_experiment(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
-    let version: i64 = conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))?;
-    if version >= 12 { return Ok(()); }
-    conn.execute_batch("ALTER TABLE sessions ADD COLUMN active_experiment_id INTEGER REFERENCES experiments(id);")?;
-    conn.execute("INSERT INTO schema_version (version, applied_at) VALUES (12, datetime(now))", [])?;
+    // Check if column already exists (idempotent)
+    let has_col: bool = conn.prepare("SELECT active_experiment_id FROM sessions LIMIT 0").is_ok();
+    if !has_col {
+        conn.execute_batch("ALTER TABLE sessions ADD COLUMN active_experiment_id INTEGER REFERENCES experiments(id);")?;
+    }
     Ok(())
 }

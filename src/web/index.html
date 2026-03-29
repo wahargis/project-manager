@@ -758,7 +758,9 @@ function renderKGFromEndpoint(kgData, includeSubprojects) {
                     rel === 'CitedIn' ? '#93c5fd' :
                     rel === 'DerivedFrom' ? '#fbbf24' :
                     rel === 'TestedBy' ? '#2dd4bf' :
-                    rel === 'ViolatedBy' ? '#f87171' : '#30363d';
+                    rel === 'ViolatedBy' ? '#f87171' :
+                    rel === 'BranchesFrom' ? '#c084fc' :
+                    rel === 'ConvergesInto' ? '#22d3ee' : '#30363d';
       links.push({ source: src, target: tgt, relation: rel, color: color });
     }
   }
@@ -864,7 +866,7 @@ async function loadKGLegacy(projectId) {
     const tgt = tgtP + '-' + edge.target_id;
     if (nodeMap[src] && nodeMap[tgt]) {
       const rel = edge.relation;
-      const color = rel === 'Contradicts' ? '#f85149' : rel === 'Supports' ? '#3fb950' : rel === 'Informed' ? '#e8883a' : rel === 'Supersedes' ? '#a371f7' : rel === 'DependsOn' ? '#79c0ff' : '#30363d';
+      const color = rel === 'Contradicts' ? '#f85149' : rel === 'Supports' ? '#3fb950' : rel === 'Informed' ? '#e8883a' : rel === 'Supersedes' ? '#a371f7' : rel === 'DependsOn' ? '#79c0ff' : rel === 'BranchesFrom' ? '#c084fc' : rel === 'ConvergesInto' ? '#22d3ee' : '#30363d';
       links.push({ source: src, target: tgt, relation: rel, color: color });
     }
   }
@@ -920,6 +922,8 @@ function renderForceGraph(nodes, links, nodeMap, subprojects, subprojectColorMap
     'RelatedTo':   { width: 0.4, opacity: 0.15, dash: '1,3', arrow: false },
     'ProducedBy':  { width: 0.3, opacity: 0.1, dash: '', arrow: false },
     'CitedIn':     { width: 0.5, opacity: 0.25, dash: '2,2', arrow: true },
+    'BranchesFrom': { width: 0.8, opacity: 0.5, dash: '6,3', arrow: true },
+    'ConvergesInto': { width: 1.5, opacity: 0.6, dash: '', arrow: true },
     'structural':  { width: 0.3, opacity: 0.08, dash: '', arrow: false },
   };
 

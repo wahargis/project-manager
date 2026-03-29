@@ -89,10 +89,10 @@ fn test_split_kg_traverse_works() {
 #[test]
 fn test_decision_with_project_name() {
     let store = test_store();
-    let _ = setup_project(&store);
+    let (_, _, exp_id) = setup_project(&store);
     let why_text = "a".repeat(60);
     let what_text = "b".repeat(60);
-    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None, Some("test-project"));
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), Some(exp_id), None, Some("test-project"));
     assert!(result.contains("Decision #"));
     // Verify project_id was stored
     let decisions = store.list_decisions(1).unwrap();
@@ -103,10 +103,10 @@ fn test_decision_with_project_name() {
 #[test]
 fn test_decision_with_project_alias() {
     let store = test_store();
-    let _ = setup_project(&store);
+    let (_, _, exp_id) = setup_project(&store);
     let why_text = "a".repeat(60);
     let what_text = "b".repeat(60);
-    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None, Some("tp"));
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), Some(exp_id), None, Some("tp"));
     assert!(result.contains("Decision #"));
 }
 
@@ -133,10 +133,10 @@ fn test_decision_why_required_validation() {
 #[test]
 fn test_decision_without_project_still_works() {
     let store = test_store();
-    let _ = setup_project(&store);
+    let (_, _, exp_id) = setup_project(&store);
     let why_text = "a".repeat(60);
     let what_text = "b".repeat(60);
-    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None, None);
+    let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), Some(exp_id), None, None);
     assert!(result.contains("Decision #"));
 }
 
@@ -149,8 +149,8 @@ fn test_list_decisions_uses_direct_project_id() {
     // Create decision without project_id
     store.create_decision(None, "decision without project", Some("why"), None).unwrap();
     let decisions = store.list_decisions(proj_id).unwrap();
-    // Should include both: the one with project_id=proj_id and the one with project_id=NULL
-    assert_eq!(decisions.len(), 2);
+    // Should only include the one with project_id=proj_id (NULL-project decisions are unscoped)
+    assert_eq!(decisions.len(), 1);
 }
 
 // === Issue #8: Phase Nodes Redesign ===
@@ -426,10 +426,11 @@ fn test_dispatch_pm_phase_update() {
 #[test]
 fn test_dispatch_pm_decision_with_project() {
     let store = test_store();
-    let _ = setup_project(&store);
+    let (_, _, exp_id) = setup_project(&store);
     let args = serde_json::json!({
         "what": "a]".to_string() + &"b".repeat(60),
         "why": "c".repeat(60),
+        "experiment_id": exp_id,
         "project": "test-project"
     });
     let result = super::dispatch_tool(&store, "pm_decision", &args);
@@ -488,21 +489,21 @@ fn test_lit_status_lifecycle() {
 
     // unread -> read
     let result = super::nodes::tool_lit_status(&store, lit.id, "read");
-    assert!(result.contains("status updated to 'read'"));
+    assert!(result.contains("status updated:") && result.contains("'read'"), "lit status result: {}", result);
     let fetched = store.get_literature(lit.id).unwrap();
     assert_eq!(fetched.status, Some("read".to_string()));
 
     // read -> cited
     let result = super::nodes::tool_lit_status(&store, lit.id, "cited");
-    assert!(result.contains("status updated to 'cited'"));
+    assert!(result.contains("status updated:") && result.contains("'cited'"), "lit status result: {}", result);
 
     // cited -> tested
     let result = super::nodes::tool_lit_status(&store, lit.id, "tested");
-    assert!(result.contains("status updated to 'tested'"));
+    assert!(result.contains("status updated:") && result.contains("'tested'"), "lit status result: {}", result);
 
     // tested -> integrated
     let result = super::nodes::tool_lit_status(&store, lit.id, "integrated");
-    assert!(result.contains("status updated to 'integrated'"));
+    assert!(result.contains("status updated:") && result.contains("'integrated'"), "lit status result: {}", result);
     let fetched = store.get_literature(lit.id).unwrap();
     assert_eq!(fetched.status, Some("integrated".to_string()));
 }
@@ -521,6 +522,73 @@ fn test_lit_status_nonexistent() {
     let store = test_store();
     let result = super::nodes::tool_lit_status(&store, 999, "read");
     assert!(result.contains("Error") || result.contains("not found"));
+}
+
+
+#[test]
+fn test_lit_status_lifecycle_enforced_order() {
+    let store = test_store();
+    let proj = store.create_project("test-project", Some("tp"), None).unwrap();
+    let lit = store.create_literature(proj.id, "Paper", Some("1234.56789"), None, None, Some("Author"), None, None, None, None, None).unwrap();
+    // unread -> cited should be blocked (must go through read first)
+    let result = super::nodes::tool_lit_status(&store, lit.id, "cited");
+    assert!(result.contains("Invalid literature transition"), "Should block unread->cited: {}", result);
+    assert!(result.contains("read"), "Should suggest 'read' as valid transition: {}", result);
+    
+    // unread -> tested should be blocked
+    let result = super::nodes::tool_lit_status(&store, lit.id, "tested");
+    assert!(result.contains("Invalid literature transition"), "Should block unread->tested: {}", result);
+
+    // unread -> dead_end is allowed (shortcut for papers that are clearly irrelevant)
+    let lit2 = store.create_literature(proj.id, "Bad Paper", Some("9999.99999"), None, None, Some("Author"), None, None, None, None, None).unwrap();
+    let result = super::nodes::tool_lit_status(&store, lit2.id, "dead_end");
+    assert!(result.contains("status updated:"), "Should allow unread->dead_end: {}", result);
+    
+    // dead_end -> read should be blocked (terminal state)
+    let result = super::nodes::tool_lit_status(&store, lit2.id, "read");
+    assert!(result.contains("terminal state"), "Should block dead_end->read: {}", result);
+}
+
+#[test]
+fn test_principle_provenance_enforced() {
+    let store = test_store();
+    let _ = setup_project(&store);
+    // Attempt to create principle without provenance
+    let args = serde_json::json!({
+        "project": "test-project",
+        "scope": "project",
+        "text": &"a".repeat(60),
+        "rationale": "Some rationale"
+    });
+    let result = super::nodes::tool_principle_add(&store, &args);
+    assert!(result.contains("PROVENANCE ERROR"), "Should require provenance: {}", result);
+    assert!(result.contains("finding_id") && result.contains("decision_id"), "Should suggest provenance params: {}", result);
+}
+
+#[test]
+fn test_kg_audit_healthy_project() {
+    let store = test_store();
+    let proj = store.create_project("test-project", Some("tp"), None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase 1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "Test experiment").unwrap();
+    store.update_experiment_status(exp.id, crate::store::ExperimentStatus::Pass, Some("result")).unwrap();
+    let finding = store.create_finding(Some(exp.id), &"a".repeat(120)).unwrap();
+    store.create_edge(
+        crate::store::NodeType::Experiment, exp.id,
+        crate::store::NodeType::Finding, finding.id,
+        crate::store::EdgeType::ProducedBy,
+    ).unwrap();
+    let decision = store.create_decision(Some(exp.id), "Test decision", Some("Because evidence"), Some(proj.id)).unwrap();
+    store.create_edge(
+        crate::store::NodeType::Finding, finding.id,
+        crate::store::NodeType::Decision, decision.id,
+        crate::store::EdgeType::Informed,
+    ).unwrap();
+
+    let result = super::review::tool_kg_audit(&store, "test-project");
+    assert!(result.contains("KG Audit: test-project"), "Should have header: {}", result);
+    assert!(result.contains("Overall Health Score:"), "Should have health score: {}", result);
+    assert!(result.contains("All decisions trace to upstream evidence"), "Should report clean causal chain: {}", result);
 }
 
 // === Sprint 3: Issue #12 — Principle Nodes Redesign ===
@@ -576,15 +644,20 @@ fn test_principle_auto_edge_from_decision() {
 fn test_principle_with_rationale_and_enforcement() {
     let store = test_store();
     let _ = setup_project(&store);
+    // Create a finding for provenance (required by lifecycle enforcement)
+    let phase = store.create_phase(1, "Test Phase", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "Test Experiment").unwrap();
+    let finding = store.create_finding(Some(exp.id), &"a".repeat(120)).unwrap();
     let args = serde_json::json!({
         "project": "test-project",
         "scope": "universal",
         "text": &"a".repeat(60),
         "rationale": "Prevents driver wedge states",
-        "enforcement_level": "mandatory"
+        "enforcement_level": "mandatory",
+        "finding_id": finding.id
     });
     let result = super::nodes::tool_principle_add(&store, &args);
-    assert!(result.contains("Principle #"));
+    assert!(result.contains("Principle #"), "Expected principle creation: {}", result);
 
     let principles = store.list_principles(1).unwrap();
     assert_eq!(principles[0].rationale, Some("Prevents driver wedge states".to_string()));
@@ -774,14 +847,19 @@ fn test_principle_add_suggests_constraint_edges() {
     let store = test_store();
     let (proj_id, _, _) = setup_project(&store);
     store.create_constraint(proj_id, crate::store::ConstraintScope::Hardware, &"a".repeat(60), Some("hardware spec"), None, None, None, None).unwrap();
+    // Create a finding for provenance (required by lifecycle enforcement)
+    let phase = store.create_phase(proj_id, "Test Phase2", 5, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "Test Experiment2").unwrap();
+    let finding = store.create_finding(Some(exp.id), &"c".repeat(120)).unwrap();
     let args = serde_json::json!({
         "project": "test-project",
         "scope": "project",
         "text": &"b".repeat(60),
-        "rationale": "Because of constraints"
+        "rationale": "Because of constraints",
+        "finding_id": finding.id
     });
     let result = super::nodes::tool_principle_add(&store, &args);
-    assert!(result.contains("Principle #"));
+    assert!(result.contains("Principle #"), "Expected principle creation: {}", result);
     assert!(result.contains("Active constraints"), "Expected constraint suggestions in: {}", result);
     assert!(result.contains("pm_add_edge source_type=principle"), "Expected edge suggestion in: {}", result);
 }
@@ -815,7 +893,7 @@ fn test_dispatch_pm_lit_status() {
         "status": "read"
     });
     let result = super::dispatch_tool(&store, "pm_lit_status", &args);
-    assert!(result.contains("status updated to 'read'"), "result: {}", result);
+    assert!(result.contains("status updated:") && result.contains("'read'"), "result: {}", result);
 }
 
 // === Issue #18: Subproject Dashboard Grouping ===
@@ -962,9 +1040,8 @@ fn test_decision_warns_no_causal_upstream() {
     let why_text = "a".repeat(60);
     let what_text = "b".repeat(60);
     let result = super::nodes::tool_decision(&store, &what_text, Some(&why_text), None, None, None);
-    assert!(result.contains("Decision #"));
-    assert!(result.contains("WARNING"), "Expected warning about no causal upstream: {}", result);
-    assert!(result.contains("experiment_id") && result.contains("finding_ids"),
+    assert!(result.contains("CAUSAL BACKBONE ERROR"), "Expected causal backbone error: {}", result);
+    assert!(result.contains("experiment_id") || result.contains("finding_ids"),
         "Expected guidance to provide causal upstream: {}", result);
 }
 
@@ -981,11 +1058,9 @@ fn test_decision_auto_creates_experiment_informed_edge() {
         "Expected Experiment --Informed--> Decision auto-edge in: {}", result);
     // No warning since experiment_id was provided
     assert!(!result.contains("WARNING"), "Should not warn when experiment_id provided: {}", result);
-    // Verify edge in DB
-    let decisions = store.list_decisions(0).unwrap();
-    let did = decisions.last().unwrap().id;
-    let edges = store.get_edges_to(NodeType::Decision, did).unwrap();
-    let informed: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Informed && e.source_type == NodeType::Experiment).collect();
+    // Verify edge in DB via outgoing edges from the experiment
+    let edges = store.get_edges_from(NodeType::Experiment, exp_id).unwrap();
+    let informed: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Informed && e.target_type == NodeType::Decision).collect();
     assert_eq!(informed.len(), 1);
     assert_eq!(informed[0].source_id, exp_id);
 }

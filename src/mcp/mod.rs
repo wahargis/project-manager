@@ -77,10 +77,33 @@ pub fn run_mcp_server() {
         .unwrap_or(9090);
     let db_path_for_web = db_path.clone();
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            crate::web::serve(&db_path_for_web, web_port).await;
-        });
+        // Pre-check: if port is already in use, warn and skip
+        match std::net::TcpListener::bind(("0.0.0.0", web_port)) {
+            Ok(listener) => {
+                // Port is free -- drop the test listener and start the web server
+                drop(listener);
+                eprintln!("[pm-mcp] Starting web dashboard on port {}...", web_port);
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        eprintln!("[pm-mcp] WARNING: Failed to create tokio runtime for web dashboard: {}", e);
+                        return;
+                    }
+                };
+                // Catch panics from warp::serve in case of race condition on port binding
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    rt.block_on(async {
+                        crate::web::serve(&db_path_for_web, web_port).await;
+                    });
+                }));
+                if let Err(_) = result {
+                    eprintln!("[pm-mcp] WARNING: Web dashboard failed to start (port {} may have become unavailable). MCP continues without dashboard.", web_port);
+                }
+            }
+            Err(e) => {
+                eprintln!("[pm-mcp] WARNING: Web dashboard port {} already in use ({}). Dashboard not started -- use existing instance or set PM_WEB_PORT.", web_port, e);
+            }
+        }
     });
 
     for line in stdin.lock().lines() {
@@ -203,6 +226,10 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
         "pm_query" => {
             let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
             review::tool_query(store, q)
+        },
+        "pm_orphan_repair" => {
+            let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
+            review::tool_orphan_repair(store, p)
         },
 
         // Edge tools
@@ -358,6 +385,11 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             edges::tool_set_belief(store, nt, nid, status)
         },
 
+        "pm_kg_audit" => {
+            let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
+            review::tool_kg_audit(store, p)
+        },
+
         _ => format!("Unknown tool: {}", tool_name),
     }
 }
@@ -496,6 +528,11 @@ fn tool_definitions() -> Vec<ToolDef> {
             input_schema: serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
         },
         ToolDef {
+            name: "pm_orphan_repair".into(),
+            description: "Deep structural KG analysis. Finds orphaned nodes, decisions without causal upstream, cross-project bleed, missing phase assignments. Returns specific repair actions.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string", "description": "Project name or alias"}}, "required": ["project"]}),
+        },
+        ToolDef {
             name: "pm_project_create".into(),
             description: "Create a new project or subproject. If parent is provided, creates as a subproject under the named parent.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"name": {"type": "string", "description": "Project name (required)"}, "alias": {"type": "string", "description": "Short alias for the project"}, "parent": {"type": "string", "description": "Parent project name or alias to create as subproject under"}}, "required": ["name"]}),
@@ -557,6 +594,11 @@ fn tool_definitions() -> Vec<ToolDef> {
             name: "pm_set_belief".into(),
             description: "Set belief status on any TMS-enabled node. When a node is contradicted, TMS auto-suspends dependents. Use this to manually believed/suspended/retracted.".into(),
             input_schema: serde_json::json!({"type": "object", "required": ["node_type", "node_id", "status"], "properties": {"node_type": {"type": "string", "description": "finding, decision, hypothesis, principle, or constraint"}, "node_id": {"type": "integer"}, "status": {"type": "string", "description": "believed, suspended, or retracted"}}}),
+        },
+        ToolDef {
+            name: "pm_kg_audit".into(),
+            description: "Comprehensive KG structural audit. Validates causal backbone compliance, hypothesis coverage, literature utilization, edge density, temporal coherence, cross-project references. Returns health score 0-100.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string", "description": "Project name or alias"}}, "required": ["project"]}),
         },
         ToolDef {
             name: "pm_since".into(),

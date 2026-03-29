@@ -50,6 +50,8 @@ pub fn tool_add_edge(store: &SqliteStore, st: &str, si: i64, tt: &str, ti: i64, 
         "derived_from" => EdgeType::DerivedFrom,
         "tested_by" => EdgeType::TestedBy,
         "violated_by" => EdgeType::ViolatedBy,
+        "branches_from" => EdgeType::BranchesFrom,
+        "converges_into" => EdgeType::ConvergesInto,
         _ => return format!("Unknown relation: {}", rel),
     };
     // Use TMS-aware edge creation for Supports/Contradicts; regular for others

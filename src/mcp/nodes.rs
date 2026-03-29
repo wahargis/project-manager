@@ -306,6 +306,30 @@ pub fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experim
                 }
             }
 
+            // Merge/convergence detection: if findings come from different experiments, this is a convergence point
+            if finding_ids.len() > 1 {
+                let mut source_experiments: std::collections::HashSet<i64> = std::collections::HashSet::new();
+                for fid in &finding_ids {
+                    if let Ok(finding) = store.get_finding(*fid) {
+                        if let Some(eid) = finding.experiment_id {
+                            source_experiments.insert(eid);
+                        }
+                    }
+                }
+                if source_experiments.len() > 1 {
+                    out += &format!("\n** MERGE POINT: This decision converges findings from {} different experiments.\n", source_experiments.len());
+                    // Auto-create ConvergesInto edges from each source experiment to this decision
+                    for src_eid in &source_experiments {
+                        match store.create_edge(NodeType::Experiment, *src_eid, NodeType::Decision, d.id, EdgeType::ConvergesInto) {
+                            Ok(_) => auto_edges.push(format!("Exp#{} --ConvergesInto--> Decision#{}", src_eid, d.id)),
+                            Err(e) => out += &format!("(convergence edge note for Exp#{}: {})\n", src_eid, e),
+                        }
+                    }
+                    let exp_list: Vec<String> = source_experiments.iter().map(|e| format!("Exp#{}", e)).collect();
+                    out += &format!("  Converging experiments: {}\n", exp_list.join(", "));
+                }
+            }
+
             // Suggest downstream edges
             suggestions.push((
                 "If this decision spawns a new experiment".to_string(),
@@ -383,8 +407,63 @@ pub fn tool_lit_status(store: &SqliteStore, literature_id: i64, status: &str) ->
     if !sv.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", sv.to_mcp_error());
     }
+
+    // Literature status lifecycle enforcement:
+    // unread -> read -> cited -> tested -> dead_end/promising/integrated
+    let current = match store.get_literature(literature_id) {
+        Ok(lit) => lit.status.unwrap_or_else(|| "unread".to_string()),
+        Err(e) => return format!("Error fetching literature #{}: {}", literature_id, e),
+    };
+
+    let valid_transitions = match current.as_str() {
+        "unread" => vec!["read", "dead_end"],
+        "read" => vec!["cited", "tested", "dead_end", "promising"],
+        "cited" => vec!["tested", "dead_end", "promising", "integrated"],
+        "tested" => vec!["dead_end", "promising", "integrated"],
+        "promising" => vec!["tested", "cited", "integrated"],
+        "dead_end" | "integrated" => vec![], // terminal states
+        _ => vec!["unread", "read", "cited", "tested", "dead_end", "promising", "integrated"],
+    };
+
+    if valid_transitions.is_empty() {
+        return format!(
+            "\u{274c} Literature #{} is in terminal state '{}'. Cannot transition further.",
+            literature_id, current
+        );
+    }
+
+    if !valid_transitions.contains(&status) {
+        return format!(
+            "\u{274c} Invalid literature transition: '{}' -> '{}'.\nValid transitions from '{}': {}\n\nLifecycle: unread -> read -> cited -> tested -> dead_end/promising/integrated",
+            current, status, current, valid_transitions.join(", ")
+        );
+    }
+
     match store.update_literature_status(literature_id, status) {
-        Ok(_) => format!("Literature #{} status updated to '{}'", literature_id, status),
+        Ok(_) => {
+            let mut out = format!("Literature #{} status updated: '{}' -> '{}'", literature_id, current, status);
+
+            // Edge suggestions based on new status
+            match status {
+                "cited" => {
+                    out += "\n\nSuggested edges:";
+                    out += &format!("\n  pm_add_edge source_type=literature source_id={} target_type=finding target_id=? relation=cited", literature_id);
+                    out += &format!("\n  pm_add_edge source_type=literature source_id={} target_type=experiment target_id=? relation=informed", literature_id);
+                }
+                "tested" => {
+                    out += "\n\nSuggested edges:";
+                    out += &format!("\n  pm_add_edge source_type=experiment source_id=? target_type=literature target_id={} relation=tested_by", literature_id);
+                }
+                "integrated" => {
+                    out += "\n\nSuggested edges:";
+                    out += &format!("\n  pm_add_edge source_type=literature source_id={} target_type=finding target_id=? relation=informed", literature_id);
+                    out += &format!("\n  pm_add_edge source_type=literature source_id={} target_type=decision target_id=? relation=informed", literature_id);
+                }
+                _ => {}
+            }
+
+            out
+        }
         Err(e) => format!("Error: {}", e),
     }
 }
@@ -681,6 +760,14 @@ pub fn tool_principle_add(store: &SqliteStore, args: &serde_json::Value) -> Stri
     if !pv.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", pv.to_mcp_error());
     }
+
+    // Provenance enforcement: principles MUST trace to evidence
+    if finding_id.is_none() && decision_id.is_none() {
+        return format!(
+            "\u{274c} PROVENANCE ERROR: Principles must be derived from evidence.\n             Provide at least one of:\n               finding_id=<id>   -- finding that established this principle\n               decision_id=<id>  -- decision that established this principle\n             This ensures every principle traces back through the causal backbone."
+        );
+    }
+
     let scope = match scope_str {
         "universal" | "architecture" => crate::store::PrincipleScope::Universal,
         "phase" | "process" => crate::store::PrincipleScope::Phase,
@@ -705,6 +792,28 @@ pub fn tool_principle_add(store: &SqliteStore, args: &serde_json::Value) -> Stri
                     match store.create_edge(NodeType::Principle, pr.id, NodeType::Decision, did, EdgeType::DerivedFrom) {
                         Ok(e) => out += &format!("\nAuto-created edge: Principle #{} --DerivedFrom--> Decision #{} (Edge #{})", pr.id, did, e.id),
                         Err(e) => out += &format!("\nWarning: failed to create DerivedFrom edge to Decision #{}: {}", did, e),
+                    }
+                }
+
+                // Suggest ViolatedBy edges from recent contradicting findings
+                if let Ok(phases) = store.list_phases(proj.id) {
+                    let mut recent_findings = Vec::new();
+                    for phase in &phases {
+                        if let Ok(exps) = store.list_experiments(Some(phase.id)) {
+                            for exp in &exps {
+                                if let Ok(findings) = store.list_findings(Some(exp.id)) {
+                                    recent_findings.extend(findings);
+                                }
+                            }
+                        }
+                    }
+                    if !recent_findings.is_empty() {
+                        out += "\n\nIf any finding contradicts this principle, create a ViolatedBy edge:";
+                        for f in recent_findings.iter().rev().take(3) {
+                            let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
+                            let fref = f.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", f.id));
+                            out += &format!("\n  F{}: {} -> pm_add_edge source_type=finding source_id={} target_type=principle target_id={} relation=violated_by", fref, t, f.id, pr.id);
+                        }
                     }
                 }
 
@@ -1014,9 +1123,40 @@ pub fn tool_experiment_create(store: &SqliteStore, phase_id: i64, name: &str,
                 }
             }
             if let Some(eid) = informed_by_experiment {
-                match store.create_edge(NodeType::Experiment, eid, NodeType::Experiment, exp.id, EdgeType::Informed) {
-                    Ok(_) => edges.push(format!("Exp#{} --Informed--> Exp#{}", eid, exp.id)),
-                    Err(e) => out += &format!("  (edge error: {})\n", e),
+                // Branch detection: check if source experiment already has other downstream experiments
+                let existing_downstream = store.get_edges_from(NodeType::Experiment, eid)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|e| e.target_type == NodeType::Experiment && matches!(e.relation, EdgeType::Informed | EdgeType::BranchesFrom))
+                    .count();
+
+                if existing_downstream > 0 {
+                    // This creates a branch point -- use BranchesFrom edge type
+                    match store.create_edge(NodeType::Experiment, eid, NodeType::Experiment, exp.id, EdgeType::BranchesFrom) {
+                        Ok(_) => edges.push(format!("Exp#{} --BranchesFrom--> Exp#{}", eid, exp.id)),
+                        Err(e) => out += &format!("  (edge error: {})\n", e),
+                    }
+                    out += &format!("\n** BRANCH POINT: Exp#{} now has {} downstream experiments (including this one). This is a research branch point.\n", eid, existing_downstream + 1);
+
+                    // Upgrade existing Informed edges from the source to BranchesFrom
+                    let existing_informed: Vec<(i64, i64)> = store.get_edges_from(NodeType::Experiment, eid)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter(|e| e.target_type == NodeType::Experiment && e.relation == EdgeType::Informed)
+                        .map(|e| (e.id, e.target_id))
+                        .collect();
+                    for (edge_id, target_id) in &existing_informed {
+                        let _ = store.delete_edge(*edge_id);
+                        let _ = store.create_edge(NodeType::Experiment, eid, NodeType::Experiment, *target_id, EdgeType::BranchesFrom);
+                    }
+                    if !existing_informed.is_empty() {
+                        out += &format!("  (upgraded {} existing Informed edges to BranchesFrom)\n", existing_informed.len());
+                    }
+                } else {
+                    match store.create_edge(NodeType::Experiment, eid, NodeType::Experiment, exp.id, EdgeType::Informed) {
+                        Ok(_) => edges.push(format!("Exp#{} --Informed--> Exp#{}", eid, exp.id)),
+                        Err(e) => out += &format!("  (edge error: {})\n", e),
+                    }
                 }
             }
 
@@ -1026,6 +1166,44 @@ pub fn tool_experiment_create(store: &SqliteStore, phase_id: i64, name: &str,
                     out += &format!("  + {}\n", e);
                 }
             }
+
+            // Auto-surface relevant constraints for this phase's project
+            if let Ok(phase) = store.get_phase(phase_id) {
+                if let Ok(constraints) = store.list_constraints(phase.project_id) {
+                    if !constraints.is_empty() {
+                        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                        let mut active_constraints = Vec::new();
+                        let mut expired_constraints = Vec::new();
+                        for c in &constraints {
+                            if let Some(ref expires) = c.expires_at {
+                                if !expires.is_empty() && expires.as_str() <= today.as_str() {
+                                    expired_constraints.push(c);
+                                    continue;
+                                }
+                            }
+                            active_constraints.push(c);
+                        }
+                        if !active_constraints.is_empty() {
+                            out += "\nActive constraints to consider:\n";
+                            for c in active_constraints.iter().take(5) {
+                                let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
+                                let sev = c.severity.as_deref().unwrap_or("hard");
+                                let cref = c.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", c.id));
+                                out += &format!("  C{} [{}]: {}\n", cref, sev, t);
+                            }
+                        }
+                        if !expired_constraints.is_empty() {
+                            out += "\nWARNING: Expired constraints (may need re-validation):\n";
+                            for c in expired_constraints.iter().take(3) {
+                                let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
+                                let cref = c.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", c.id));
+                                out += &format!("  C{}: {} (expired {})\n", cref, t, c.expires_at.as_deref().unwrap_or("?"));
+                            }
+                        }
+                    }
+                }
+            }
+
             out
         }
         Err(e) => format!("Error creating experiment: {}", e),

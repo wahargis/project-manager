@@ -107,6 +107,14 @@ pub enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Orphan repair -- deep structural KG analysis with repair suggestions
+    OrphanRepair {
+        project: String,
+    },
+    /// KG structural audit with health score
+    KgAudit {
+        project: String,
+    },
     /// Import v2 JSON project data
     /// Generate session handoff document
     Handoff {

@@ -445,7 +445,12 @@ fn node_counts_for_project(store: &SqliteStore, project_id: i64) -> NodeCountsIn
         }
     }
     let decisions = store.list_decisions(project_id).map(|v| v.len()).unwrap_or(0);
-    let hypotheses = store.list_hypotheses(None).map(|v| v.len()).unwrap_or(0);
+    let mut hypotheses = 0usize;
+    if let Ok(ph_list2) = store.list_phases(project_id) {
+        for ph in &ph_list2 {
+            hypotheses += store.list_hypotheses(Some(ph.id)).map(|v| v.len()).unwrap_or(0);
+        }
+    }
     let literature = store.list_literature(project_id).map(|v| v.len()).unwrap_or(0);
     let principles = store.list_principles(project_id).map(|v| v.len()).unwrap_or(0);
     let constraints = store.list_constraints(project_id).map(|v| v.len()).unwrap_or(0);

@@ -96,9 +96,11 @@ pub enum EdgeType {
     DerivedFrom,
     TestedBy,
     ViolatedBy,
+    BranchesFrom,
+    ConvergesInto,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum NodeType {
     Finding,
     Experiment,

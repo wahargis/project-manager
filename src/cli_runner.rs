@@ -33,13 +33,51 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             let decisions = store.list_decisions(proj.id).map(|d| d.len()).unwrap_or(0);
-            let research = store.list_research(None).map(|r| r.len()).unwrap_or(0);
+            let mut research = 0;
+            let mut hypotheses = 0;
+            for p in &phases {
+                research += store.list_research(Some(p.id)).map(|r| r.len()).unwrap_or(0);
+                hypotheses += store.list_hypotheses(Some(p.id)).map(|h| h.len()).unwrap_or(0);
+            }
             let principles = store.list_principles(proj.id).map(|p| p.len()).unwrap_or(0);
-            let hypotheses = store.list_hypotheses(None).map(|h| h.len()).unwrap_or(0);
             let constraints = store.list_constraints(proj.id).map(|c| c.len()).unwrap_or(0);
             let literature = store.list_literature(proj.id).map(|l| l.len()).unwrap_or(0);
             let feedback_count = store.list_feedback(proj.id).map(|f| f.len()).unwrap_or(0);
-            let edges = store.list_all_edges().map(|e| e.len()).unwrap_or(0);
+            // Build set of all node IDs in this project for edge filtering
+            let mut project_node_ids: std::collections::HashSet<(NodeType, i64)> = std::collections::HashSet::new();
+            for p in &phases {
+                project_node_ids.insert((NodeType::Phase, p.id));
+                for e in store.list_experiments(Some(p.id)).unwrap_or_default() {
+                    project_node_ids.insert((NodeType::Experiment, e.id));
+                    for f in store.list_findings(Some(e.id)).unwrap_or_default() {
+                        project_node_ids.insert((NodeType::Finding, f.id));
+                    }
+                }
+                for r in store.list_research(Some(p.id)).unwrap_or_default() {
+                    project_node_ids.insert((NodeType::Research, r.id));
+                }
+                for h in store.list_hypotheses(Some(p.id)).unwrap_or_default() {
+                    project_node_ids.insert((NodeType::Hypothesis, h.id));
+                }
+            }
+            for d in store.list_decisions(proj.id).unwrap_or_default() {
+                project_node_ids.insert((NodeType::Decision, d.id));
+            }
+            for p in store.list_principles(proj.id).unwrap_or_default() {
+                project_node_ids.insert((NodeType::Principle, p.id));
+            }
+            for c in store.list_constraints(proj.id).unwrap_or_default() {
+                project_node_ids.insert((NodeType::Constraint, c.id));
+            }
+            for l in store.list_literature(proj.id).unwrap_or_default() {
+                project_node_ids.insert((NodeType::Literature, l.id));
+            }
+            let edges = store.list_all_edges().map(|edges| {
+                edges.iter().filter(|e| {
+                    project_node_ids.contains(&(e.source_type.clone(), e.source_id))
+                        || project_node_ids.contains(&(e.target_type.clone(), e.target_id))
+                }).count()
+            }).unwrap_or(0);
 
             println!("=== {} KG Stats ===", proj.name);
             println!("  Phases:      {}", phases.len());
@@ -682,6 +720,14 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             } else { eprintln!("Project not found: {}", project); }
         }
 
+        Commands::OrphanRepair { project } => {
+            let output = pm::mcp::review::tool_orphan_repair(&store, &project);
+            println!("{}", output);
+        }
+
+        Commands::KgAudit { project } => {
+            println!("{}", pm::mcp::review::tool_kg_audit(&store, &project));
+        }
         Commands::Serve { port } => {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(pm::web::serve(&db_path, port));
