@@ -261,6 +261,11 @@ pub fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experim
         .map(|s| parse_ids(s))
         .unwrap_or_default();
 
+    // CAUSAL BACKBONE ENFORCEMENT: decisions must have causal upstream
+    if finding_ids.is_empty() && experiment_id.is_none() {
+        return format!("\u{274c} CAUSAL BACKBONE ERROR: Decision requires causal upstream.\nEvery decision must be informed by at least one finding or experiment.\n\nProvide one of:\n  finding_ids=\"1,2,3\"    — findings that informed this decision\n  experiment_id=<id>     — experiment that led to this decision\n");
+    }
+
     match store.create_decision(experiment_id, what, why, project_id) {
         Ok(d) => {
             let dref = d.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", d.id));
