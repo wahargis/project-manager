@@ -480,7 +480,7 @@ fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "pm_experiment_create".into(),
-            description: "Create experiment with REQUIRED causal upstream. Every experiment must link to what motivated it (finding, decision, or prior experiment). First experiment in a phase is exempt.".into(),
+            description: "BEFORE calling: use pm_search to check if a similar experiment already exists or has results. Create experiment with REQUIRED causal upstream — every experiment must link to what motivated it (finding, decision, or prior experiment). First experiment in a phase is exempt.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {
                 "phase_id": {"type": "integer", "description": "Phase this experiment belongs to"},
                 "name": {"type": "string", "description": "What investigation this experiment represents (min 10 chars)"},
@@ -496,7 +496,7 @@ fn tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "pm_log_finding".into(),
-            description: "Create a finding for an experiment. Returns finding ID + sibling findings for edge suggestions.".into(),
+            description: "Log an empirical finding from an experiment. After creation, auto-checks for related/contradicting findings. IMPORTANT: findings should be detailed lab reports (200+ chars) with methodology, data, and conclusions — not brief summaries.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"experiment_id": {"type": "integer"}, "text": {"type": "string"}}, "required": ["experiment_id", "text"]}),
         },
         ToolDef {
