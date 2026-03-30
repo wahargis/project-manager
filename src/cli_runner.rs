@@ -1021,18 +1021,28 @@ fn handoff_text(store: &SqliteStore, project: &str) -> Result<String, Box<dyn st
     Ok(out)
 }fn dashboard_phase_context(store: &SqliteStore, phase_id: i64) -> String {
     let mut ctx = String::new();
-    // Most recent finding from this phase
     let mut latest_finding: Option<(i64, String)> = None;
+    let mut pending_count = 0usize;
+    let mut pass_count = 0usize;
+    let mut fail_count = 0usize;
+    // Track best pending experiment: prefer one with most recent finding
+    let mut best_pending: Option<(i64, String)> = None; // (max_finding_id, exp_name)
+
     if let Ok(exps) = store.list_experiments(Some(phase_id)) {
-        let mut pending_exp: Option<String> = None;
         for exp in &exps {
-            if exp.status == ExperimentStatus::Pending {
-                if pending_exp.is_none() {
-                    pending_exp = Some(truncate_safe(&exp.name, 60).to_string());
-                }
+            match exp.status {
+                ExperimentStatus::Pending => pending_count += 1,
+                ExperimentStatus::Pass => pass_count += 1,
+                ExperimentStatus::Fail => fail_count += 1,
+                _ => {}
             }
+
+            let mut max_finding_in_exp: i64 = 0;
             if let Ok(findings) = store.list_findings(Some(exp.id)) {
                 for f in &findings {
+                    if f.id as i64 > max_finding_in_exp {
+                        max_finding_in_exp = f.id as i64;
+                    }
                     match &latest_finding {
                         None => latest_finding = Some((f.id, truncate_safe(&f.text, 80).to_string())),
                         Some((old_id, _)) if f.id > *old_id => {
@@ -1042,11 +1052,37 @@ fn handoff_text(store: &SqliteStore, project: &str) -> Result<String, Box<dyn st
                     }
                 }
             }
+
+            // For pending experiments: prefer the one most informed by recent evidence
+            if exp.status == ExperimentStatus::Pending {
+                match &best_pending {
+                    None => best_pending = Some((max_finding_in_exp, truncate_safe(&exp.name, 60).to_string())),
+                    Some((old_max, _)) if max_finding_in_exp > *old_max => {
+                        best_pending = Some((max_finding_in_exp, truncate_safe(&exp.name, 60).to_string()));
+                    }
+                    // Tie-break: higher experiment ID (more recently created)
+                    Some((old_max, _)) if max_finding_in_exp == *old_max => {
+                        best_pending = Some((max_finding_in_exp, truncate_safe(&exp.name, 60).to_string()));
+                    }
+                    _ => {}
+                }
+            }
         }
-        if let Some(name) = pending_exp {
+
+        // Phase lifecycle signals
+        let total = pending_count + pass_count + fail_count;
+        if total > 0 {
+            ctx += &format!("\n      Experiments: {} pending, {} pass, {} fail", pending_count, pass_count, fail_count);
+            if pending_count == 0 {
+                ctx += " -- REVIEW NEEDED (all resolved)";
+            }
+        }
+
+        if let Some((_, name)) = best_pending {
             ctx += &format!("\n      Active: {}", name);
         }
     }
+
     // Untested hypotheses count
     if let Ok(hyps) = store.list_hypotheses(Some(phase_id)) {
         let untested = hyps.iter().filter(|h| h.status == HypothesisStatus::Proposed).count();
