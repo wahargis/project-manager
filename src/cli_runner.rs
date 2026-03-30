@@ -1025,8 +1025,7 @@ fn handoff_text(store: &SqliteStore, project: &str) -> Result<String, Box<dyn st
     let mut pending_count = 0usize;
     let mut pass_count = 0usize;
     let mut fail_count = 0usize;
-    // Track best pending experiment: prefer one with most recent finding
-    let mut best_pending: Option<(i64, String)> = None; // (max_finding_id, exp_name)
+    let mut pending_names: Vec<String> = Vec::new();
 
     if let Ok(exps) = store.list_experiments(Some(phase_id)) {
         for exp in &exps {
@@ -1053,19 +1052,14 @@ fn handoff_text(store: &SqliteStore, project: &str) -> Result<String, Box<dyn st
                 }
             }
 
-            // For pending experiments: prefer the one most informed by recent evidence
             if exp.status == ExperimentStatus::Pending {
-                match &best_pending {
-                    None => best_pending = Some((max_finding_in_exp, truncate_safe(&exp.name, 60).to_string())),
-                    Some((old_max, _)) if max_finding_in_exp > *old_max => {
-                        best_pending = Some((max_finding_in_exp, truncate_safe(&exp.name, 60).to_string()));
-                    }
-                    // Tie-break: higher experiment ID (more recently created)
-                    Some((old_max, _)) if max_finding_in_exp == *old_max => {
-                        best_pending = Some((max_finding_in_exp, truncate_safe(&exp.name, 60).to_string()));
-                    }
-                    _ => {}
-                }
+                let fc = store.list_findings(Some(exp.id)).map(|f| f.len()).unwrap_or(0);
+                let label = if fc > 0 {
+                    format!("E#{} ({} findings)", exp.id, fc)
+                } else {
+                    format!("E#{}", exp.id)
+                };
+                pending_names.push(label);
             }
         }
 
@@ -1078,8 +1072,17 @@ fn handoff_text(store: &SqliteStore, project: &str) -> Result<String, Box<dyn st
             }
         }
 
-        if let Some((_, name)) = best_pending {
-            ctx += &format!("\n      Active: {}", name);
+        // Show ALL pending experiments with finding counts — inform, dont decide
+        if !pending_names.is_empty() {
+            if pending_names.len() == 1 {
+                ctx += &format!("\n      Pending: {}", pending_names[0]);
+            } else {
+                ctx += &format!("\n      Pending ({}): {}", pending_names.len(),
+                    pending_names.iter().take(4).cloned().collect::<Vec<_>>().join(", "));
+                if pending_names.len() > 4 {
+                    ctx += &format!(", +{} more", pending_names.len() - 4);
+                }
+            }
         }
     }
 
