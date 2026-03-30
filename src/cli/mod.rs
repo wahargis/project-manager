@@ -249,6 +249,7 @@ pub enum ConAction {
 pub enum LitAction {
     Add { title: String, #[arg(long)] arxiv: Option<String>, #[arg(long)] relevance: Option<String>, #[arg(long)] findings: Option<String> },
     List,
+    Status { id: i64, status: String },
 }
 
 #[derive(Subcommand)]

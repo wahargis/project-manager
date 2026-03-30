@@ -554,8 +554,13 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 LitAction::List => {
                     for l in store.list_literature(proj.id)? {
                         let aid = l.arxiv_id.as_deref().unwrap_or("-");
-                        println!("  #{} [{}] {}", l.id, aid, l.title);
+                        let status = l.status.as_deref().unwrap_or("unread");
+                        println!("  #{} [{}] [{}] {}", l.id, aid, status, l.title);
                     }
+                }
+                LitAction::Status { id, status } => {
+                    let result = pm::mcp::nodes::tool_lit_status(&store, id, &status);
+                    println!("{}", result);
                 }
             }
         }
