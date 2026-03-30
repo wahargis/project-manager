@@ -251,11 +251,59 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
     }
 }
 
+/// Anti-cleanup guardrail (#34): scan text for closure/pruning language.
+/// Returns the matched text if cleanup language is detected, None otherwise.
+pub fn cleanup_guard_check(text: &str) -> Option<String> {
+    let lower = text.to_lowercase();
+
+    // Closure patterns: "close/deprecate/remove" near research terms
+    let word_patterns: &[(&[&str], &str)] = &[
+        (&["deprecate", "deprecating", "deprecated"], "deprecation"),
+        (&["remove", "removing"], "removal"),
+        (&["prune", "pruning"], "pruning"),
+        (&["cleanup", "clean up", "cleaning up"], "cleanup"),
+        (&["stale"], "staleness label"),
+        (&["abandoned"], "abandonment label"),
+        (&["obsolete"], "obsolescence label"),
+        (&["dead end", "dead-end"], "dead end label"),
+    ];
+
+    // Check "close/closing" + research terms
+    if (lower.contains("close") || lower.contains("closing")) &&
+       (lower.contains("phase") || lower.contains("experiment") ||
+        lower.contains("branch") || lower.contains("hypothesis")) {
+        // Find the matched close word for display
+        let close_word = if lower.contains("closing") { "closing" } else { "close" };
+        return Some(format!("closure of research element (\"{}\")", close_word));
+    }
+
+    // Check impact zeroing
+    if lower.contains("impact to 0") || lower.contains("impact=0") {
+        return Some("zeroing impact (\"impact to 0\")".to_string());
+    }
+    if lower.contains("reduce impact") {
+        return Some("reducing impact (\"reduce impact\")".to_string());
+    }
+
+    // Check simple word patterns
+    for (words, label) in word_patterns {
+        for word in *words {
+            if lower.contains(word) {
+                return Some(format!("{} (\"{}\")", label, word));
+            }
+        }
+    }
+    None
+}
+
 pub fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experiment_id: Option<i64>, finding_ids_str: Option<&str>, project_name: Option<&str>) -> String {
     let v = validation::validate_decision(what, why);
     if !v.is_ok() {
         return format!("\u{274c} VALIDATION ERROR:\n{}", v.to_mcp_error());
     }
+    // #34: Anti-cleanup guardrail -- warn on closure/pruning language
+    let cleanup_warning = cleanup_guard_check(what);
+
     // Resolve project name to project_id
     let project_id = if let Some(pname) = project_name {
         match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == pname || p.alias.as_deref() == Some(pname))) {
@@ -280,6 +328,17 @@ pub fn tool_decision(store: &SqliteStore, what: &str, why: Option<&str>, experim
         Ok(d) => {
             let dref = d.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", d.id));
             let mut out = format!("Decision {} created (global #{}): {}\n", dref, d.id, d.what);
+
+            // #34: Emit cleanup guard warning if triggered
+            if let Some(ref matched) = cleanup_warning {
+                out += &format!(
+                    "\n\u{26a0}\u{fe0f} CLEANUP GUARD: This decision contains closure/pruning language ({}).\n\
+                    Research phases and experiments with negative results are valuable \u{2014} they narrow the search space.\n\
+                    If this is an explicit user request to close/deprioritize, proceed. Otherwise, consider reframing\n\
+                    as a redirect (what NEW direction does this suggest?) rather than a closure.\n\n",
+                    matched
+                );
+            }
             let mut auto_edges: Vec<String> = Vec::new();
             let mut suggestions: Vec<(String, String)> = Vec::new();
 

@@ -261,25 +261,31 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
     }
 
 
-    // === Staleness Report (Feature 5) ===
+    // === Node Age Report (#34: neutral age context, not staleness warnings) ===
     if let Ok(report) = store.staleness_report(proj.id) {
+        let has_age_data = !report.stale_hypotheses.is_empty()
+            || !report.stale_experiments.is_empty()
+            || !report.unconnected_findings.is_empty();
+        if has_age_data {
+            text += "\n## Node Age Context\n";
+        }
         if !report.stale_hypotheses.is_empty() {
-            text += &format!("\n## Stale Hypotheses (proposed >7 days, untested): {}\n", report.stale_hypotheses.len());
+            text += &format!("Oldest untested hypotheses ({}):\n", report.stale_hypotheses.len());
             for (h, days) in report.stale_hypotheses.iter().take(5) {
                 let t = truncate_safe(&h.text, 60);
                 let href = h.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", h.id));
-                text += &format!("  H{}: {} ({} days stale)\n", href, t, days);
+                text += &format!("  H{}: {} ({} days)\n", href, t, days);
             }
         }
         if !report.stale_experiments.is_empty() {
-            text += &format!("\n## Stale Experiments (pending >14 days): {}\n", report.stale_experiments.len());
+            text += &format!("Oldest pending experiments ({}):\n", report.stale_experiments.len());
             for (e, days) in report.stale_experiments.iter().take(5) {
                 let eref = e.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", e.id));
-                text += &format!("  E{}: {} ({} days stale)\n", eref, e.name, days);
+                text += &format!("  E{}: {} ({} days)\n", eref, e.name, days);
             }
         }
         if !report.unconnected_findings.is_empty() {
-            text += &format!("\n## Unconnected Findings (>30 days, no edges): {}\n", report.unconnected_findings.len());
+            text += &format!("Unconnected findings ({}):\n", report.unconnected_findings.len());
             for f in report.unconnected_findings.iter().take(5) {
                 let t = truncate_safe(&f.text, 60);
                 text += &format!("  F#{}: {}\n", f.id, t);
@@ -926,7 +932,7 @@ pub fn tool_orphan_repair(store: &SqliteStore, project: &str) -> String {
                         category: "Dangling branch".to_string(),
                         node_ref: eref2,
                         description: format!("{}/{} downstream experiments still pending", pending, downstream_exp_ids.len()),
-                        repair: "Complete or close pending branched experiments to resolve the branch".to_string(),
+                        repair: "Complete pending branched experiments or redirect them to a new approach".to_string(),
                     });
                 }
             }

@@ -398,6 +398,13 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Validation error:\n{}", v.to_mcp_error());
                         return Ok(());
                     }
+                    // #34: Anti-cleanup guardrail
+                    if let Some(matched) = pm::mcp::nodes::cleanup_guard_check(&what) {
+                        println!("\n\u{26a0}\u{fe0f} CLEANUP GUARD: This decision contains closure/pruning language ({}).", matched);
+                        println!("Research phases and experiments with negative results are valuable \u{2014} they narrow the search space.");
+                        println!("If this is an explicit user request to close/deprioritize, proceed. Otherwise, consider reframing");
+                        println!("as a redirect (what NEW direction does this suggest?) rather than a closure.\n");
+                    }
                     let d = store.create_decision(experiment, &what, why.as_deref(), None)?;
                     println!("Decision #{} added: {}", d.id, d.what);
                 }
