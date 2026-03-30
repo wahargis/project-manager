@@ -111,6 +111,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             println!("  Total nodes: {}", phases.len() + exp_count + finding_count + decisions + research + principles + hypotheses + constraints + literature + feedback_count);
         }
 
+
         Commands::Dashboard => {
             let projects = store.list_projects()?;
             println!("=== Cross-Project Dashboard ===\n");
@@ -131,7 +132,8 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(top) = top {
                             let s = if top.status == PhaseStatus::InProgress { "IN-PROGRESS" } else { "NEXT" };
                             let pref = top.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", top.id));
-                            println!("  [{}] {} {} [impact:{}] {}", parent.name, s, pref, top.impact, top.name);
+                            let phase_ctx = dashboard_phase_context(&store, top.id);
+                            println!("  [{}] {} {} [impact:{}] {}{}", parent.name, s, pref, top.impact, top.name, phase_ctx);
                         }
                         if let Some(p) = next.iter().find(|p| p.status == PhaseStatus::Paused) {
                             let pref = p.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", p.id));
@@ -999,4 +1001,45 @@ fn handoff_text(store: &SqliteStore, project: &str) -> Result<String, Box<dyn st
         }
     }
     Ok(out)
+}fn dashboard_phase_context(store: &SqliteStore, phase_id: i64) -> String {
+    let mut ctx = String::new();
+    // Most recent finding from this phase
+    let mut latest_finding: Option<(i64, String)> = None;
+    if let Ok(exps) = store.list_experiments(Some(phase_id)) {
+        let mut pending_exp: Option<String> = None;
+        for exp in &exps {
+            if exp.status == ExperimentStatus::Pending {
+                if pending_exp.is_none() {
+                    pending_exp = Some(truncate_safe(&exp.name, 60).to_string());
+                }
+            }
+            if let Ok(findings) = store.list_findings(Some(exp.id)) {
+                for f in &findings {
+                    match &latest_finding {
+                        None => latest_finding = Some((f.id, truncate_safe(&f.text, 80).to_string())),
+                        Some((old_id, _)) if f.id > *old_id => {
+                            latest_finding = Some((f.id, truncate_safe(&f.text, 80).to_string()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if let Some(name) = pending_exp {
+            ctx += &format!("\n      Active: {}", name);
+        }
+    }
+    // Untested hypotheses count
+    if let Ok(hyps) = store.list_hypotheses(Some(phase_id)) {
+        let untested = hyps.iter().filter(|h| h.status == HypothesisStatus::Proposed).count();
+        if untested > 0 {
+            ctx += &format!("\n      {} untested hypothesis(es)", untested);
+        }
+    }
+    if let Some((fid, text)) = latest_finding {
+        ctx += &format!("\n      Latest: F#{} {}", fid, text);
+    }
+    ctx
 }
+
+
