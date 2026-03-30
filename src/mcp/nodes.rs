@@ -10,6 +10,7 @@
 
 use crate::store::sqlite::SqliteStore;
 use crate::store::{Store, NodeType, EdgeType, HypothesisStatus, ExperimentStatus};
+use crate::analysis::confidence;
 use crate::validation;
 use crate::analysis::contradictions;
 use std::collections::HashSet;
@@ -605,6 +606,14 @@ pub fn tool_exp_complete(store: &SqliteStore, eid: i64, status: &str, result: &s
         "If this result warrants a decision".to_string(),
         format!("pm_decision what=\"...\" why=\"...\" experiment_id={}", eid),
     ));
+
+    // Statistical confidence scoring (MAD-based)
+    let all_findings = store.list_findings(Some(eid)).unwrap_or_default();
+    if let Some(conf) = confidence::compute_experiment_confidence(&all_findings) {
+        out += "
+";
+        out += &conf.display();
+    }
 
     out += &causal_guidance(&auto_edges, &suggestions);
     out

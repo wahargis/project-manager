@@ -4,6 +4,7 @@ use pm::store::sqlite::SqliteStore;
 use pm::store::{Store, PhaseStatus, ExperimentStatus, ResearchStatus, NodeType, EdgeType, PrincipleScope, PrincipleStatus, HypothesisStatus, ConstraintScope, FeedbackCategory};
 use pm::dag::DagEngine;
 use pm::kg::KgEngine;
+use pm::analysis::confidence;
 
 fn default_db_path() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -312,14 +313,17 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(pid) = exp.phase_id { println!("  Phase: #{}", pid); }
                     println!("  Created: {}", exp.created_at);
                     // Show findings from this experiment
-                    if let Ok(findings) = store.list_findings(Some(exp.id)) {
-                        if !findings.is_empty() {
-                            println!("  Findings ({}): ", findings.len());
-                            for f in &findings {
-                                let trunc = truncate_safe(&f.text, 80);
-                                println!("    F#{}: {}", f.id, trunc);
-                            }
+                    let exp_findings = store.list_findings(Some(exp.id)).unwrap_or_default();
+                    if !exp_findings.is_empty() {
+                        println!("  Findings ({}): ", exp_findings.len());
+                        for f in &exp_findings {
+                            let trunc = truncate_safe(&f.text, 80);
+                            println!("    F#{}: {}", f.id, trunc);
                         }
+                    }
+                    // Statistical confidence scoring (MAD-based)
+                    if let Some(conf) = confidence::compute_experiment_confidence(&exp_findings) {
+                        print!("{}", conf.display());
                     }
                     print_edges(&store, NodeType::Experiment, exp.id);
                 }
@@ -545,9 +549,23 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Hyp { project, action } => {
             let _proj = resolve_project(&store, &project).ok_or("Project not found")?;
             match action {
-                HypAction::Add { text, phase } => {
+                HypAction::Add { text, phase, finding } => {
                     let h = store.create_hypothesis(phase, &text)?;
-                    println!("Hypothesis #{} added: {}", h.id, truncate_safe(&h.text, 80));
+                    let mut out = format!("Hypothesis #{} added: {}", h.id, truncate_safe(&h.text, 80));
+
+                    // Causal grounding: auto-create Finding --Supports--> Hypothesis edge
+                    if let Some(fid) = finding {
+                        match store.create_edge(NodeType::Finding, fid, NodeType::Hypothesis, h.id, EdgeType::Supports) {
+                            Ok(_) => out += &format!("\n  Auto-edge: Finding#{} --Supports--> Hypothesis#{}", fid, h.id),
+                            Err(e) => out += &format!("\n  Edge note: {}", e),
+                        }
+                    } else {
+                        // Soft warning: hypothesis without informing finding
+                        out += "\n  \u{26a0}\u{fe0f} WARNING: Hypothesis has no informing finding. Consider linking:";
+                        out += &format!("\n    pm kg <project> edge Finding ? Hypothesis {} Supports", h.id);
+                    }
+
+                    println!("{}", out);
                 }
                 HypAction::List { phase } => {
                     for h in store.list_hypotheses(phase)? {

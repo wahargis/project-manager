@@ -939,6 +939,7 @@ dependencies = [
  "chrono",
  "clap",
  "predicates",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

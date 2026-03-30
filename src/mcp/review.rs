@@ -6,6 +6,7 @@ use crate::util::truncate_safe;
 use crate::store::sqlite::SqliteStore;
 use crate::store::{Store, NodeType, EdgeType, HypothesisStatus};
 use crate::dag::DagEngine;
+use crate::analysis::confidence;
 
 pub fn tool_review(store: &SqliteStore, project: &str) -> String {
     let proj = match store.list_projects().ok().and_then(|ps| ps.into_iter().find(|p| p.name == project || p.alias.as_deref() == Some(project))) {
@@ -15,6 +16,7 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
     let kg = crate::kg::KgEngine::new(store);
     let mut text = format!("=== Research Review: {} ===\n\n", proj.name);
     let mut total = 0; let mut pass = 0; let mut fail = 0; let mut pending = 0;
+    let mut confidence_reports: Vec<(String, confidence::ConfidenceResult)> = Vec::new();
     if let Ok(phases) = store.list_phases(proj.id) {
         for phase in &phases {
             if let Ok(exps) = store.list_experiments(Some(phase.id)) {
@@ -26,11 +28,27 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
                         crate::store::ExperimentStatus::Pending => pending += 1,
                         _ => {}
                     }
+                    // Compute confidence for completed experiments with findings
+                    if exp.status != crate::store::ExperimentStatus::Pending {
+                        if let Ok(findings) = store.list_findings(Some(exp.id)) {
+                            if let Some(conf) = confidence::compute_experiment_confidence(&findings) {
+                                let eref = exp.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", exp.id));
+                                let name_trunc = truncate_safe(&exp.name, 40);
+                                confidence_reports.push((format!("{} \"{}\"" , eref, name_trunc), conf));
+                            }
+                        }
+                    }
                 }
             }
         }
     }
     text += &format!("## Experiments: {} total, {} pass, {} fail, {} pending\n", total, pass, fail, pending);
+    if !confidence_reports.is_empty() {
+        text += "\n## Experiment Confidence (MAD-based):\n";
+        for (label, conf) in &confidence_reports {
+            text += &format!("  {} [{:.2} — {}]\n", label, conf.confidence, conf.interpretation);
+        }
+    }
     let dag = DagEngine::new(store, proj.id);
     if let Ok(Some(n)) = dag.stagnation_check(3) {
         text += &format!("\n## STAGNATION: {} consecutive fails\n", n);

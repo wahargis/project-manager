@@ -244,7 +244,7 @@ pub enum PrincipleAction {
 
 #[derive(Subcommand)]
 pub enum HypAction {
-    Add { text: String, #[arg(long)] phase: Option<i64> },
+    Add { text: String, #[arg(long)] phase: Option<i64>, #[arg(long)] finding: Option<i64> },
     List { #[arg(long)] phase: Option<i64> },
     Get { id: i64 },
     Test { id: i64, #[arg(long)] experiment: i64 },

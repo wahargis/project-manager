@@ -22,7 +22,7 @@ use crate::validation;
 use std::io::{BufRead, Write};
 
 use crate::store::sqlite::SqliteStore;
-use crate::store::Store;
+use crate::store::{Store, NodeType, EdgeType};
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -286,6 +286,38 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
                 nodes::tool_exp_complete(store, eid, status, result, finding_text)
             }
         },
+        "pm_hyp_add" => {
+            let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("");
+            let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            let phase_id = args.get("phase_id").and_then(|v| v.as_i64());
+            let finding_id = args.get("finding_id").and_then(|v| v.as_i64());
+            let prediction = args.get("prediction").and_then(|v| v.as_str());
+            let criteria = args.get("criteria").and_then(|v| v.as_str());
+            if text.len() < 20 {
+                "Error: hypothesis text must be at least 20 characters".to_string()
+            } else {
+                match store.create_hypothesis(phase_id, text) {
+                    Ok(h) => {
+                        let mut out = format!("Hypothesis #{} added: {}", h.id, &text[..text.len().min(80)]);
+                        // Auto-edge from informing finding
+                        if let Some(fid) = finding_id {
+                            match store.create_edge(NodeType::Finding, fid, NodeType::Hypothesis, h.id, EdgeType::Supports) {
+                                Ok(_) => out += &format!("\nAuto-edge: Finding#{} --Supports--> Hypothesis#{}", fid, h.id),
+                                Err(e) => out += &format!("\nEdge note: {}", e),
+                            }
+                        } else {
+                            out += &format!("\nWARNING: Hypothesis has no informing finding. Consider: pm_add_edge source_type=Finding source_id=? target_type=Hypothesis target_id={} relation=Supports", h.id);
+                        }
+                        // Set prediction/criteria if provided
+                        if prediction.is_some() || criteria.is_some() {
+                            let _ = store.update_hypothesis_fields(h.id, prediction, criteria, None);
+                        }
+                        out
+                    }
+                    Err(e) => format!("Error: {}", e),
+                }
+            }
+        },
         "pm_hyp_update" => {
             let hid = args.get("hypothesis_id").and_then(|v| v.as_i64()).unwrap_or(0);
             let status_str = args.get("status").and_then(|v| v.as_str()).unwrap_or("proposed");
@@ -481,6 +513,11 @@ fn tool_definitions() -> Vec<ToolDef> {
             name: "pm_add_edge".into(),
             description: "Add a KG edge between two nodes.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"source_type": {"type": "string"}, "source_id": {"type": "integer"}, "target_type": {"type": "string"}, "target_id": {"type": "integer"}, "relation": {"type": "string", "description": "supports, contradicts, depends, informed, supersedes, related, produced, cited, contains, derived_from, tested_by, violated_by"}}, "required": ["source_type", "source_id", "target_type", "target_id", "relation"]}),
+        },
+        ToolDef {
+            name: "pm_hyp_add".into(),
+            description: "Create a hypothesis with optional causal grounding. Hypotheses should be informed by findings and testable by experiments.".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string"}, "text": {"type": "string", "description": "Hypothesis text (min 20 chars)"}, "phase_id": {"type": "integer", "description": "Phase this hypothesis belongs to"}, "finding_id": {"type": "integer", "description": "Finding that informs this hypothesis (creates Supports edge)"}, "prediction": {"type": "string", "description": "Measurable predicted outcome"}, "criteria": {"type": "string", "description": "How to evaluate: what would confirm/refute this?"}}, "required": ["project", "text"]}),
         },
         ToolDef {
             name: "pm_hyp_update".into(),
