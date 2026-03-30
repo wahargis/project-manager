@@ -655,6 +655,30 @@ pub fn tool_exp_complete(store: &SqliteStore, eid: i64, status: &str, result: &s
         out += &conf.display();
     }
 
+    // PHASE LIFECYCLE CHECK: report phase status after experiment completion
+    if let Ok(exp) = store.get_experiment(eid) {
+        if let Some(phase_id) = exp.phase_id {
+            if let Ok(sibling_exps) = store.list_experiments(Some(phase_id)) {
+                let pending = sibling_exps.iter().filter(|e| e.status == crate::store::ExperimentStatus::Pending).count();
+                let pass = sibling_exps.iter().filter(|e| e.status == crate::store::ExperimentStatus::Pass).count();
+                let fail = sibling_exps.iter().filter(|e| e.status == crate::store::ExperimentStatus::Fail).count();
+                let total = sibling_exps.len();
+
+                out += &format!("\nPhase #{} status: {}/{} experiments resolved ({} pass, {} fail, {} pending)\n",
+                    phase_id, pass + fail, total, pass, fail, pending);
+
+                if pending == 0 && total > 0 {
+                    out += "  >> ALL EXPERIMENTS RESOLVED — review phase for completion or create new experiments.\n";
+                    out += &format!("  >> pm_phase_update phase_id={} status=complete  OR  pm_experiment_create phase_id={}\n", phase_id, phase_id);
+                }
+
+                if fail > 0 && fail as f64 / (pass + fail) as f64 > 0.5 {
+                    out += &format!("  >> {} of {} resolved experiments failed — consider redirecting phase approach.\n", fail, pass + fail);
+                }
+            }
+        }
+    }
+
     out += &causal_guidance(&auto_edges, &suggestions);
     out
 }
