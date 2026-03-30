@@ -4,6 +4,7 @@
 //! Sprint 4: DAG→TaskTracker scaffold (#16) — structured, actionable output
 //! with TaskCreate guidance and stale hypothesis / orphaned finding detection.
 
+use crate::util::truncate_safe;
 use crate::store::sqlite::SqliteStore;
 use crate::store::{Store, PhaseStatus, ExperimentStatus, HypothesisStatus};
 use crate::dag::DagEngine;
@@ -193,13 +194,13 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
             text += &format!("TASK {}: Exp {} \u{2014} {}\n", i + 1, eref, e.name);
             text += &format!("  Status: pending | Phase: {} ({})\n", pref, phase.name);
             if let Some(notes) = &e.notes {
-                text += &format!("  Notes: {}\n", &notes[..notes.len().min(200)]);
+                text += &format!("  Notes: {}\n", truncate_safe(&notes, 200));
             }
             // TaskCreate-ready format
             let desc = format!("Phase #{} ({}). {}", phase.id, phase.name,
                 e.notes.as_deref().unwrap_or("Execute this experiment and record findings."));
             text += &format!("  -> TaskCreate: subject=\"{} Exp #{}: {}\" description=\"{}\"\n\n",
-                project, e.id, e.name, &desc[..desc.len().min(200)]);
+                project, e.id, e.name, truncate_safe(&desc, 200));
         }
     }
 
@@ -210,7 +211,7 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
             for c in &constraints {
                 let sev = c.severity.as_deref().unwrap_or("hard");
                 let src = c.source.as_deref().unwrap_or("unknown");
-                let t = if c.text.len() > 80 { &c.text[..80] } else { &c.text };
+                let t = truncate_safe(&c.text, 80);
                 let cref = c.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", c.id));
                 text += &format!("  C{} [{}]: {} (source: {})\n", cref, sev, t, src);
             }
@@ -232,7 +233,7 @@ pub fn tool_scaffold(store: &SqliteStore, project: &str, phase_id: i64) -> Strin
                     crate::store::PrincipleScope::Phase => "phase",
                 };
                 let enforcement = p.enforcement_level.as_deref().unwrap_or("advisory");
-                let t = if p.text.len() > 100 { &p.text[..100] } else { &p.text };
+                let t = truncate_safe(&p.text, 100);
                 let prref = p.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", p.id));
                 text += &format!("  P{} [{}|{}]: {}\n", prref, scope, enforcement, t);
             }
@@ -293,14 +294,14 @@ pub fn tool_session_init(store: &SqliteStore) -> String {
                                 let pref2 = phase.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", phase.id));
                                 out += &format!("    Status: pending | Phase: {} ({})\n", pref2, phase.name);
                                 if let Some(notes) = &exp.notes {
-                                    out += &format!("    {}\n", &notes[..notes.len().min(150)]);
+                                    out += &format!("    {}\n", truncate_safe(&notes, 150));
                                 }
                                 // TaskCreate-ready format
                                 let desc = format!("Phase #{} ({}). {}",
                                     phase.id, phase.name,
                                     exp.notes.as_deref().unwrap_or("Execute experiment and record findings."));
                                 out += &format!("    -> TaskCreate: subject=\"{} Exp #{}: {}\" description=\"{}\"\n\n",
-                                    proj.name, exp.id, exp.name, &desc[..desc.len().min(200)]);
+                                    proj.name, exp.id, exp.name, truncate_safe(&desc, 200));
                             }
                         }
                     }
@@ -311,7 +312,7 @@ pub fn tool_session_init(store: &SqliteStore) -> String {
                             if h.status == HypothesisStatus::Proposed && is_stale(&h.created_at, 7) {
                                 stale_hyps.push(format!("  H#{}: {} (proposed {} days ago, phase #{})",
                                     h.id,
-                                    if h.text.len() > 80 { &h.text[..80] } else { &h.text },
+                                    truncate_safe(&h.text, 80),
                                     Utc::now().naive_utc().signed_duration_since(h.created_at).num_days(),
                                     phase.id));
                             }
@@ -325,7 +326,7 @@ pub fn tool_session_init(store: &SqliteStore) -> String {
                         if let Ok(f) = store.get_finding(*fid) {
                             orphaned_findings.push(format!("  F#{}: {}",
                                 f.id,
-                                if f.text.len() > 80 { &f.text[..80] } else { &f.text }));
+                                truncate_safe(&f.text, 80)));
                         }
                     }
                 }
@@ -595,14 +596,14 @@ pub fn tool_since(store: &SqliteStore, since: Option<&str>, session_id: Option<i
                 if !delta.findings.is_empty() {
                     out += "\n--- Findings ---\n";
                     for f in &delta.findings {
-                        let t = if f.text.len() > 80 { &f.text[..80] } else { &f.text };
+                        let t = truncate_safe(&f.text, 80);
                         out += &format!("  F#{}: {}\n", f.id, t);
                     }
                 }
                 if !delta.decisions.is_empty() {
                     out += "\n--- Decisions ---\n";
                     for d in &delta.decisions {
-                        let t = if d.what.len() > 80 { &d.what[..80] } else { &d.what };
+                        let t = truncate_safe(&d.what, 80);
                         out += &format!("  D#{}: {}\n", d.id, t);
                     }
                 }
@@ -707,7 +708,7 @@ pub fn tool_session_context(store: &SqliteStore, project: &str) -> String {
             out += &format!("## Recent Findings (top {})\n", top_findings.len());
             for f in &top_findings {
                 let fref = f.project_seq.map(|s| format!("F#{}", s)).unwrap_or_else(|| format!("F#{}", f.id));
-                let excerpt = if f.text.len() > 120 { format!("{}...", &f.text[..120]) } else { f.text.clone() };
+                let excerpt = { let t = truncate_safe(&f.text, 120); if f.text.len() > t.len() { format!("{}...", t) } else { f.text.clone() } };
                 out += &format!("  {}: {}\n", fref, excerpt);
             }
             out += "\n";
@@ -729,7 +730,7 @@ pub fn tool_session_context(store: &SqliteStore, project: &str) -> String {
                     HypothesisStatus::Testing => "testing",
                     _ => "other",
                 };
-                let excerpt = if h.text.len() > 120 { format!("{}...", &h.text[..120]) } else { h.text.clone() };
+                let excerpt = { let t = truncate_safe(&h.text, 120); if h.text.len() > t.len() { format!("{}...", t) } else { h.text.clone() } };
                 out += &format!("  {} [{}]: {}\n", href, status_str, excerpt);
             }
             out += "\n";
@@ -745,7 +746,7 @@ pub fn tool_session_context(store: &SqliteStore, project: &str) -> String {
             out += "## Key Decisions\n";
             for d in &decisions {
                 let dref = d.project_seq.map(|s| format!("D#{}", s)).unwrap_or_else(|| format!("D#{}", d.id));
-                let excerpt = if d.what.len() > 120 { format!("{}...", &d.what[..120]) } else { d.what.clone() };
+                let excerpt = { let t = truncate_safe(&d.what, 120); if d.what.len() > t.len() { format!("{}...", t) } else { d.what.clone() } };
                 out += &format!("  {}: {}\n", dref, excerpt);
             }
             out += "\n";

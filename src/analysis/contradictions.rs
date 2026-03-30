@@ -11,6 +11,7 @@
 //! handles precision). False negatives are permanent losses.
 
 use std::collections::HashSet;
+use crate::util::truncate_safe;
 
 /// A detected potential contradiction candidate from Layer 1.
 #[derive(Debug, Clone)]
@@ -273,7 +274,7 @@ pub fn format_layer1_results(new_text: &str, results: &Layer1Result) -> String {
 
     for c in &results.candidates {
         let excerpt = if c.text_excerpt.len() > 120 {
-            format!("{}...", &c.text_excerpt[..120])
+            format!("{}...", truncate_safe(&c.text_excerpt, 120))
         } else {
             c.text_excerpt.clone()
         };

@@ -1,3 +1,4 @@
+use crate::util::truncate_safe;
 use crate::store::{Edge, EdgeType, NodeType, Store, Finding};
 
 /// Knowledge Graph engine for traversing findings, experiments, and decisions.
@@ -28,7 +29,7 @@ impl<'a, S: Store> KgEngine<'a, S> {
         match nt {
             NodeType::Finding => self.store.get_finding(id).map(|f| {
                 let seq_label = f.project_seq.map(|s| format!(" (F#{})", s)).unwrap_or_default();
-                let t = &f.text; if t.len() > 80 { format!("{}...{}", &t[..80], seq_label) } else { format!("{}{}", t, seq_label) }
+                let t = &f.text; format!("{}{}", truncate_safe(t, 80), seq_label)
             }).unwrap_or_else(|_| format!("Finding #{}", id)),
             NodeType::Experiment => self.store.get_experiment(id).map(|e| {
                 let seq_label = e.project_seq.map(|s| format!(" (E#{})", s)).unwrap_or_default();
@@ -36,7 +37,7 @@ impl<'a, S: Store> KgEngine<'a, S> {
             }).unwrap_or_else(|_| format!("Experiment #{}", id)),
             NodeType::Decision => self.store.get_decision(id).map(|d| {
                 let seq_label = d.project_seq.map(|s| format!(" (D#{})", s)).unwrap_or_default();
-                let t = &d.what; if t.len() > 60 { format!("{}...{}", &t[..60], seq_label) } else { format!("{}{}", t, seq_label) }
+                let t = &d.what; format!("{}{}", truncate_safe(t, 60), seq_label)
             }).unwrap_or_else(|_| format!("Decision #{}", id)),
             NodeType::Phase => self.store.get_phase(id).map(|p| {
                 let seq_label = p.project_seq.map(|s| format!(" (Ph#{})", s)).unwrap_or_default();
@@ -48,15 +49,15 @@ impl<'a, S: Store> KgEngine<'a, S> {
             }).unwrap_or_else(|_| format!("Research #{}", id)),
             NodeType::Principle => self.store.get_principle(id).map(|p| {
                 let seq_label = p.project_seq.map(|s| format!(" (Pr#{})", s)).unwrap_or_default();
-                let t = &p.text; if t.len() > 80 { format!("{}...{}", &t[..80], seq_label) } else { format!("{}{}", t, seq_label) }
+                let t = &p.text; format!("{}{}", truncate_safe(t, 80), seq_label)
             }).unwrap_or_else(|_| format!("Principle #{}", id)),
             NodeType::Hypothesis => self.store.get_hypothesis(id).map(|h| {
                 let seq_label = h.project_seq.map(|s| format!(" (H#{})", s)).unwrap_or_default();
-                let t = &h.text; if t.len() > 80 { format!("{}...{}", &t[..80], seq_label) } else { format!("{}{}", t, seq_label) }
+                let t = &h.text; format!("{}{}", truncate_safe(t, 80), seq_label)
             }).unwrap_or_else(|_| format!("Hypothesis #{}", id)),
             NodeType::Constraint => self.store.get_constraint(id).map(|c| {
                 let seq_label = c.project_seq.map(|s| format!(" (C#{})", s)).unwrap_or_default();
-                let t = &c.text; if t.len() > 80 { format!("{}...{}", &t[..80], seq_label) } else { format!("{}{}", t, seq_label) }
+                let t = &c.text; format!("{}{}", truncate_safe(t, 80), seq_label)
             }).unwrap_or_else(|_| format!("Constraint #{}", id)),
             NodeType::Literature => self.store.get_literature(id).map(|l| {
                 let seq_label = l.project_seq.map(|s| format!(" (L#{})", s)).unwrap_or_default();
@@ -64,7 +65,7 @@ impl<'a, S: Store> KgEngine<'a, S> {
             }).unwrap_or_else(|_| format!("Literature #{}", id)),
             NodeType::Feedback => self.store.get_feedback_entry(id).map(|f| {
                 let seq_label = f.project_seq.map(|s| format!(" (Fb#{})", s)).unwrap_or_default();
-                let t = &f.text; if t.len() > 80 { format!("{}...{}", &t[..80], seq_label) } else { format!("{}{}", t, seq_label) }
+                let t = &f.text; format!("{}{}", truncate_safe(t, 80), seq_label)
             }).unwrap_or_else(|_| format!("Feedback #{}", id)),
         }
     }

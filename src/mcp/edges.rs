@@ -5,6 +5,7 @@
 use crate::store::sqlite::SqliteStore;
 use crate::store::{Store, NodeType, EdgeType};
 use crate::validation;
+use crate::util::truncate_safe;
 
 pub fn tool_add_edge(store: &SqliteStore, st: &str, si: i64, tt: &str, ti: i64, rel: &str) -> String {
     let source_type = match st {
@@ -103,12 +104,12 @@ pub fn tool_kg_traverse(store: &SqliteStore, nt_str: &str, nid: i64) -> String {
     let kg = crate::kg::KgEngine::new(store);
     match kg.traverse(nt, nid) {
         Ok(result) => {
-            let mut text = format!("ROOT: {:?} #{}: {}\n", result.root.node_type, result.root.id, &result.root.label[..result.root.label.len().min(100)]);
+            let mut text = format!("ROOT: {:?} #{}: {}\n", result.root.node_type, result.root.id, truncate_safe(&result.root.label, 100));
             for (edge, target, incoming) in &result.edges {
                 if *incoming {
-                    text += &format!("  <--{:?}-- {:?} #{}: {}\n", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(80)]);
+                    text += &format!("  <--{:?}-- {:?} #{}: {}\n", edge.relation, target.node_type, target.id, truncate_safe(&target.label, 80));
                 } else {
-                    text += &format!("  --{:?}--> {:?} #{}: {}\n", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(80)]);
+                    text += &format!("  --{:?}--> {:?} #{}: {}\n", edge.relation, target.node_type, target.id, truncate_safe(&target.label, 80));
                 }
             }
             text

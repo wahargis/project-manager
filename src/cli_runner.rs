@@ -1,3 +1,4 @@
+use pm::util::truncate_safe;
 use pm::cli::*;
 use pm::store::sqlite::SqliteStore;
 use pm::store::{Store, PhaseStatus, ExperimentStatus, ResearchStatus, NodeType, EdgeType, PrincipleScope, PrincipleStatus, HypothesisStatus, ConstraintScope, FeedbackCategory};
@@ -266,7 +267,16 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     println!("Experiment #{} added: {}", exp.id, exp.name);
                 }
                 ExpAction::List { phase } => {
-                    let exps = store.list_experiments(phase)?;
+                    let exps = if phase.is_some() {
+                        store.list_experiments(phase)?
+                    } else {
+                        // Scope by project: collect experiments from all project phases
+                        let mut all = Vec::new();
+                        for p in store.list_phases(_proj.id)? {
+                            all.extend(store.list_experiments(Some(p.id))?);
+                        }
+                        all
+                    };
                     for e in exps {
                         println!("  #{} [{:?}] {} (phase: {:?})", e.id, e.status, e.name, e.phase_id);
                     }
@@ -282,7 +292,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         if !findings.is_empty() {
                             println!("  Findings ({}): ", findings.len());
                             for f in &findings {
-                                let trunc = if f.text.len() > 80 { &f.text[..80] } else { &f.text };
+                                let trunc = truncate_safe(&f.text, 80);
                                 println!("    F#{}: {}", f.id, trunc);
                             }
                         }
@@ -317,7 +327,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         if !others.is_empty() {
                             println!("\n  Nearby findings (same experiment #{}):", eid);
                             for s in others.iter().take(5) {
-                                let trunc = if s.text.len() > 70 { &s.text[..70] } else { &s.text };
+                                let trunc = truncate_safe(&s.text, 70);
                                 println!("    F#{}: {}", s.id, trunc);
                             }
                             println!("\n  Suggest edges? Examples:");
@@ -335,9 +345,19 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 FindingAction::List { experiment } => {
-                    let findings = store.list_findings(experiment)?;
+                    let findings = if experiment.is_some() {
+                        store.list_findings(experiment)?
+                    } else {
+                        let mut all = Vec::new();
+                        for phase in store.list_phases(_proj.id)? {
+                            for exp in store.list_experiments(Some(phase.id))? {
+                                all.extend(store.list_findings(Some(exp.id))?);
+                            }
+                        }
+                        all
+                    };
                     for f in findings {
-                        println!("  #{}: {} (exp: {:?})", f.id, &f.text[..f.text.len().min(80)], f.experiment_id);
+                        println!("  #{}: {} (exp: {:?})", f.id, truncate_safe(&f.text, 80), f.experiment_id);
                     }
                 }
                 FindingAction::Update { id, text, experiment } => {
@@ -359,9 +379,9 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     let kg = KgEngine::new(&store);
                     let results = kg.traverse_deep(NodeType::Finding, id, depth)?;
                     for r in results {
-                        println!("  {} #{}: {}", format!("{:?}", r.root.node_type), r.root.id, &r.root.label[..r.root.label.len().min(60)]);
+                        println!("  {} #{}: {}", format!("{:?}", r.root.node_type), r.root.id, truncate_safe(&r.root.label, 60));
                         for (edge, target, _incoming) in &r.edges {
-                            println!("    --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(50)]);
+                            println!("    --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, truncate_safe(&target.label, 50));
                         }
                     }
                 }
@@ -397,9 +417,9 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         if let Ok(result) = kg.traverse(NodeType::Decision, d.id) {
                             for (edge, target, incoming) in &result.edges {
                                 if *incoming {
-                                    println!("  <--{:?}-- {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                                    println!("  <--{:?}-- {:?} #{}: {}", edge.relation, target.node_type, target.id, truncate_safe(&target.label, 60));
                                 } else {
-                                    println!("  --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                                    println!("  --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, truncate_safe(&target.label, 60));
                                 }
                             }
                         }
@@ -456,12 +476,12 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         _ => PrincipleScope::Project,
                     };
                     let p = store.create_principle(proj.id, s, &text, None, None)?;
-                    println!("Principle #{} added [{:?}]: {}", p.id, p.scope, &p.text[..p.text.len().min(80)]);
+                    println!("Principle #{} added [{:?}]: {}", p.id, p.scope, truncate_safe(&p.text, 80));
                 }
                 PrincipleAction::List => {
                     for p in store.list_principles(proj.id)? {
                         let sup = if let Some(by) = p.superseded_by { format!(" (superseded by #{})", by) } else { String::new() };
-                        println!("  #{} [{:?}/{:?}] {}{}", p.id, p.scope, p.status, &p.text[..p.text.len().min(80)], sup);
+                        println!("  #{} [{:?}/{:?}] {}{}", p.id, p.scope, p.status, truncate_safe(&p.text, 80), sup);
                     }
                 }
                 PrincipleAction::Supersede { id, by } => {
@@ -476,12 +496,12 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             match action {
                 HypAction::Add { text, phase } => {
                     let h = store.create_hypothesis(phase, &text)?;
-                    println!("Hypothesis #{} added: {}", h.id, &h.text[..h.text.len().min(80)]);
+                    println!("Hypothesis #{} added: {}", h.id, truncate_safe(&h.text, 80));
                 }
                 HypAction::List { phase } => {
                     for h in store.list_hypotheses(phase)? {
                         let exp = if let Some(eid) = h.experiment_id { format!(" (exp #{})", eid) } else { String::new() };
-                        println!("  #{} [{:?}] {}{}", h.id, h.status, &h.text[..h.text.len().min(80)], exp);
+                        println!("  #{} [{:?}] {}{}", h.id, h.status, truncate_safe(&h.text, 80), exp);
                     }
                 }
                 HypAction::Test { id, experiment } => {
@@ -512,12 +532,12 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         _ => ConstraintScope::Hardware,
                     };
                     let c = store.create_constraint(proj.id, s, &text, source.as_deref(), None, None, None, None)?;
-                    println!("Constraint #{} added [{:?}]: {}", c.id, c.scope, &c.text[..c.text.len().min(80)]);
+                    println!("Constraint #{} added [{:?}]: {}", c.id, c.scope, truncate_safe(&c.text, 80));
                 }
                 ConAction::List => {
                     for c in store.list_constraints(proj.id)? {
                         let src = c.source.as_deref().unwrap_or("-");
-                        println!("  #{} [{:?}] {} (source: {})", c.id, c.scope, &c.text[..c.text.len().min(80)], src);
+                        println!("  #{} [{:?}] {} (source: {})", c.id, c.scope, truncate_safe(&c.text, 80), src);
                     }
                 }
             }
@@ -549,11 +569,11 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         _ => FeedbackCategory::Correction,
                     };
                     let f = store.create_feedback(proj.id, &text, cat)?;
-                    println!("Feedback #{} added [{:?}]: {}", f.id, f.category, &f.text[..f.text.len().min(80)]);
+                    println!("Feedback #{} added [{:?}]: {}", f.id, f.category, truncate_safe(&f.text, 80));
                 }
                 FbAction::List => {
                     for f in store.list_feedback(proj.id)? {
-                        println!("  #{} [{:?}] {}", f.id, f.category, &f.text[..f.text.len().min(80)]);
+                        println!("  #{} [{:?}] {}", f.id, f.category, truncate_safe(&f.text, 80));
                     }
                 }
             }
@@ -587,12 +607,12 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         };
                         let id: i64 = parts[1].parse()?;
                         let result = kg.traverse(nt, id)?;
-                        println!("ROOT: {:?} #{}: {}", result.root.node_type, result.root.id, &result.root.label[..result.root.label.len().min(80)]);
+                        println!("ROOT: {:?} #{}: {}", result.root.node_type, result.root.id, truncate_safe(&result.root.label, 80));
                         for (edge, target, incoming) in &result.edges {
                             if *incoming {
-                                println!("  <--{:?}-- {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                                println!("  <--{:?}-- {:?} #{}: {}", edge.relation, target.node_type, target.id, truncate_safe(&target.label, 60));
                             } else {
-                                println!("  --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, &target.label[..target.label.len().min(60)]);
+                                println!("  --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, truncate_safe(&target.label, 60));
                             }
                         }
                     }
@@ -608,6 +628,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         "Phase" | "phase" | "p" => NodeType::Phase,
                         "Research" | "research" | "r" => NodeType::Research,
                         "Literature" | "literature" | "l" => NodeType::Literature,
+                        "Hypothesis" | "hypothesis" | "h" => NodeType::Hypothesis,
+                        "Principle" | "principle" | "pr" => NodeType::Principle,
+                        "Constraint" | "constraint" | "c" => NodeType::Constraint,
+                        "Feedback" | "feedback" | "fb" => NodeType::Feedback,
                         _ => return Err(format!("Unknown node type: {}", source_type).into()),
                     };
                     let tt = match target_type.as_str() {
@@ -617,6 +641,10 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         "Phase" | "phase" | "p" => NodeType::Phase,
                         "Research" | "research" | "r" => NodeType::Research,
                         "Literature" | "literature" | "l" => NodeType::Literature,
+                        "Hypothesis" | "hypothesis" | "h" => NodeType::Hypothesis,
+                        "Principle" | "principle" | "pr" => NodeType::Principle,
+                        "Constraint" | "constraint" | "c" => NodeType::Constraint,
+                        "Feedback" | "feedback" | "fb" => NodeType::Feedback,
                         _ => return Err(format!("Unknown node type: {}", target_type).into()),
                     };
                     let rel = match relation.as_str() {
@@ -627,6 +655,12 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         "Supersedes" | "supersedes" => EdgeType::Supersedes,
                         "RelatedTo" | "related" => EdgeType::RelatedTo,
                         "ProducedBy" | "produced" => EdgeType::ProducedBy,
+                        "Contains" | "contains" => EdgeType::Contains,
+                        "DerivedFrom" | "derived" => EdgeType::DerivedFrom,
+                        "TestedBy" | "tested_by" => EdgeType::TestedBy,
+                        "ViolatedBy" | "violated_by" => EdgeType::ViolatedBy,
+                        "BranchesFrom" | "branches" => EdgeType::BranchesFrom,
+                        "ConvergesInto" | "converges" => EdgeType::ConvergesInto,
                         "CitedIn" | "cited" => EdgeType::CitedIn,
                         _ => return Err(format!("Unknown relation: {}", relation).into()),
                     };
@@ -839,7 +873,7 @@ fn handoff_text(store: &SqliteStore, project: &str) -> Result<String, Box<dyn st
     if !all_findings.is_empty() {
         out += "\n## Recent Findings:\n";
         for f in all_findings.iter().rev().take(3) {
-            let trunc = if f.text.len() > 100 { &f.text[..100] } else { &f.text };
+            let trunc = truncate_safe(&f.text, 100);
             out += &format!("  #{}: {}\n", f.id, trunc);
         }
     }

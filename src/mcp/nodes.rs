@@ -13,6 +13,7 @@ use crate::store::{Store, NodeType, EdgeType, HypothesisStatus, ExperimentStatus
 use crate::validation;
 use crate::analysis::contradictions;
 use std::collections::HashSet;
+use crate::util::truncate_safe;
 
 /// Helper: build the causal guidance section for a response.
 /// `auto_created` — list of auto-created edge descriptions.
@@ -125,7 +126,7 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                     if !others.is_empty() {
                         out += "\nSibling findings (same experiment):\n";
                         for s in others.iter().take(5) {
-                            let t = if s.text.len() > 60 { &s.text[..60] } else { &s.text };
+                            let t = truncate_safe(&s.text, 60);
                             let sref = s.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", s.id));
                             out += &format!("  F{}: {}\n", sref, t);
                         }
@@ -143,7 +144,7 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                                 if !recent.is_empty() {
                                     out += "\nRecent literature (suggest cited edges):\n";
                                     for l in &recent {
-                                        let t = if l.title.len() > 60 { &l.title[..60] } else { &l.title };
+                                        let t = truncate_safe(&l.title, 60);
                                         let lref = l.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", l.id));
                                         out += &format!("  L{}: {}\n", lref, t);
                                     }
@@ -166,7 +167,7 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
                                 if !active.is_empty() {
                                     out += "\nActive principles for this project:\n";
                                     for p in active.iter().take(5) {
-                                        let t = if p.text.len() > 80 { &p.text[..80] } else { &p.text };
+                                        let t = truncate_safe(&p.text, 80);
                                         let prref = p.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", p.id));
                                     out += &format!("  P{}: {}\n", prref, t);
                                     }
@@ -777,7 +778,7 @@ pub fn tool_principle_add(store: &SqliteStore, args: &serde_json::Value) -> Stri
         Some(proj) => match store.create_principle(proj.id, scope, text, rationale, enforcement_level) {
             Ok(pr) => {
                 let prref = pr.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", pr.id));
-                let mut out = format!("Principle {} added (global #{}): {}", prref, pr.id, &text[..text.len().min(80)]);
+                let mut out = format!("Principle {} added (global #{}): {}", prref, pr.id, truncate_safe(&text, 80));
 
                 // Auto-create DerivedFrom edge if finding_id provided (#12)
                 if let Some(fid) = finding_id {
@@ -810,7 +811,7 @@ pub fn tool_principle_add(store: &SqliteStore, args: &serde_json::Value) -> Stri
                     if !recent_findings.is_empty() {
                         out += "\n\nIf any finding contradicts this principle, create a ViolatedBy edge:";
                         for f in recent_findings.iter().rev().take(3) {
-                            let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
+                            let t = truncate_safe(&f.text, 60);
                             let fref = f.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", f.id));
                             out += &format!("\n  F{}: {} -> pm_add_edge source_type=finding source_id={} target_type=principle target_id={} relation=violated_by", fref, t, f.id, pr.id);
                         }
@@ -822,7 +823,7 @@ pub fn tool_principle_add(store: &SqliteStore, args: &serde_json::Value) -> Stri
                     if !constraints.is_empty() {
                         out += "\n\nActive constraints (suggest related edges):\n";
                         for c in constraints.iter().take(5) {
-                            let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
+                            let t = truncate_safe(&c.text, 60);
                             let sev = c.severity.as_deref().unwrap_or("hard");
                             let cref = c.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", c.id));
                             out += &format!("  C{} [{}]: {}\n", cref, sev, t);
@@ -863,7 +864,7 @@ pub fn tool_constraint_add(store: &SqliteStore, args: &serde_json::Value) -> Str
         Some(proj) => match store.create_constraint(proj.id, scope, text, source, severity, resource, measured_value, expires_at) {
             Ok(con) => {
                 let cref = con.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", con.id));
-                let mut out = format!("Constraint {} added (global #{}): {}", cref, con.id, &text[..text.len().min(80)]);
+                let mut out = format!("Constraint {} added (global #{}): {}", cref, con.id, truncate_safe(&text, 80));
                 let mut auto_edges: Vec<String> = Vec::new();
                 let mut suggestions: Vec<(String, String)> = Vec::new();
 
@@ -1059,7 +1060,7 @@ pub fn tool_research_step(store: &SqliteStore, project_name: &str, text: &str) -
     // Delegate to existing tool_log_finding
     let mut result = format!("Auto-routed to Phase #{} {} → Exp #{}\n\n",
         active_phase.id, 
-        if active_phase.name.len() > 40 { &active_phase.name[..40] } else { &active_phase.name },
+        truncate_safe(&active_phase.name, 40),
         eid);
     result += &tool_log_finding(store, eid, text);
     result
@@ -1186,7 +1187,7 @@ pub fn tool_experiment_create(store: &SqliteStore, phase_id: i64, name: &str,
                         if !active_constraints.is_empty() {
                             out += "\nActive constraints to consider:\n";
                             for c in active_constraints.iter().take(5) {
-                                let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
+                                let t = truncate_safe(&c.text, 60);
                                 let sev = c.severity.as_deref().unwrap_or("hard");
                                 let cref = c.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", c.id));
                                 out += &format!("  C{} [{}]: {}\n", cref, sev, t);
@@ -1195,7 +1196,7 @@ pub fn tool_experiment_create(store: &SqliteStore, phase_id: i64, name: &str,
                         if !expired_constraints.is_empty() {
                             out += "\nWARNING: Expired constraints (may need re-validation):\n";
                             for c in expired_constraints.iter().take(3) {
-                                let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
+                                let t = truncate_safe(&c.text, 60);
                                 let cref = c.project_seq.map(|seq| format!("#{}", seq)).unwrap_or_else(|| format!("#{}", c.id));
                                 out += &format!("  C{}: {} (expired {})\n", cref, t, c.expires_at.as_deref().unwrap_or("?"));
                             }

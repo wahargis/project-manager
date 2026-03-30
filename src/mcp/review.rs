@@ -2,6 +2,7 @@
 //!
 //! Contains: pm_review, pm_stats
 
+use crate::util::truncate_safe;
 use crate::store::sqlite::SqliteStore;
 use crate::store::{Store, NodeType, EdgeType, HypothesisStatus};
 use crate::dag::DagEngine;
@@ -84,7 +85,7 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
         if !proposed.is_empty() {
             text += &format!("\nHypotheses: {} untested\n", proposed.len());
             for h in proposed.iter().take(3) {
-                let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text };
+                let t = truncate_safe(&h.text, 60);
                 let href = h.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", h.id));
                 text += &format!("  H{}: {}\n", href, t);
             }
@@ -245,7 +246,7 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
         for c in &constraints {
             if let Some(ref expires) = c.expires_at {
                 if !expires.is_empty() && expires.as_str() <= today.as_str() {
-                    let t = if c.text.len() > 60 { &c.text[..60] } else { &c.text };
+                    let t = truncate_safe(&c.text, 60);
                     let cref = c.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", c.id));
                     expired.push(format!("  C{}: {} (expired {})", cref, t, expires));
                 }
@@ -265,7 +266,7 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
         if !report.stale_hypotheses.is_empty() {
             text += &format!("\n## Stale Hypotheses (proposed >7 days, untested): {}\n", report.stale_hypotheses.len());
             for (h, days) in report.stale_hypotheses.iter().take(5) {
-                let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text };
+                let t = truncate_safe(&h.text, 60);
                 let href = h.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", h.id));
                 text += &format!("  H{}: {} ({} days stale)\n", href, t, days);
             }
@@ -280,7 +281,7 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
         if !report.unconnected_findings.is_empty() {
             text += &format!("\n## Unconnected Findings (>30 days, no edges): {}\n", report.unconnected_findings.len());
             for f in report.unconnected_findings.iter().take(5) {
-                let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
+                let t = truncate_safe(&f.text, 60);
                 text += &format!("  F#{}: {}\n", f.id, t);
             }
         }
@@ -302,11 +303,11 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
                             for f in &findings {
                                 match f.belief_status.as_deref() {
                                     Some("suspended") => {
-                                        let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
+                                        let t = truncate_safe(&f.text, 60);
                                         suspended_items.push(format!("  F#{}: {} (conf={:.2})", f.id, t, f.confidence.unwrap_or(0.0)));
                                     }
                                     Some("retracted") => {
-                                        let t = if f.text.len() > 60 { &f.text[..60] } else { &f.text };
+                                        let t = truncate_safe(&f.text, 60);
                                         retracted_items.push(format!("  F#{}: {} (conf={:.2})", f.id, t, f.confidence.unwrap_or(0.0)));
                                     }
                                     _ => {}
@@ -322,12 +323,12 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
         for h in &project_hyps {
             match h.belief_status.as_deref() {
                 Some("suspended") => {
-                    let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text };
+                    let t = truncate_safe(&h.text, 60);
                     let href = h.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", h.id));
                     suspended_items.push(format!("  H{}: {} (conf={:.2})", href, t, h.confidence.unwrap_or(0.0)));
                 }
                 Some("retracted") => {
-                    let t = if h.text.len() > 60 { &h.text[..60] } else { &h.text };
+                    let t = truncate_safe(&h.text, 60);
                     let href = h.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", h.id));
                     retracted_items.push(format!("  H{}: {} (conf={:.2})", href, t, h.confidence.unwrap_or(0.0)));
                 }
@@ -340,12 +341,12 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
             for d in &decisions {
                 match d.belief_status.as_deref() {
                     Some("suspended") => {
-                        let t = if d.what.len() > 60 { &d.what[..60] } else { &d.what };
+                        let t = truncate_safe(&d.what, 60);
                         let dref = d.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", d.id));
                         suspended_items.push(format!("  D{}: {} (conf={:.2})", dref, t, d.confidence.unwrap_or(0.0)));
                     }
                     Some("retracted") => {
-                        let t = if d.what.len() > 60 { &d.what[..60] } else { &d.what };
+                        let t = truncate_safe(&d.what, 60);
                         let dref = d.project_seq.map(|s| format!("#{}", s)).unwrap_or_else(|| format!("#{}", d.id));
                         retracted_items.push(format!("  D{}: {} (conf={:.2})", dref, t, d.confidence.unwrap_or(0.0)));
                     }
@@ -359,11 +360,11 @@ pub fn tool_review(store: &SqliteStore, project: &str) -> String {
             for p in &principles {
                 match p.belief_status.as_deref() {
                     Some("suspended") => {
-                        let t = if p.text.len() > 60 { &p.text[..60] } else { &p.text };
+                        let t = truncate_safe(&p.text, 60);
                         suspended_items.push(format!("  P#{}: {} (conf={:.2})", p.id, t, p.confidence.unwrap_or(0.0)));
                     }
                     Some("retracted") => {
-                        let t = if p.text.len() > 60 { &p.text[..60] } else { &p.text };
+                        let t = truncate_safe(&p.text, 60);
                         retracted_items.push(format!("  P#{}: {} (conf={:.2})", p.id, t, p.confidence.unwrap_or(0.0)));
                     }
                     _ => {}
