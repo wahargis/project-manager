@@ -85,7 +85,7 @@ pub enum Commands {
         #[command(subcommand)]
         action: KgAction,
     },
-    /// Project statistics — KG node and edge counts
+    /// Project statistics -- KG node and edge counts
     Stats {
         project: String,
     },
@@ -132,6 +132,16 @@ pub enum Commands {
         #[arg(long)]
         name: String,
     },
+    /// Search across all KG nodes in a project
+    Search {
+        /// Project name or alias
+        project: String,
+        /// Search query
+        query: String,
+        /// Search across all active projects
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -155,7 +165,7 @@ pub enum PhaseAction {
 #[derive(Subcommand)]
 pub enum ExpAction {
     Add { name: String, #[arg(long)] phase: Option<i64>, #[arg(long)] status: Option<String>, #[arg(long)] result: Option<String> },
-    List { #[arg(long)] phase: Option<i64> },
+    List { #[arg(long)] phase: Option<i64>, #[arg(short, long)] verbose: bool },
     Get { id: i64 },
     Update { id: i64, #[arg(long)] status: String, #[arg(long)] result: Option<String> },
 }
@@ -163,7 +173,8 @@ pub enum ExpAction {
 #[derive(Subcommand)]
 pub enum FindingAction {
     Add { text: String, #[arg(long)] experiment: Option<i64> },
-    List { #[arg(long)] experiment: Option<i64> },
+    List { #[arg(long)] experiment: Option<i64>, #[arg(short, long)] verbose: bool },
+    Get { id: i64 },
     Update { id: i64, #[arg(long)] text: Option<String>, #[arg(long)] experiment: Option<i64> },
     Traverse { id: i64, #[arg(long, default_value_t = 1)] depth: usize },
 }
@@ -227,6 +238,7 @@ pub enum ResearchAction {
 pub enum PrincipleAction {
     Add { text: String, #[arg(long, default_value = "project")] scope: String },
     List,
+    Get { id: i64 },
     Supersede { id: i64, #[arg(long)] by: Option<i64> },
 }
 
@@ -234,21 +246,23 @@ pub enum PrincipleAction {
 pub enum HypAction {
     Add { text: String, #[arg(long)] phase: Option<i64> },
     List { #[arg(long)] phase: Option<i64> },
+    Get { id: i64 },
     Test { id: i64, #[arg(long)] experiment: i64 },
     Resolve { id: i64, #[arg(long)] status: String, #[arg(long)] finding: Option<i64> },
-
 }
 
 #[derive(Subcommand)]
 pub enum ConAction {
     Add { text: String, #[arg(long, default_value = "hardware")] scope: String, #[arg(long)] source: Option<String> },
     List,
+    Get { id: i64 },
 }
 
 #[derive(Subcommand)]
 pub enum LitAction {
     Add { title: String, #[arg(long)] arxiv: Option<String>, #[arg(long)] relevance: Option<String>, #[arg(long)] findings: Option<String> },
     List,
+    Get { id: i64 },
     Status { id: i64, status: String },
 }
 
@@ -257,4 +271,3 @@ pub enum FbAction {
     Add { text: String, #[arg(long, default_value = "correction")] category: String },
     List,
 }
-

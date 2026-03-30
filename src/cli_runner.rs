@@ -17,6 +17,22 @@ fn resolve_project(store: &SqliteStore, name: &str) -> Option<pm::store::Project
         .find(|p| p.name == name || p.alias.as_deref() == Some(name))
 }
 
+
+fn print_edges(store: &SqliteStore, node_type: NodeType, node_id: i64) {
+    let from_edges = store.get_edges_from(node_type.clone(), node_id).unwrap_or_default();
+    let to_edges = store.get_edges_to(node_type.clone(), node_id).unwrap_or_default();
+    if !from_edges.is_empty() || !to_edges.is_empty() {
+        println!("  Edges:");
+        for e in &from_edges {
+            println!("    --{:?}--> {:?} #{}", e.relation, e.target_type, e.target_id);
+        }
+        for e in &to_edges {
+            println!("    <--{:?}-- {:?} #{}", e.relation, e.source_type, e.source_id);
+        }
+        println!("    ({} outgoing, {} incoming)", from_edges.len(), to_edges.len());
+    }
+}
+
 pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let db_path = cli.db.unwrap_or_else(default_db_path);
     let store = SqliteStore::new(&db_path)?;
@@ -266,7 +282,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     println!("Experiment #{} added: {}", exp.id, exp.name);
                 }
-                ExpAction::List { phase } => {
+                ExpAction::List { phase, verbose } => {
                     let exps = if phase.is_some() {
                         store.list_experiments(phase)?
                     } else {
@@ -279,6 +295,11 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     };
                     for e in exps {
                         println!("  #{} [{:?}] {} (phase: {:?})", e.id, e.status, e.name, e.phase_id);
+                        if verbose {
+                            if let Some(r) = &e.result { println!("    Result: {}", r); }
+                            if let Some(n) = &e.notes { println!("    Notes: {}", n); }
+                            if let Some(h) = &e.hypothesis { println!("    Hypothesis: {}", h); }
+                        }
                     }
                 }
                 ExpAction::Get { id } => {
@@ -287,6 +308,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(r) = &exp.result { println!("  Result: {}", r); }
                     if let Some(n) = &exp.notes { println!("  Notes: {}", n); }
                     if let Some(pid) = exp.phase_id { println!("  Phase: #{}", pid); }
+                    println!("  Created: {}", exp.created_at);
                     // Show findings from this experiment
                     if let Ok(findings) = store.list_findings(Some(exp.id)) {
                         if !findings.is_empty() {
@@ -297,6 +319,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
+                    print_edges(&store, NodeType::Experiment, exp.id);
                 }
                 ExpAction::Update { id, status, result } => {
                     let es = match status.as_str() {
@@ -344,7 +367,7 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         println!("    Methodology | Data | Analysis | Conclusions | Edges");
                     }
                 }
-                FindingAction::List { experiment } => {
+                FindingAction::List { experiment, verbose } => {
                     let findings = if experiment.is_some() {
                         store.list_findings(experiment)?
                     } else {
@@ -356,9 +379,23 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         }
                         all
                     };
-                    for f in findings {
-                        println!("  #{}: {} (exp: {:?})", f.id, truncate_safe(&f.text, 80), f.experiment_id);
+                    for f in &findings {
+                        if verbose {
+                            println!("  #{}: {} (exp: {:?})", f.id, &f.text, f.experiment_id);
+                        } else {
+                            println!("  #{}: {} (exp: {:?})", f.id, truncate_safe(&f.text, 80), f.experiment_id);
+                        }
                     }
+                }
+                FindingAction::Get { id } => {
+                    let f = store.get_finding(id)?;
+                    println!("Finding #{}:", f.id);
+                    println!("  Text: {}", f.text);
+                    if let Some(eid) = f.experiment_id { println!("  Experiment: #{}", eid); }
+                    if let Some(c) = f.confidence { println!("  Confidence: {:.2}", c); }
+                    if let Some(b) = &f.belief_status { println!("  Belief status: {}", b); }
+                    println!("  Created: {}", f.created_at);
+                    print_edges(&store, NodeType::Finding, f.id);
                 }
                 FindingAction::Update { id, text, experiment } => {
                     // Update finding text and/or experiment
@@ -414,25 +451,16 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 DecAction::Get { id } => {
-                    let decs = store.list_decisions(proj.id)?;
-                    if let Some(d) = decs.iter().find(|d| d.id == id) {
-                        println!("Decision #{}: {}", d.id, d.what);
-                        if let Some(w) = &d.why { println!("  Why: {}", w); }
-                        if let Some(eid) = d.experiment_id { println!("  Experiment: #{}", eid); }
-                        // Show edges
-                        let kg = KgEngine::new(&store);
-                        if let Ok(result) = kg.traverse(NodeType::Decision, d.id) {
-                            for (edge, target, incoming) in &result.edges {
-                                if *incoming {
-                                    println!("  <--{:?}-- {:?} #{}: {}", edge.relation, target.node_type, target.id, truncate_safe(&target.label, 60));
-                                } else {
-                                    println!("  --{:?}--> {:?} #{}: {}", edge.relation, target.node_type, target.id, truncate_safe(&target.label, 60));
-                                }
-                            }
-                        }
-                    } else {
-                        eprintln!("Decision #{} not found", id);
-                    }
+                    let d = store.get_decision(id)?;
+                    println!("Decision #{}:", d.id);
+                    println!("  What: {}", d.what);
+                    if let Some(w) = &d.why { println!("  Why: {}", w); }
+                    if let Some(eid) = d.experiment_id { println!("  Experiment: #{}", eid); }
+                    if let Some(pid) = d.project_id { println!("  Project: #{}", pid); }
+                    if let Some(c) = d.confidence { println!("  Confidence: {:.2}", c); }
+                    if let Some(b) = &d.belief_status { println!("  Belief status: {}", b); }
+                    println!("  Created: {}", d.created_at);
+                    print_edges(&store, NodeType::Decision, d.id);
                 }
             }
         }
@@ -491,6 +519,20 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         println!("  #{} [{:?}/{:?}] {}{}", p.id, p.scope, p.status, truncate_safe(&p.text, 80), sup);
                     }
                 }
+                PrincipleAction::Get { id } => {
+                    let p = store.get_principle(id)?;
+                    println!("Principle #{}:", p.id);
+                    println!("  Text: {}", p.text);
+                    println!("  Scope: {:?}", p.scope);
+                    println!("  Status: {:?}", p.status);
+                    if let Some(r) = &p.rationale { println!("  Rationale: {}", r); }
+                    if let Some(e) = &p.enforcement_level { println!("  Enforcement: {}", e); }
+                    if let Some(c) = p.confidence { println!("  Confidence: {:.2}", c); }
+                    if let Some(b) = &p.belief_status { println!("  Belief status: {}", b); }
+                    if let Some(by) = p.superseded_by { println!("  Superseded by: #{}", by); }
+                    println!("  Created: {}", p.created_at);
+                    print_edges(&store, NodeType::Principle, p.id);
+                }
                 PrincipleAction::Supersede { id, by } => {
                     store.update_principle_status(id, PrincipleStatus::Superseded, by)?;
                     println!("Principle #{} superseded", id);
@@ -510,6 +552,20 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         let exp = if let Some(eid) = h.experiment_id { format!(" (exp #{})", eid) } else { String::new() };
                         println!("  #{} [{:?}] {}{}", h.id, h.status, truncate_safe(&h.text, 80), exp);
                     }
+                }
+                HypAction::Get { id } => {
+                    let h = store.get_hypothesis(id)?;
+                    println!("Hypothesis #{}:", h.id);
+                    println!("  Text: {}", h.text);
+                    println!("  Status: {:?}", h.status);
+                    if let Some(p) = &h.prediction { println!("  Prediction: {}", p); }
+                    if let Some(c) = &h.criteria { println!("  Criteria: {}", c); }
+                    if let Some(c) = h.confidence { println!("  Confidence: {:.2}", c); }
+                    if let Some(eid) = h.experiment_id { println!("  Experiment: #{}", eid); }
+                    if let Some(fid) = h.finding_id { println!("  Finding: #{}", fid); }
+                    if let Some(b) = &h.belief_status { println!("  Belief status: {}", b); }
+                    println!("  Created: {}", h.created_at);
+                    print_edges(&store, NodeType::Hypothesis, h.id);
                 }
                 HypAction::Test { id, experiment } => {
                     store.update_hypothesis(id, HypothesisStatus::Testing, Some(experiment), None)?;
@@ -547,6 +603,20 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         println!("  #{} [{:?}] {} (source: {})", c.id, c.scope, truncate_safe(&c.text, 80), src);
                     }
                 }
+                ConAction::Get { id } => {
+                    let c = store.get_constraint(id)?;
+                    println!("Constraint #{}:", c.id);
+                    println!("  Text: {}", c.text);
+                    println!("  Scope: {:?}", c.scope);
+                    if let Some(s) = &c.severity { println!("  Severity: {}", s); }
+                    if let Some(s) = &c.source { println!("  Source: {}", s); }
+                    if let Some(r) = &c.resource { println!("  Resource: {}", r); }
+                    if let Some(m) = &c.measured_value { println!("  Measured value: {}", m); }
+                    if let Some(cf) = c.confidence { println!("  Confidence: {:.2}", cf); }
+                    if let Some(b) = &c.belief_status { println!("  Belief status: {}", b); }
+                    println!("  Created: {}", c.created_at);
+                    print_edges(&store, NodeType::Constraint, c.id);
+                }
             }
         }
 
@@ -564,6 +634,24 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         let status = l.status.as_deref().unwrap_or("unread");
                         println!("  #{} [{}] [{}] {}", l.id, aid, status, l.title);
                     }
+                }
+                LitAction::Get { id } => {
+                    let l = store.get_literature(id)?;
+                    println!("Literature #{}:", l.id);
+                    println!("  Title: {}", l.title);
+                    if let Some(a) = &l.arxiv_id { println!("  ArXiv: {}", a); }
+                    if let Some(a) = &l.authors { println!("  Authors: {}", a); }
+                    if let Some(v) = &l.venue { println!("  Venue: {}", v); }
+                    if let Some(y) = l.year { println!("  Year: {}", y); }
+                    if let Some(s) = &l.status { println!("  Status: {}", s); }
+                    if let Some(r) = &l.relevance { println!("  Relevance: {}", r); }
+                    if let Some(f) = &l.key_findings { println!("  Key findings: {}", f); }
+                    if let Some(s) = &l.summary { println!("  Summary: {}", s); }
+                    if let Some(u) = &l.url { println!("  URL: {}", u); }
+                    if let Some(u) = &l.code_url { println!("  Code URL: {}", u); }
+                    if let Some(f) = &l.file_path { println!("  File: {}", f); }
+                    println!("  Created: {}", l.created_at);
+                    print_edges(&store, NodeType::Literature, l.id);
                 }
                 LitAction::Status { id, status } => {
                     let result = pm::mcp::nodes::tool_lit_status(&store, id, &status);
@@ -783,6 +871,27 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Import { path, name } => {
             import_v2(&store, &path, &name)?;
+        }
+        Commands::Search { project, query, all } => {
+            if all {
+                let projects = store.list_projects()?;
+                let active: Vec<_> = projects.iter()
+                    .filter(|p| p.status == pm::store::ProjectStatus::Active)
+                    .collect();
+                if active.is_empty() {
+                    println!("No active projects found.");
+                } else {
+                    for proj in &active {
+                        println!("=== {} ===", proj.name);
+                        let output = pm::mcp::review::tool_search(&store, &query);
+                        println!("{}", output);
+                    }
+                }
+            } else {
+                let _proj = resolve_project(&store, &project).ok_or("Project not found")?;
+                let output = pm::mcp::review::tool_search(&store, &query);
+                println!("{}", output);
+            }
         }
     }
     Ok(())

@@ -1471,3 +1471,98 @@ fn test_session_context_returns_full_briefing() {
     assert!(result.contains("## Suggested Next Actions"), "Missing next actions section in: {}", result);
     assert!(result.contains("[Graph:"), "Missing graph stats in: {}", result);
 }
+
+
+#[test]
+fn test_session_init_includes_knowledge_briefing() {
+    let store = test_store();
+    let proj = store.create_project("briefing-test", Some("bt"), None).unwrap();
+    let phase = store.create_phase(proj.id, "Bandwidth Optimization", 50, &[]).unwrap();
+    store.update_phase_status(phase.id, PhaseStatus::InProgress).unwrap();
+
+    // Create experiment with findings
+    let exp = store.create_experiment(Some(phase.id), "Fused kernel benchmark").unwrap();
+    let _f1 = store.create_finding(Some(exp.id),
+        "a]PRODUCTION BUILD TURBO4 BENCHMARK confirms 15% throughput improvement over baseline Q4_K_M with acceptable perplexity delta of 0.03 on WikiText2."
+    ).unwrap();
+    let _f2 = store.create_finding(Some(exp.id),
+        "a]DESIGN NOTE: PolarQuant-based TURBO types achieve superior bit utilization by exploiting polar coordinate decomposition of weight matrices."
+    ).unwrap();
+
+    // Create constraint
+    store.create_constraint(proj.id, crate::store::ConstraintScope::Hardware,
+        "V100 HBM2 900 GB/s theoretical bandwidth ceiling limits achievable throughput for memory-bound MoE inference workloads.",
+        Some("measured"), Some("hard"), None, None, None).unwrap();
+
+    // Create hypothesis (proposed = untested)
+    store.create_hypothesis(Some(phase.id),
+        "a]DSP error diffusion across Q4_K blocks should reduce quantization noise by distributing rounding errors across adjacent super-blocks."
+    ).unwrap();
+
+    // Add contradicting findings
+    let f3 = store.create_finding(Some(exp.id),
+        "a]ITS pipeline overlap shows 20% improvement with prefetch buffer enabled for sequential expert access patterns in MoE layers."
+    ).unwrap();
+    let f4 = store.create_finding(Some(exp.id),
+        "a]ITS pipeline overlap shows NO measurable improvement when prefetch buffer is enabled, contradicting prior result."
+    ).unwrap();
+    store.create_edge(NodeType::Finding, f3.id, NodeType::Finding, f4.id, EdgeType::Contradicts).unwrap();
+
+    let result = super::dashboard::tool_session_init(&store);
+
+    // Verify the briefing sections are present
+    assert!(result.contains("=== Knowledge Briefing ==="), "Missing briefing header in: {}", result);
+    assert!(result.contains("## Active Phase:"), "Missing active phase in briefing: {}", result);
+    assert!(result.contains("Bandwidth Optimization"), "Missing phase name in briefing: {}", result);
+    assert!(result.contains("### Recent Findings"), "Missing findings section in briefing: {}", result);
+    assert!(result.contains("PRODUCTION BUILD TURBO4"), "Missing finding text in briefing: {}", result);
+    assert!(result.contains("### Active Constraints:"), "Missing constraints section in briefing: {}", result);
+    assert!(result.contains("[hard]"), "Missing constraint severity in briefing: {}", result);
+    assert!(result.contains("V100 HBM2"), "Missing constraint text in briefing: {}", result);
+    assert!(result.contains("### Untested Hypotheses:"), "Missing hypotheses section in briefing: {}", result);
+    assert!(result.contains("[proposed]"), "Missing hypothesis status in briefing: {}", result);
+    assert!(result.contains("DSP error diffusion"), "Missing hypothesis text in briefing: {}", result);
+    assert!(result.contains("### Contradictions in Neighborhood:"), "Missing contradictions section in briefing: {}", result);
+    assert!(result.contains("ITS pipeline overlap"), "Missing contradiction text in briefing: {}", result);
+}
+
+#[test]
+fn test_session_context_includes_knowledge_briefing() {
+    let store = test_store();
+    let proj = store.create_project("ctx-briefing", Some("cb"), None).unwrap();
+    let phase = store.create_phase(proj.id, "Quality Engineering", 45, &[]).unwrap();
+    store.update_phase_status(phase.id, PhaseStatus::InProgress).unwrap();
+
+    let exp = store.create_experiment(Some(phase.id), "Perplexity eval").unwrap();
+    store.create_finding(Some(exp.id),
+        "a]GDN layers show 2-4x MORE perplexity degradation than attention layers under aggressive quantization, suggesting layer-specific quant strategies are needed."
+    ).unwrap();
+
+    store.create_constraint(proj.id, crate::store::ConstraintScope::Hardware,
+        "V100 dual-issue dp4a+FP pipeline limits mixed-precision throughput to 80% of peak INT8.",
+        Some("nvidia-docs"), Some("hard"), None, None, None).unwrap();
+
+    // Wire KG edges for phase_subgraph to find
+    store.create_edge(NodeType::Phase, phase.id, NodeType::Experiment, exp.id, EdgeType::Contains).unwrap();
+
+    let result = super::dashboard::tool_session_context(&store, "ctx-briefing");
+
+    // Verify session context still has its original sections
+    assert!(result.contains("Session Context:"), "Missing session context header: {}", result);
+    assert!(result.contains("[Graph:"), "Missing graph stats: {}", result);
+
+    // And also has the knowledge briefing appended
+    assert!(result.contains("=== Knowledge Briefing ==="), "Missing briefing in session_context: {}", result);
+    assert!(result.contains("### Active Constraints:"), "Missing constraints in session_context briefing: {}", result);
+    assert!(result.contains("V100 dual-issue"), "Missing constraint text in session_context briefing: {}", result);
+}
+
+#[test]
+fn test_session_init_briefing_empty_project_no_crash() {
+    let store = test_store();
+    // Empty project with no phases should not crash
+    store.create_project("empty-proj", None, None).unwrap();
+    let result = super::dashboard::tool_session_init(&store);
+    // Should either say no tasks or produce minimal output, but not panic
+    assert!(!result.is_empty(), "Should produce some output");
+}

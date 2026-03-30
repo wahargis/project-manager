@@ -17,6 +17,108 @@ fn is_stale(ts: &NaiveDateTime, days: i64) -> bool {
     diff.num_days() >= days
 }
 
+/// Build a knowledge briefing for the active phase of a project.
+/// Surfaces findings, constraints, untested hypotheses, and contradictions.
+fn build_knowledge_briefing(store: &SqliteStore, proj: &crate::store::Project) -> String {
+    let dag = DagEngine::new(store, proj.id);
+    let phases = match dag.next_phases() {
+        Ok(p) => p,
+        Err(_) => return String::new(),
+    };
+
+    // Find the active phase (in-progress with highest impact, or first next)
+    let active_phase = match phases.iter().find(|p| p.status == PhaseStatus::InProgress) {
+        Some(p) => p.clone(),
+        None => match phases.first() {
+            Some(p) => p.clone(),
+            None => return String::new(),
+        },
+    };
+
+    let phase_ref = active_phase.project_seq
+        .map(|s| format!("#{}", s))
+        .unwrap_or_else(|| format!("#{}", active_phase.id));
+
+    let mut out = String::from("\n=== Knowledge Briefing ===\n\n");
+    out += &format!("## Active Phase: {} {}\n\n", phase_ref, active_phase.name);
+
+    // (a) Top findings from the active phase -- get experiments, collect findings, sort by recency
+    let mut phase_findings: Vec<crate::store::Finding> = Vec::new();
+    if let Ok(exps) = store.list_experiments(Some(active_phase.id)) {
+        for exp in &exps {
+            if let Ok(fs) = store.list_findings(Some(exp.id)) {
+                phase_findings.extend(fs);
+            }
+        }
+    }
+    phase_findings.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    let top_findings: Vec<_> = phase_findings.iter().take(5).collect();
+    if !top_findings.is_empty() {
+        out += &format!("### Recent Findings (Phase {}):\n", phase_ref);
+        for f in &top_findings {
+            let fref = f.project_seq.map(|s| format!("F#{}", s)).unwrap_or_else(|| format!("F#{}", f.id));
+            let excerpt = truncate_safe(&f.text, 150);
+            out += &format!("  {}: {}\n", fref, excerpt);
+        }
+        out += "\n";
+    }
+
+    // (b) Active constraints -- all constraints for the project with severity
+    if let Ok(constraints) = store.list_constraints(proj.id) {
+        if !constraints.is_empty() {
+            out += "### Active Constraints:\n";
+            for c in &constraints {
+                let sev = c.severity.as_deref().unwrap_or("hard");
+                let cref = c.project_seq.map(|s| format!("C#{}", s)).unwrap_or_else(|| format!("C#{}", c.id));
+                let excerpt = truncate_safe(&c.text, 150);
+                out += &format!("  {} [{}]: {}\n", cref, sev, excerpt);
+            }
+            out += "\n";
+        }
+    }
+
+    // (c) Untested hypotheses -- Proposed status, from all phases of the project
+    let mut proposed_hyps: Vec<crate::store::Hypothesis> = Vec::new();
+    if let Ok(all_phases) = store.list_phases(proj.id) {
+        for ph in &all_phases {
+            if let Ok(hyps) = store.list_hypotheses(Some(ph.id)) {
+                for h in hyps {
+                    if h.status == HypothesisStatus::Proposed {
+                        proposed_hyps.push(h);
+                    }
+                }
+            }
+        }
+    }
+    if !proposed_hyps.is_empty() {
+        out += "### Untested Hypotheses:\n";
+        for h in &proposed_hyps {
+            let href = h.project_seq.map(|s| format!("H#{}", s)).unwrap_or_else(|| format!("H#{}", h.id));
+            let excerpt = truncate_safe(&h.text, 100);
+            out += &format!("  {} [proposed]: {}\n", href, excerpt);
+        }
+        out += "\n";
+    }
+
+    // (d) Contradictions in the phase neighborhood
+    let kg = crate::kg::KgEngine::new(store);
+    let contradictions = kg.find_contradictions(&phase_findings).unwrap_or_default();
+    if !contradictions.is_empty() {
+        out += "### Contradictions in Neighborhood:\n";
+        for (f1, f2) in contradictions.iter().take(3) {
+            let t1 = truncate_safe(&f1.text, 60);
+            let t2 = truncate_safe(&f2.text, 60);
+            let f1ref = f1.project_seq.map(|s| format!("F#{}", s)).unwrap_or_else(|| format!("F#{}", f1.id));
+            let f2ref = f2.project_seq.map(|s| format!("F#{}", s)).unwrap_or_else(|| format!("F#{}", f2.id));
+            out += &format!("  {} vs {}: \"{}\" <-> \"{}\"\n", f1ref, f2ref, t1, t2);
+        }
+        out += "\n";
+    }
+
+    out
+}
+
+
 pub fn tool_dashboard(store: &SqliteStore) -> String {
     let mut out = String::from("=== Cross-Project Dashboard ===\n\n");
     if let Ok(projects) = store.list_projects() {
@@ -353,10 +455,26 @@ pub fn tool_session_init(store: &SqliteStore) -> String {
         out += "\n  -> Link these to experiments/hypotheses with pm_add_edge.\n\n";
     }
 
-    if out.is_empty() {
+    // Append knowledge briefing for each active project
+    let mut briefing = String::new();
+    if let Ok(projects2) = store.list_projects() {
+        for proj in &projects2 {
+            if proj.status != crate::store::ProjectStatus::Active { continue; }
+            let b = build_knowledge_briefing(store, proj);
+            if !b.is_empty() {
+                briefing += &b;
+            }
+        }
+    }
+
+    if out.is_empty() && briefing.is_empty() {
         "No pending tasks in actionable phases.".to_string()
     } else {
-        format!("=== Session Init: Actionable Tasks ===\n\n{}Create these as task tracker items and work through them.", out)
+        let mut result = format!("=== Session Init: Actionable Tasks ===\n\n{}Create these as task tracker items and work through them.", out);
+        if !briefing.is_empty() {
+            result += &briefing;
+        }
+        result
     }
 }
 
@@ -795,6 +913,12 @@ pub fn tool_session_context(store: &SqliteStore, project: &str) -> String {
 
     // Subgraph stats
     out += &format!("\n[Graph: {} nodes, {} edges within 3 hops of phase]\n", subgraph.nodes.len(), subgraph.edges.len());
+
+    // Append knowledge briefing
+    let briefing = build_knowledge_briefing(store, &proj);
+    if !briefing.is_empty() {
+        out += &briefing;
+    }
 
     out
 }
