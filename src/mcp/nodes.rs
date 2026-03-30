@@ -121,13 +121,32 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
             out += ".\n";
 
             // AUTO-LINKING: search for related findings and auto-create RelatedTo edges
-            // Inspired by Engram AI Memory (F#315): auto-link on insert eliminates manual pm_add_edge
+            // Uses composite scoring (text relevance + edge connectivity + evidence weight)
             {
                 let search_text: String = text.chars().take(100).collect();
                 if let Ok(results) = store.text_search(&search_text) {
-                    let related: Vec<_> = results.iter()
+                    // Composite scoring: word-level text match + graph connectivity
+                    let query_lower = search_text.to_lowercase();
+                    let query_words: Vec<&str> = query_lower.split_whitespace().filter(|w| w.len() >= 2).collect();
+
+                    let mut scored: Vec<(f64, &crate::store::SearchResult)> = results.iter()
                         .filter(|r| r.node_type == "finding" && r.node_id != f.id as i64)
+                        .map(|r| {
+                            let result_lower = r.text_excerpt.to_lowercase();
+                            let matches = query_words.iter().filter(|w| result_lower.contains(*w)).count();
+                            let text_match = if query_words.is_empty() { 0.0 } else { matches as f64 / query_words.len() as f64 };
+                            let edge_count = store.count_edges_for_node("Finding", r.node_id).unwrap_or(0) as f64;
+                            let score = text_match * 1.0 + edge_count * 0.1;
+                            (score, r)
+                        })
+                        .collect();
+                    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+                    // Only auto-link findings with score > 0.3 (at least 30% word overlap)
+                    let related: Vec<_> = scored.iter()
+                        .filter(|(score, _)| *score > 0.3)
                         .take(3)
+                        .map(|(_, r)| *r)
                         .collect();
                     if !related.is_empty() {
                         out += "\n  AUTO-LINKED to related findings:\n";
