@@ -120,22 +120,30 @@ pub fn tool_log_finding(store: &SqliteStore, eid: i64, text: &str) -> String {
             }
             out += ".\n";
 
-            // AUTO-CONTRADICTION CHECK: search for findings that may conflict
+            // AUTO-LINKING: search for related findings and auto-create RelatedTo edges
+            // Inspired by Engram AI Memory (F#315): auto-link on insert eliminates manual pm_add_edge
             {
                 let search_text: String = text.chars().take(100).collect();
                 if let Ok(results) = store.text_search(&search_text) {
-                    let contradictions: Vec<_> = results.iter()
+                    let related: Vec<_> = results.iter()
                         .filter(|r| r.node_type == "finding" && r.node_id != f.id as i64)
                         .take(3)
                         .collect();
-                    if !contradictions.is_empty() {
-                        out += "\n  RELATED FINDINGS (check for contradictions):\n";
-                        for c in &contradictions {
-                            let ctext: String = c.text_excerpt.chars().take(80).collect();
-                            out += &format!("    F#{}: {}\n", c.node_id, ctext);
+                    if !related.is_empty() {
+                        out += "\n  AUTO-LINKED to related findings:\n";
+                        for r in &related {
+                            let rtext: String = r.text_excerpt.chars().take(80).collect();
+                            match store.create_edge(NodeType::Finding, f.id, NodeType::Finding, r.node_id as i64, EdgeType::RelatedTo) {
+                                Ok(_) => {
+                                    auto_edges.push(format!("Finding#{} --RelatedTo--> Finding#{}", f.id, r.node_id));
+                                    out += &format!("    F#{}: {}\n", r.node_id, rtext);
+                                }
+                                Err(_) => {} // duplicate edge, skip silently
+                            }
+                            // Still suggest Contradicts/Supports for manual upgrade
                             suggestions.push((
-                                format!("If F#{} contradicts this finding", c.node_id),
-                                format!("pm_add_edge source_type=Finding source_id={} target_type=Finding target_id={} relation=Contradicts", f.id, c.node_id),
+                                format!("If F#{} contradicts this finding", r.node_id),
+                                format!("pm_add_edge source_type=Finding source_id={} target_type=Finding target_id={} relation=Contradicts", f.id, r.node_id),
                             ));
                         }
                     }
