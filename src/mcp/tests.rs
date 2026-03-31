@@ -1566,3 +1566,254 @@ fn test_session_init_briefing_empty_project_no_crash() {
     // Should either say no tasks or produce minimal output, but not panic
     assert!(!result.is_empty(), "Should produce some output");
 }
+
+// === Sprint 2, Item 8: Phase containers, auto-edges, gating ===
+
+#[test]
+fn test_phase_experiment_auto_contains_edge() {
+    // When creating an experiment under a phase, a Contains edge should be auto-created
+    let store = test_store();
+    let (_proj_id, phase_id, exp_id) = setup_project(&store);
+    
+    // Create a finding from the first experiment to serve as causal upstream for the second
+    let finding = store.create_finding(Some(exp_id), "Finding that motivates a second experiment").unwrap();
+    
+    // Create a new experiment under the phase (with causal upstream since it's not the first)
+    let result = super::nodes::tool_experiment_create(&store, phase_id, "Test experiment for auto-edge", Some(finding.id), None, None);
+    assert!(result.contains("Experiment #"), "Should create experiment: {}", result);
+    assert!(result.contains("Contains"), "Should mention Contains edge: {}", result);
+    
+    // Verify the Contains edge exists
+    let edges = store.get_edges_from(NodeType::Phase, phase_id).unwrap();
+    let contains_edges: Vec<_> = edges.iter()
+        .filter(|e| e.target_type == NodeType::Experiment && e.relation == EdgeType::Contains)
+        .collect();
+    assert!(!contains_edges.is_empty(), "Should have Phase --Contains--> Experiment edge");
+}
+
+#[test]
+fn test_phase_completion_gating_rejects_pending_experiments() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    
+    // Add another experiment
+    let _exp2 = store.create_experiment(Some(phase_id), "Exp 2").unwrap();
+    
+    // Resolve only one experiment
+    store.update_experiment_status(exp_id, ExperimentStatus::Pass, Some("done")).unwrap();
+    
+    // Phase completion should be rejected because exp2 is still pending
+    let result = super::nodes::tool_phase_update(&store, phase_id, None, None, None, Some("complete"));
+    assert!(result.contains("Cannot complete phase"), "Should reject completion: {}", result);
+    assert!(result.contains("pending experiment"), "Should mention pending experiments: {}", result);
+}
+
+#[test]
+fn test_phase_completion_succeeds_after_all_resolved() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    
+    let exp2 = store.create_experiment(Some(phase_id), "Exp 2").unwrap();
+    
+    // Resolve both experiments
+    store.update_experiment_status(exp_id, ExperimentStatus::Pass, Some("passed")).unwrap();
+    store.update_experiment_status(exp2.id, ExperimentStatus::Fail, Some("failed")).unwrap();
+    
+    let result = super::nodes::tool_phase_update(&store, phase_id, None, None, None, Some("complete"));
+    assert!(result.contains("Complete"), "Should complete phase: {}", result);
+    
+    let phase = store.get_phase(phase_id).unwrap();
+    assert_eq!(phase.status, PhaseStatus::Complete);
+    assert!(phase.completed_at.is_some(), "Should set completed_at timestamp");
+}
+
+#[test]
+fn test_phase_update_sets_description_goals_criteria() {
+    let store = test_store();
+    let (_, phase_id, _) = setup_project(&store);
+    
+    let result = super::nodes::tool_phase_update(
+        &store, phase_id,
+        Some("Testing phase containers redesign"),
+        Some("Verify auto-edges and gating work"),
+        Some("All experiments pass, edges created automatically"),
+        None,
+    );
+    assert!(result.contains("fields updated"), "Should confirm fields updated: {}", result);
+    
+    let phase = store.get_phase(phase_id).unwrap();
+    assert_eq!(phase.description.as_deref(), Some("Testing phase containers redesign"));
+    assert_eq!(phase.goals.as_deref(), Some("Verify auto-edges and gating work"));
+    assert_eq!(phase.success_criteria.as_deref(), Some("All experiments pass, edges created automatically"));
+}
+
+#[test]
+fn test_phase_in_progress_sets_started_at() {
+    let store = test_store();
+    let (_, phase_id, _) = setup_project(&store);
+    
+    let phase_before = store.get_phase(phase_id).unwrap();
+    assert!(phase_before.started_at.is_none(), "started_at should be None initially");
+    
+    let result = super::nodes::tool_phase_update(&store, phase_id, None, None, None, Some("in_progress"));
+    assert!(result.contains("InProgress"), "Should set in_progress: {}", result);
+    
+    let phase_after = store.get_phase(phase_id).unwrap();
+    assert!(phase_after.started_at.is_some(), "started_at should be set after in_progress");
+}
+
+// === Sprint 2, Item 9: Hypothesis lifecycle enforcement ===
+
+#[test]
+fn test_hyp_proposed_to_testing_blocked_without_evidence() {
+    let store = test_store();
+    let (_, phase_id, _) = setup_project(&store);
+    
+    let hyp = store.create_hypothesis(Some(phase_id), "Test hypothesis that needs evidence for testing transition").unwrap();
+    
+    // No supporting edges exist, so proposed->testing should be blocked
+    let result = super::nodes::tool_hyp_update(&store, hyp.id, "testing", None, None, None, None, None);
+    assert!(result.contains("Cannot transition to testing"), "Should block without evidence: {}", result);
+    assert!(result.contains("no supporting evidence"), "Should mention no evidence: {}", result);
+}
+
+#[test]
+fn test_hyp_proposed_to_testing_allowed_with_supports_edge() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    
+    let finding = store.create_finding(Some(exp_id), "Evidence supporting the hypothesis").unwrap();
+    let hyp = store.create_hypothesis(Some(phase_id), "Hypothesis that has supporting evidence from finding").unwrap();
+    
+    // Create a Supports edge
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Hypothesis, hyp.id, EdgeType::Supports).unwrap();
+    
+    // Now proposed->testing should succeed
+    let result = super::nodes::tool_hyp_update(&store, hyp.id, "testing", Some(exp_id), None, None, None, None);
+    assert!(!result.contains("Cannot transition"), "Should allow with evidence: {}", result);
+    assert!(result.contains("Testing"), "Should show testing status: {}", result);
+}
+
+#[test]
+fn test_hyp_testing_to_refuted_blocked_without_finding_id() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    
+    let finding = store.create_finding(Some(exp_id), "Evidence supporting the hypothesis").unwrap();
+    let hyp = store.create_hypothesis(Some(phase_id), "Hypothesis to be refuted without proper evidence").unwrap();
+    
+    // Create supporting edge and transition to testing
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Hypothesis, hyp.id, EdgeType::Supports).unwrap();
+    store.update_hypothesis(hyp.id, HypothesisStatus::Testing, Some(exp_id), None).unwrap();
+    
+    // testing->refuted without finding_id should be blocked
+    let result = super::nodes::tool_hyp_update(&store, hyp.id, "refuted", None, None, None, None, None);
+    assert!(result.contains("Cannot refute"), "Should block without finding_id: {}", result);
+    assert!(result.contains("disproving finding"), "Should mention disproving finding: {}", result);
+}
+
+#[test]
+fn test_hyp_testing_to_refuted_succeeds_with_finding_id() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    
+    let finding = store.create_finding(Some(exp_id), "Evidence supporting the hypothesis").unwrap();
+    let disproof = store.create_finding(Some(exp_id), "Evidence disproving the hypothesis").unwrap();
+    let hyp = store.create_hypothesis(Some(phase_id), "Hypothesis that will be refuted with proper evidence").unwrap();
+    
+    // Set up for testing
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Hypothesis, hyp.id, EdgeType::Supports).unwrap();
+    store.update_hypothesis(hyp.id, HypothesisStatus::Testing, Some(exp_id), None).unwrap();
+    
+    // testing->refuted with finding_id should succeed
+    let result = super::nodes::tool_hyp_update(&store, hyp.id, "refuted", None, Some(disproof.id), None, None, None);
+    assert!(result.contains("Refuted"), "Should refute hypothesis: {}", result);
+    
+    // Should auto-create Contradicts edge
+    let edges = store.get_edges_to(NodeType::Hypothesis, hyp.id).unwrap();
+    let contradicts: Vec<_> = edges.iter().filter(|e| e.relation == EdgeType::Contradicts).collect();
+    assert!(!contradicts.is_empty(), "Should create Contradicts edge from disproving finding");
+}
+
+#[test]
+fn test_hyp_confirmed_suggests_principle_advisory() {
+    let store = test_store();
+    let (_, phase_id, exp_id) = setup_project(&store);
+    
+    let finding = store.create_finding(Some(exp_id), "Evidence confirming the hypothesis we are testing").unwrap();
+    let hyp = store.create_hypothesis(Some(phase_id), "Hypothesis that will be confirmed and should suggest principle creation").unwrap();
+    
+    // Set up for testing
+    store.create_edge(NodeType::Finding, finding.id, NodeType::Hypothesis, hyp.id, EdgeType::Supports).unwrap();
+    store.update_hypothesis(hyp.id, HypothesisStatus::Testing, Some(exp_id), None).unwrap();
+    
+    // Confirm
+    let result = super::nodes::tool_hyp_update(&store, hyp.id, "confirmed", None, Some(finding.id), None, None, None);
+    assert!(result.contains("Confirmed"), "Should confirm: {}", result);
+    assert!(result.contains("pm_principle_add"), "Should suggest creating a principle: {}", result);
+}
+
+#[test]
+fn test_hyp_update_prediction_and_criteria() {
+    let store = test_store();
+    let (_, phase_id, _) = setup_project(&store);
+    
+    let hyp = store.create_hypothesis(Some(phase_id), "Hypothesis with prediction and criteria fields").unwrap();
+    
+    let result = super::nodes::tool_hyp_update(
+        &store, hyp.id, "proposed", None, None,
+        Some("It will improve throughput by 20%"),
+        Some("Measured via benchmark at pp512"),
+        Some(0.7),
+    );
+    // Should not error — updating fields while staying proposed is fine
+    assert!(!result.contains("Error"), "Should not error: {}", result);
+    
+    let updated = store.get_hypothesis(hyp.id).unwrap();
+    assert_eq!(updated.prediction.as_deref(), Some("It will improve throughput by 20%"));
+    assert_eq!(updated.criteria.as_deref(), Some("Measured via benchmark at pp512"));
+    assert_eq!(updated.confidence, Some(0.7));
+}
+
+// === Sprint 2, Item 10: Finding min-length enforcement ===
+
+#[test]
+fn test_finding_min_length_enforced_in_mcp_handler() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    
+    // 50 chars is below the 100 char minimum
+    let short_text = "a".repeat(50);
+    let result = super::nodes::tool_log_finding(&store, exp_id, &short_text);
+    assert!(result.contains("VALIDATION ERROR"), "Should reject short finding: {}", result);
+    assert!(result.contains("100 required"), "Should mention 100 char minimum: {}", result);
+    
+    // Verify no finding was created
+    let findings = store.list_findings(Some(exp_id)).unwrap();
+    assert!(findings.is_empty(), "No finding should be created for invalid input");
+}
+
+#[test]
+fn test_finding_exactly_100_chars_accepted_in_mcp_handler() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    
+    let exact_text = "a".repeat(100);
+    let result = super::nodes::tool_log_finding(&store, exp_id, &exact_text);
+    assert!(result.contains("Finding"), "Should create finding: {}", result);
+    assert!(!result.contains("VALIDATION ERROR"), "Should not show validation error: {}", result);
+    
+    let findings = store.list_findings(Some(exp_id)).unwrap();
+    assert_eq!(findings.len(), 1, "Should have created exactly one finding");
+}
+
+#[test]
+fn test_finding_whitespace_only_rejected() {
+    let store = test_store();
+    let (_, _, exp_id) = setup_project(&store);
+    
+    // 200 spaces should be rejected (trimmed length < 100)
+    let whitespace = " ".repeat(200);
+    let result = super::nodes::tool_log_finding(&store, exp_id, &whitespace);
+    assert!(result.contains("VALIDATION ERROR"), "Should reject whitespace-only finding: {}", result);
+}

@@ -7,7 +7,7 @@
 use rusqlite::Connection;
 
 /// Current highest migration version.
-const LATEST_VERSION: i64 = 13;
+const LATEST_VERSION: i64 = 15;
 
 /// Run all pending migrations on the database connection.
 /// Creates the schema_version table if it doesn't exist, checks the current
@@ -63,6 +63,8 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), Box<dyn std::e
         11 => migrate_v11_tms(&tx)?,
         12 => migrate_v12_session_experiment(&tx)?,
         13 => migrate_v13_decision_project_why(&tx)?,
+        14 => migrate_v14_phase_containers(&tx)?,
+        15 => migrate_v15_hypothesis_lifecycle(&tx)?,
         _ => return Err(format!("Unknown migration version: {}", version).into()),
     }
 
@@ -357,6 +359,33 @@ fn migrate_v13_decision_project_why(conn: &Connection) -> Result<(), Box<dyn std
     Ok(())
 }
 
+
+// --- Migration v14: Phase containers redesign ---
+// Ensures phases have description, goals, success_criteria, started_at, completed_at columns.
+// These columns were originally added in v1, but this migration serves as the formal
+// "phase containers" milestone — ensuring auto-edges and completion gating are documented.
+fn migrate_v14_phase_containers(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    // Idempotent: columns already exist from v1, this is a formal milestone marker.
+    add_column_if_not_exists(conn, "phases", "description", "TEXT")?;
+    add_column_if_not_exists(conn, "phases", "goals", "TEXT")?;
+    add_column_if_not_exists(conn, "phases", "success_criteria", "TEXT")?;
+    add_column_if_not_exists(conn, "phases", "started_at", "TEXT")?;
+    add_column_if_not_exists(conn, "phases", "completed_at", "TEXT")?;
+    Ok(())
+}
+
+// --- Migration v15: Hypothesis lifecycle enforcement ---
+// Ensures hypotheses have prediction, criteria, confidence columns.
+// These columns were originally added in v4, but this migration serves as the formal
+// "hypothesis lifecycle" milestone — ensuring transition enforcement is documented.
+fn migrate_v15_hypothesis_lifecycle(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    // Idempotent: columns already exist from v4, this is a formal milestone marker.
+    add_column_if_not_exists(conn, "hypotheses", "prediction", "TEXT")?;
+    add_column_if_not_exists(conn, "hypotheses", "criteria", "TEXT")?;
+    add_column_if_not_exists(conn, "hypotheses", "confidence", "REAL")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,10 +572,10 @@ mod tests {
 
         // Verify schema_version recorded all 8 migrations
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 13);
+        assert_eq!(count, 15);
 
         let max_version: i64 = conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(max_version, 13);
+        assert_eq!(max_version, 15);
     }
 
     #[test]
@@ -558,7 +587,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 13, "Should still have exactly 13 version records after idempotent run");
+        assert_eq!(count, 15, "Should still have exactly 15 version records after idempotent run");
     }
 
     #[test]
@@ -648,7 +677,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 13, "Should have 13 total version records (3 pre-existing + 10 new)");
+        assert_eq!(count, 15, "Should have 15 total version records (3 pre-existing + 12 new)");
 
         // Verify v4 columns exist
         conn.execute(
