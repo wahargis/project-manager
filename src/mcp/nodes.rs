@@ -1369,3 +1369,37 @@ pub fn tool_experiment_create(store: &SqliteStore, phase_id: i64, name: &str,
         Err(e) => format!("Error creating experiment: {}", e),
     }
 }
+
+pub fn tool_hyp_add(
+    store: &SqliteStore,
+    _project: &str,
+    text: &str,
+    phase_id: Option<i64>,
+    finding_id: Option<i64>,
+    prediction: Option<&str>,
+    criteria: Option<&str>,
+) -> String {
+    if text.len() < 20 {
+        return "Error: hypothesis text must be at least 20 characters".to_string();
+    }
+    match store.create_hypothesis(phase_id, text) {
+        Ok(h) => {
+            let mut out = format!("Hypothesis #{} added: {}", h.id, &text[..text.len().min(80)]);
+            // Auto-edge from informing finding
+            if let Some(fid) = finding_id {
+                match store.create_edge(NodeType::Finding, fid, NodeType::Hypothesis, h.id, EdgeType::Supports) {
+                    Ok(_) => out += &format!("\nAuto-edge: Finding#{} --Supports--> Hypothesis#{}", fid, h.id),
+                    Err(e) => out += &format!("\nEdge note: {}", e),
+                }
+            } else {
+                out += &format!("\nWARNING: Hypothesis has no informing finding. Consider: pm_add_edge source_type=Finding source_id=? target_type=Hypothesis target_id={} relation=Supports", h.id);
+            }
+            // Set prediction/criteria if provided
+            if prediction.is_some() || criteria.is_some() {
+                let _ = store.update_hypothesis_fields(h.id, prediction, criteria, None);
+            }
+            out
+        }
+        Err(e) => format!("Error: {}", e),
+    }
+}

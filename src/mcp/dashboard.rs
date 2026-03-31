@@ -922,3 +922,10 @@ pub fn tool_session_context(store: &SqliteStore, project: &str) -> String {
 
     out
 }
+
+pub fn tool_session_set_experiment(store: &SqliteStore, experiment_id: i64) -> String {
+    match store.set_session_experiment(experiment_id) {
+        Ok(()) => format!("Session active experiment set to #{}", experiment_id),
+        Err(e) => format!("Error: {}", e),
+    }
+}
