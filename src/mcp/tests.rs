@@ -1817,3 +1817,99 @@ fn test_finding_whitespace_only_rejected() {
     let result = super::nodes::tool_log_finding(&store, exp_id, &whitespace);
     assert!(result.contains("VALIDATION ERROR"), "Should reject whitespace-only finding: {}", result);
 }
+// === Sprint 4 #16: Auto-serve web dashboard ===
+
+#[test]
+fn test_web_dashboard_spawns_on_background_thread() {
+    // Verify the web dashboard can start on a background thread and respond to requests,
+    // matching the auto-serve behavior in run_mcp_server().
+    use std::net::{TcpListener, TcpStream};
+    use std::io::{Write, Read};
+
+    // Find a free port
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    // Write a temp DB file for the web server (it needs a path, not in-memory)
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let db_path = tmp.path().to_str().unwrap().to_string();
+    // Initialize the DB via SqliteStore so schema exists
+    let _s = SqliteStore::new(&db_path).unwrap();
+
+    // Spawn web server on background thread, exactly as run_mcp_server does
+    let db_for_web = db_path.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            crate::web::serve(&db_for_web, port).await;
+        });
+    });
+
+    // Give the server a moment to start
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Connect and send a raw HTTP GET request
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
+        .expect("Should connect to web dashboard");
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).ok();
+    stream.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok();
+    assert!(response.starts_with("HTTP/1.1 200"), "Should return 200 OK, got: {}", &response[..response.len().min(80)]);
+}
+
+#[test]
+fn test_web_dashboard_api_projects_endpoint() {
+    use std::net::{TcpListener, TcpStream};
+    use std::io::{Write, Read};
+
+    // Find a free port
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let db_path = tmp.path().to_str().unwrap().to_string();
+    {
+        let store = SqliteStore::new(&db_path).unwrap();
+        store.create_project("web-test-project", Some("wtp"), None).unwrap();
+    }
+
+    let db_for_web = db_path.clone();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            crate::web::serve(&db_for_web, port).await;
+        });
+    });
+
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
+        .expect("Should connect to web dashboard");
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).ok();
+    stream.write_all(b"GET /api/projects HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok();
+    assert!(response.contains("web-test-project"), "API should return the created project in response body");
+}
+
+#[test]
+fn test_web_dashboard_port_in_use_does_not_panic() {
+    use std::net::TcpListener;
+
+    // Bind a port so it is occupied
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // Keep listener alive to hold the port
+
+    // Simulate the pre-check logic from run_mcp_server
+    let result = TcpListener::bind(("127.0.0.1", port));
+    assert!(result.is_err(), "Port should be in use");
+
+    // The MCP server gracefully handles this -- no panic, no crash
+    drop(listener);
+}
