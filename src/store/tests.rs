@@ -242,7 +242,7 @@ fn test_store_migration_creates_new_columns() {
     assert!(proj.parent_id.is_none());
 
     // Verify decision project_id defaults to None
-    let dec = store.create_decision(None, "test decision", None, None).unwrap();
+    let dec = store.create_decision(None, "test decision", Some("Reason for test decision in migration test"), None).unwrap();
     assert!(dec.project_id.is_none());
 
     // Verify literature new fields default to None (except status which defaults to 'unread')
@@ -442,7 +442,7 @@ fn test_node_exists_for_all_types() {
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "finding").unwrap();
-    let dec = store.create_decision(Some(exp.id), "decision", None, None).unwrap();
+    let dec = store.create_decision(Some(exp.id), "decision", Some("Reason for test decision"), None).unwrap();
     let research = store.create_research(Some(phase.id), "research").unwrap();
     let principle = store.create_principle(proj.id, PrincipleScope::Project, "principle", None, None).unwrap();
     let hyp = store.create_hypothesis(Some(phase.id), "hypothesis").unwrap();
@@ -519,7 +519,7 @@ fn test_kg_decision_label_resolved() {
     let phase = store.create_phase(proj.id, "P1", 10, &[]).unwrap();
     let exp = store.create_experiment(Some(phase.id), "exp").unwrap();
     let finding = store.create_finding(Some(exp.id), "A finding for testing").unwrap();
-    let dec = store.create_decision(Some(exp.id), "Use direct get_decision for label resolution", None, None).unwrap();
+    let dec = store.create_decision(Some(exp.id), "Use direct get_decision for label resolution", Some("Testing label resolution in KG traversal"), None).unwrap();
     store.create_edge(NodeType::Finding, finding.id, NodeType::Decision, dec.id, EdgeType::Informed).unwrap();
 
     let kg = KgEngine::new(&store);
@@ -1567,3 +1567,48 @@ fn test_search_includes_confidence() {
     assert!(search_output.contains("suspended"),
         "Search results should include belief status. Output:\n{}", search_output);
 }
+
+#[test]
+fn test_list_decisions_filters_by_direct_project_id() {
+    let store = test_store();
+    let p1 = store.create_project("proj_a", None, None).unwrap();
+    let p2 = store.create_project("proj_b", None, None).unwrap();
+
+    // Create decisions with direct project_id
+    store.create_decision(None, "Decision for A", Some("Rationale for project A decision"), Some(p1.id)).unwrap();
+    store.create_decision(None, "Decision for B", Some("Rationale for project B decision"), Some(p2.id)).unwrap();
+    store.create_decision(None, "Another for A", Some("Second rationale for project A decision"), Some(p1.id)).unwrap();
+
+    let a_decisions = store.list_decisions(p1.id).unwrap();
+    assert_eq!(a_decisions.len(), 2, "Project A should have 2 decisions");
+    assert!(a_decisions.iter().all(|d| d.project_id == Some(p1.id)));
+
+    let b_decisions = store.list_decisions(p2.id).unwrap();
+    assert_eq!(b_decisions.len(), 1, "Project B should have 1 decision");
+    assert!(b_decisions.iter().all(|d| d.project_id == Some(p2.id)));
+}
+
+#[test]
+fn test_list_decisions_excludes_null_project_id() {
+    let store = test_store();
+    let proj = store.create_project("proj", None, None).unwrap();
+    let phase = store.create_phase(proj.id, "Phase1", 10, &[]).unwrap();
+    let exp = store.create_experiment(Some(phase.id), "Exp1").unwrap();
+
+    // Create a decision WITH explicit project_id
+    store.create_decision(Some(exp.id), "With project", Some("This decision has an explicit project ID"), Some(proj.id)).unwrap();
+
+    let decisions = store.list_decisions(proj.id).unwrap();
+    // Should include only the decision with direct project_id
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0].what, "With project");
+}
+
+#[test]
+fn test_create_decision_requires_why_at_db_level() {
+    let store = test_store();
+    // The trigger should reject decisions with NULL why
+    let result = store.create_decision(None, "No reason given", None, None);
+    assert!(result.is_err(), "Creating decision with NULL why should fail at DB level");
+}
+

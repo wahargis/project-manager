@@ -7,7 +7,7 @@
 use rusqlite::Connection;
 
 /// Current highest migration version.
-const LATEST_VERSION: i64 = 12;
+const LATEST_VERSION: i64 = 13;
 
 /// Run all pending migrations on the database connection.
 /// Creates the schema_version table if it doesn't exist, checks the current
@@ -62,6 +62,7 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), Box<dyn std::e
         10 => migrate_v10_temporal(&tx)?,
         11 => migrate_v11_tms(&tx)?,
         12 => migrate_v12_session_experiment(&tx)?,
+        13 => migrate_v13_decision_project_why(&tx)?,
         _ => return Err(format!("Unknown migration version: {}", version).into()),
     }
 
@@ -317,6 +318,45 @@ fn migrate_v11_tms(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+
+// --- Migration v13: Decision project_id backfill + why-required enforcement ---
+// Re-backfill project_id for any decisions created after v2 without explicit
+// project_id but traceable through experiment -> phase -> project chain.
+// Adds a trigger to enforce non-empty why on new decision inserts.
+fn migrate_v13_decision_project_why(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    // Re-backfill: catch any decisions created after v2 that have NULL project_id
+    // but can be traced through experiment -> phase -> project.
+    conn.execute_batch(
+        "UPDATE decisions SET project_id = (
+            SELECT ph.project_id FROM phases ph
+            JOIN experiments e ON e.phase_id = ph.id
+            WHERE e.id = decisions.experiment_id
+        ) WHERE decisions.experiment_id IS NOT NULL AND decisions.project_id IS NULL;"
+    )?;
+
+    // Also backfill project_seq for any decisions that gained project_id but lack seq
+    conn.execute_batch(
+        "UPDATE decisions SET project_seq = (
+            SELECT COUNT(*) FROM decisions d2
+            WHERE d2.project_id = decisions.project_id AND d2.id <= decisions.id
+        ) WHERE project_seq IS NULL AND project_id IS NOT NULL;"
+    )?;
+
+    // Add trigger to enforce why is non-empty on INSERT.
+    // SQLite doesn't support ALTER TABLE ADD CONSTRAINT, so we use a trigger.
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS decisions_require_why
+         BEFORE INSERT ON decisions
+         FOR EACH ROW
+         WHEN NEW.why IS NULL OR TRIM(NEW.why) = ''
+         BEGIN
+             SELECT RAISE(ABORT, 'decisions.why is required and must not be empty');
+         END;"
+    )?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,10 +543,10 @@ mod tests {
 
         // Verify schema_version recorded all 8 migrations
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 12);
+        assert_eq!(count, 13);
 
         let max_version: i64 = conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(max_version, 12);
+        assert_eq!(max_version, 13);
     }
 
     #[test]
@@ -518,7 +558,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 12, "Should still have exactly 12 version records after idempotent run");
+        assert_eq!(count, 13, "Should still have exactly 13 version records after idempotent run");
     }
 
     #[test]
@@ -608,7 +648,7 @@ mod tests {
         migrate(&conn).unwrap();
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 12, "Should have 12 total version records (3 pre-existing + 9 new)");
+        assert_eq!(count, 13, "Should have 13 total version records (3 pre-existing + 10 new)");
 
         // Verify v4 columns exist
         conn.execute(
@@ -618,6 +658,130 @@ mod tests {
             "INSERT INTO hypotheses (text, status, created_at, prediction, criteria, confidence) VALUES ('H', 'proposed', '2025-01-01 00:00:00', 'P', 'C', 0.5)",
             [],
         ).unwrap();
+    }
+
+    #[test]
+    fn test_v13_backfills_decision_project_id() {
+        let conn = setup_base_schema();
+        // Apply v1-v12 first
+        migrate(&conn).unwrap();
+
+        // Reset to v12 to test v13 specifically: insert a decision with experiment
+        // chain but NULL project_id (simulating a decision created after v2 without
+        // explicit project_id)
+        conn.execute(
+            "INSERT INTO projects (name, status, created_at) VALUES ('backfill_test', 'active', '2025-01-01 00:00:00')",
+            [],
+        ).unwrap();
+        let proj_id: i64 = conn.query_row("SELECT id FROM projects WHERE name = 'backfill_test'", [], |r| r.get(0)).unwrap();
+        conn.execute(
+            "INSERT INTO phases (project_id, name, status, impact, created_at) VALUES (?1, 'P1', 'pending', 10, '2025-01-01 00:00:00')",
+            rusqlite::params![proj_id],
+        ).unwrap();
+        let phase_id: i64 = conn.query_row("SELECT MAX(id) FROM phases", [], |r| r.get(0)).unwrap();
+        conn.execute(
+            "INSERT INTO experiments (phase_id, name, status, created_at) VALUES (?1, 'E1', 'pending', '2025-01-01 00:00:00')",
+            rusqlite::params![phase_id],
+        ).unwrap();
+        let exp_id: i64 = conn.query_row("SELECT MAX(id) FROM experiments", [], |r| r.get(0)).unwrap();
+
+        // Drop the trigger temporarily so we can insert a test decision without why
+        conn.execute_batch("DROP TRIGGER IF EXISTS decisions_require_why;").unwrap();
+        // Insert decision with experiment but NULL project_id (simulating pre-v13 state)
+        conn.execute(
+            "INSERT INTO decisions (experiment_id, what, why, created_at, project_id) VALUES (?1, 'Orphan decision', 'Some reason', '2025-01-01 00:00:00', NULL)",
+            rusqlite::params![exp_id],
+        ).unwrap();
+        let dec_id: i64 = conn.query_row("SELECT MAX(id) FROM decisions", [], |r| r.get(0)).unwrap();
+
+        // Verify it has NULL project_id before re-applying v13
+        let pid_before: Option<i64> = conn.query_row(
+            "SELECT project_id FROM decisions WHERE id = ?1", rusqlite::params![dec_id], |r| r.get(0)
+        ).unwrap();
+        assert!(pid_before.is_none(), "project_id should be NULL before v13 re-run");
+
+        // Re-apply v13 backfill manually
+        migrate_v13_decision_project_why(&conn).unwrap();
+
+        // Now project_id should be set
+        let pid_after: Option<i64> = conn.query_row(
+            "SELECT project_id FROM decisions WHERE id = ?1", rusqlite::params![dec_id], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(pid_after, Some(proj_id), "project_id should be backfilled from experiment chain");
+
+        // project_seq should also be set
+        let seq: Option<i64> = conn.query_row(
+            "SELECT project_seq FROM decisions WHERE id = ?1", rusqlite::params![dec_id], |r| r.get(0)
+        ).unwrap();
+        assert!(seq.is_some(), "project_seq should be backfilled after project_id is set");
+    }
+
+    #[test]
+    fn test_v13_why_trigger_rejects_null() {
+        let conn = setup_base_schema();
+        migrate(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO projects (name, status, created_at) VALUES ('trigger_test', 'active', '2025-01-01 00:00:00')",
+            [],
+        ).unwrap();
+
+        // Try inserting a decision with NULL why -- should fail
+        let result = conn.execute(
+            "INSERT INTO decisions (what, why, created_at) VALUES ('Some decision', NULL, '2025-01-01 00:00:00')",
+            [],
+        );
+        assert!(result.is_err(), "INSERT with NULL why should be rejected by trigger");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("decisions.why is required"), "Error should mention why is required, got: {}", err_msg);
+    }
+
+    #[test]
+    fn test_v13_why_trigger_rejects_empty() {
+        let conn = setup_base_schema();
+        migrate(&conn).unwrap();
+
+        // Try inserting a decision with empty why -- should fail
+        let result = conn.execute(
+            "INSERT INTO decisions (what, why, created_at) VALUES ('Some decision', '', '2025-01-01 00:00:00')",
+            [],
+        );
+        assert!(result.is_err(), "INSERT with empty why should be rejected by trigger");
+    }
+
+    #[test]
+    fn test_v13_why_trigger_rejects_whitespace_only() {
+        let conn = setup_base_schema();
+        migrate(&conn).unwrap();
+
+        // Try inserting a decision with whitespace-only why -- should fail
+        let result = conn.execute(
+            "INSERT INTO decisions (what, why, created_at) VALUES ('Some decision', '   ', '2025-01-01 00:00:00')",
+            [],
+        );
+        assert!(result.is_err(), "INSERT with whitespace-only why should be rejected by trigger");
+    }
+
+    #[test]
+    fn test_v13_why_trigger_accepts_valid() {
+        let conn = setup_base_schema();
+        migrate(&conn).unwrap();
+
+        // Insert with valid why -- should succeed
+        let result = conn.execute(
+            "INSERT INTO decisions (what, why, created_at) VALUES ('Some decision', 'Because evidence shows this is the right approach', '2025-01-01 00:00:00')",
+            [],
+        );
+        assert!(result.is_ok(), "INSERT with valid why should succeed");
+    }
+
+    #[test]
+    fn test_v13_migration_idempotent() {
+        let conn = setup_base_schema();
+        migrate(&conn).unwrap();
+
+        // Re-apply v13 -- should not fail (trigger uses IF NOT EXISTS)
+        migrate_v13_decision_project_why(&conn).unwrap();
     }
 }
 

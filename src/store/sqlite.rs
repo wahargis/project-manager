@@ -1039,7 +1039,7 @@ impl Store for SqliteStore {
 
     fn list_decisions(&self, project_id: i64) -> Result<Vec<Decision>> {
         let mut stmt = self.conn.prepare(
-            "SELECT d.id, d.experiment_id, d.what, d.why, d.created_at, d.project_id, d.project_seq, d.confidence, d.belief_status FROM decisions d WHERE d.project_id = ?1 OR (d.project_id IS NULL AND d.experiment_id IS NOT NULL AND d.experiment_id IN (SELECT e.id FROM experiments e JOIN phases p ON e.phase_id = p.id WHERE p.project_id = ?1)) ORDER BY d.id"
+            "SELECT d.id, d.experiment_id, d.what, d.why, d.created_at, d.project_id, d.project_seq, d.confidence, d.belief_status FROM decisions d WHERE d.project_id = ?1 ORDER BY d.id"
         )?;
         let rows = stmt.query_map([project_id], |row| Ok(Decision {
             id: row.get(0)?,
