@@ -157,6 +157,11 @@ pub fn tool_definitions() -> Vec<ToolDef> {
             input_schema: serde_json::json!({"type": "object", "properties": {"project": {"type": "string", "description": "Project name or alias"}}, "required": ["project"]}),
         },
         ToolDef {
+            name: "pm_context".into(),
+            description: "Topic-centric KG context brief. Searches topic across all node types, groups by type, expands 1-hop neighbors, adds cross-references. Returns organized knowledge summary for LLM context injection.".into(),
+            input_schema: serde_json::json!({"type": "object", "required": ["topic"], "properties": {"topic": {"type": "string", "description": "Topic to retrieve context for"}, "limit": {"type": "integer", "description": "Max results per type (default 5)"}}}),
+        },
+        ToolDef {
             name: "pm_project_create".into(),
             description: "Create a new project or subproject. If parent is provided, creates as a subproject under the named parent.".into(),
             input_schema: serde_json::json!({"type": "object", "properties": {"name": {"type": "string", "description": "Project name (required)"}, "alias": {"type": "string", "description": "Short alias for the project"}, "parent": {"type": "string", "description": "Parent project name or alias to create as subproject under"}}, "required": ["name"]}),

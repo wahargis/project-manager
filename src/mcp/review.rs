@@ -1421,3 +1421,203 @@ pub fn tool_kg_audit(store: &SqliteStore, project: &str) -> String {
 
     text
 }
+
+/// Topic-centric KG context brief (F#578).
+///
+/// Searches topic across all node types, groups by type, expands 1-hop neighbors,
+/// adds cross-references between buckets. Returns organized knowledge summary
+/// suitable for injecting into LLM context windows.
+pub fn tool_context(store: &SqliteStore, topic: &str, limit: usize) -> String {
+    let results = match store.text_search(topic) {
+        Ok(r) => r,
+        Err(e) => return format!("Search error: {}", e),
+    };
+    if results.is_empty() {
+        return format!("=== Context: \"{}\" ===\n\nNo results found.\n", topic);
+    }
+
+    // Composite scoring (same as tool_search)
+    let now = chrono::Local::now().naive_local();
+    let query_lower = topic.to_lowercase();
+    let query_words: Vec<&str> = query_lower.split_whitespace().filter(|w| w.len() >= 2).collect();
+
+    struct ScoredResult {
+        score: f64,
+        node_type: String,
+        node_id: i64,
+        project_seq: Option<i64>,
+        text_excerpt: String,
+    }
+
+    let mut scored: Vec<ScoredResult> = Vec::new();
+    for r in &results {
+        let edge_node_type = capitalize(&r.node_type);
+        let edge_count = store.count_edges_for_node(&edge_node_type, r.node_id).unwrap_or(0) as f64;
+        let evidence_weight = store.evidence_weight_for_node(&edge_node_type, r.node_id).unwrap_or(0) as f64;
+        let recency_bonus = match &r.modified_at {
+            Some(ts) => {
+                if let Ok(modified) = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S") {
+                    let days_ago = (now - modified).num_days().max(0) as f64;
+                    (1.0 - days_ago / 30.0).max(0.0)
+                } else {
+                    0.0
+                }
+            },
+            None => 0.0,
+        };
+        let result_lower = r.text_excerpt.to_lowercase();
+        let matches = query_words.iter().filter(|w| result_lower.contains(*w)).count();
+        let text_match = if query_words.is_empty() { 1.0 } else { matches as f64 / query_words.len() as f64 };
+        let score = text_match * 1.0 + edge_count * 0.1 + evidence_weight * 0.2 + recency_bonus * 0.3;
+
+        scored.push(ScoredResult {
+            score,
+            node_type: r.node_type.clone(),
+            node_id: r.node_id,
+            project_seq: r.project_seq,
+            text_excerpt: r.text_excerpt.clone(),
+        });
+    }
+    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Group by NodeType
+    let type_order = ["finding", "decision", "hypothesis", "experiment", "literature", "principle", "constraint", "research", "phase"];
+    let mut buckets: std::collections::BTreeMap<String, Vec<&ScoredResult>> = std::collections::BTreeMap::new();
+    for sr in &scored {
+        buckets.entry(sr.node_type.clone()).or_default().push(sr);
+    }
+
+    // Collect all node IDs in the result set for cross-referencing
+    let result_set: std::collections::HashSet<(String, i64)> = scored.iter()
+        .map(|sr| (sr.node_type.clone(), sr.node_id))
+        .collect();
+
+    // Build output
+    let mut text = format!("=== Context: \"{}\" ===\n\n", topic);
+    let mut _total_shown = 0;
+    let mut type_count = 0;
+
+    for nt in &type_order {
+        let nt_str = nt.to_string();
+        if let Some(bucket) = buckets.get(&nt_str) {
+            type_count += 1;
+            let shown = bucket.len().min(limit);
+            text += &format!("## {} ({})\n", capitalize(nt), bucket.len());
+
+            for sr in bucket.iter().take(limit) {
+                _total_shown += 1;
+                let prefix = match sr.node_type.as_str() {
+                    "finding" => "F",
+                    "decision" => "D",
+                    "hypothesis" => "H",
+                    "experiment" => "E",
+                    "literature" => "L",
+                    "principle" => "P",
+                    "constraint" => "C",
+                    "research" => "R",
+                    "phase" => "Ph",
+                    _ => "?",
+                };
+                let seq_label = sr.project_seq
+                    .map(|s| format!("{}#{}", prefix, s))
+                    .unwrap_or_else(|| format!("{}#{}", prefix, sr.node_id));
+
+                let excerpt = truncate_safe(&sr.text_excerpt, 120);
+                text += &format!("  {} [score={:.2}]: {}\n", seq_label, sr.score, excerpt);
+
+                // 1-hop neighbor expansion
+                let node_type_enum = match sr.node_type.as_str() {
+                    "finding" => Some(NodeType::Finding),
+                    "decision" => Some(NodeType::Decision),
+                    "hypothesis" => Some(NodeType::Hypothesis),
+                    "experiment" => Some(NodeType::Experiment),
+                    "literature" => Some(NodeType::Literature),
+                    "principle" => Some(NodeType::Principle),
+                    "constraint" => Some(NodeType::Constraint),
+                    "phase" => Some(NodeType::Phase),
+                    _ => None,
+                };
+
+                if let Some(nt_enum) = node_type_enum {
+                    let mut neighbors = Vec::new();
+                    let mut cross_refs = Vec::new();
+
+                    if let Ok(edges) = store.get_edges_from(nt_enum.clone(), sr.node_id) {
+                        for e in &edges {
+                            let target_type_str = format!("{:?}", e.target_type).to_lowercase();
+                            let target_prefix = match target_type_str.as_str() {
+                                "finding" => "F",
+                                "decision" => "D",
+                                "hypothesis" => "H",
+                                "experiment" => "E",
+                                "literature" => "L",
+                                "principle" => "P",
+                                "constraint" => "C",
+                                "research" => "R",
+                                "phase" => "Ph",
+                                _ => "?",
+                            };
+                            neighbors.push(format!("->{:?} {}#{}", e.relation, target_prefix, e.target_id));
+                            if result_set.contains(&(target_type_str.clone(), e.target_id)) {
+                                cross_refs.push(format!("{}#{}", target_prefix, e.target_id));
+                            }
+                        }
+                    }
+                    if let Ok(edges) = store.get_edges_to(nt_enum, sr.node_id) {
+                        for e in &edges {
+                            let source_type_str = format!("{:?}", e.source_type).to_lowercase();
+                            let source_prefix = match source_type_str.as_str() {
+                                "finding" => "F",
+                                "decision" => "D",
+                                "hypothesis" => "H",
+                                "experiment" => "E",
+                                "literature" => "L",
+                                "principle" => "P",
+                                "constraint" => "C",
+                                "research" => "R",
+                                "phase" => "Ph",
+                                _ => "?",
+                            };
+                            neighbors.push(format!("<-{:?} {}#{}", e.relation, source_prefix, e.source_id));
+                            if result_set.contains(&(source_type_str.clone(), e.source_id)) {
+                                cross_refs.push(format!("{}#{}", source_prefix, e.source_id));
+                            }
+                        }
+                    }
+
+                    if !neighbors.is_empty() {
+                        text += &format!("    Neighbors: {}\n", neighbors.join(", "));
+                    }
+                    if !cross_refs.is_empty() {
+                        // Deduplicate cross-refs
+                        let mut unique_refs: Vec<String> = cross_refs;
+                        unique_refs.sort();
+                        unique_refs.dedup();
+                        text += &format!("    See also: {}\n", unique_refs.join(", "));
+                    }
+                }
+            }
+            if bucket.len() > shown {
+                text += &format!("  ... and {} more\n", bucket.len() - shown);
+            }
+            text += "\n";
+        }
+    }
+
+    // Handle any node types not in type_order
+    for (nt_str, bucket) in &buckets {
+        if !type_order.contains(&nt_str.as_str()) {
+            type_count += 1;
+            text += &format!("## {} ({})\n", capitalize(nt_str), bucket.len());
+            for sr in bucket.iter().take(limit) {
+                _total_shown += 1;
+                let excerpt = truncate_safe(&sr.text_excerpt, 120);
+                text += &format!("  #{} [score={:.2}]: {}\n", sr.node_id, sr.score, excerpt);
+            }
+            text += "\n";
+        }
+    }
+
+    text += &format!("Summary: {} nodes across {} types.\n", scored.len(), type_count);
+    text
+}

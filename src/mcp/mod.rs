@@ -221,6 +221,11 @@ fn dispatch_tool(store: &SqliteStore, tool_name: &str, args: &serde_json::Value)
             let q = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
             review::tool_query(store, q)
         },
+        "pm_context" => {
+            let topic = args.get("topic").and_then(|v| v.as_str()).unwrap_or("");
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+            review::tool_context(store, topic, limit)
+        },
         "pm_orphan_repair" => {
             let p = args.get("project").and_then(|v| v.as_str()).unwrap_or("volta-renaissance");
             review::tool_orphan_repair(store, p)
