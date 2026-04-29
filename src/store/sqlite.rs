@@ -1824,6 +1824,161 @@ impl Store for SqliteStore {
         Ok(results)
     }
 
+    fn text_search_in_project(&self, query: &str, project_id: Option<i64>) -> Result<Vec<SearchResult>> {
+        // Project-scoped text search. When project_id is None, behaves identically
+        // to text_search (cross-project). When Some(pid), each per-table query
+        // adds a project_id filter (direct column or via phase/experiment join).
+        let pid = match project_id {
+            None => return self.text_search(query),
+            Some(p) => p,
+        };
+        let query_words: Vec<&str> = query.split_whitespace().filter(|w| w.len() >= 2).collect();
+        let pattern = if query_words.len() > 1 {
+            format!("%{}%", query_words[0])
+        } else {
+            format!("%{}%", query)
+        };
+        let mut results: Vec<SearchResult> = Vec::new();
+
+        // findings.text — project via experiment.phase_id -> phase.project_id
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT f.id, f.project_seq, f.text, f.modified_at, f.confidence, f.belief_status                  FROM findings f                  LEFT JOIN experiments e ON f.experiment_id = e.id                  LEFT JOIN phases ph ON e.phase_id = ph.id                  WHERE f.text LIKE ?1 AND ph.project_id = ?2 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern, pid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<f64>>(4)?, row.get::<_, Option<String>>(5)?))
+            })?;
+            for r in rows {
+                let (id, seq, text, modified_at, confidence, belief_status) = r?;
+                let excerpt: String = text.chars().take(150).collect();
+                results.push(SearchResult { node_type: "finding".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
+            }
+        }
+
+        // decisions — has direct project_id (added in v2/v13)
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, what, why, modified_at, confidence, belief_status                  FROM decisions WHERE (what LIKE ?1 OR why LIKE ?1) AND project_id = ?2 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern, pid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, Option<f64>>(5)?, row.get::<_, Option<String>>(6)?))
+            })?;
+            for r in rows {
+                let (id, seq, what, _why, modified_at, confidence, belief_status) = r?;
+                let excerpt: String = what.chars().take(150).collect();
+                results.push(SearchResult { node_type: "decision".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
+            }
+        }
+
+        // hypotheses — via phase.project_id
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT h.id, h.project_seq, h.text, h.prediction, h.modified_at, h.confidence, h.belief_status                  FROM hypotheses h                  LEFT JOIN phases ph ON h.phase_id = ph.id                  WHERE (h.text LIKE ?1 OR h.prediction LIKE ?1) AND ph.project_id = ?2 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern, pid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, Option<f64>>(5)?, row.get::<_, Option<String>>(6)?))
+            })?;
+            for r in rows {
+                let (id, seq, text, _pred, modified_at, confidence, belief_status) = r?;
+                let excerpt: String = text.chars().take(150).collect();
+                results.push(SearchResult { node_type: "hypothesis".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
+            }
+        }
+
+        // literature — direct project_id
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, title, key_findings, modified_at FROM literature                  WHERE (title LIKE ?1 OR key_findings LIKE ?1) AND project_id = ?2 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern, pid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+            })?;
+            for r in rows {
+                let (id, seq, title, _kf, modified_at) = r?;
+                let excerpt: String = title.chars().take(150).collect();
+                results.push(SearchResult { node_type: "literature".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
+            }
+        }
+
+        // phases — direct project_id
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, name, description, modified_at FROM phases                  WHERE (name LIKE ?1 OR description LIKE ?1) AND project_id = ?2 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern, pid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+            })?;
+            for r in rows {
+                let (id, seq, name, _desc, modified_at) = r?;
+                let excerpt: String = name.chars().take(150).collect();
+                results.push(SearchResult { node_type: "phase".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
+            }
+        }
+
+        // research — via phase.project_id
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT r.id, r.project_seq, r.name, r.report, r.modified_at FROM research r                  LEFT JOIN phases ph ON r.phase_id = ph.id                  WHERE (r.name LIKE ?1 OR r.report LIKE ?1) AND ph.project_id = ?2 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern, pid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?))
+            })?;
+            for r in rows {
+                let (id, seq, name, _report, modified_at) = r?;
+                let excerpt: String = name.chars().take(150).collect();
+                results.push(SearchResult { node_type: "research".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
+            }
+        }
+
+        // experiments — via phase.project_id
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT e.id, e.project_seq, e.name, e.modified_at FROM experiments e                  LEFT JOIN phases ph ON e.phase_id = ph.id                  WHERE e.name LIKE ?1 AND ph.project_id = ?2 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern, pid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?))
+            })?;
+            for r in rows {
+                let (id, seq, name, modified_at) = r?;
+                let excerpt: String = name.chars().take(150).collect();
+                results.push(SearchResult { node_type: "experiment".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence: None, belief_status: None });
+            }
+        }
+
+        // principles — direct project_id
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, text, modified_at, confidence, belief_status FROM principles                  WHERE text LIKE ?1 AND project_id = ?2 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern, pid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<f64>>(4)?, row.get::<_, Option<String>>(5)?))
+            })?;
+            for r in rows {
+                let (id, seq, text, modified_at, confidence, belief_status) = r?;
+                let excerpt: String = text.chars().take(150).collect();
+                results.push(SearchResult { node_type: "principle".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
+            }
+        }
+
+        // constraints_tbl — direct project_id
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, project_seq, text, modified_at, confidence, belief_status FROM constraints_tbl                  WHERE text LIKE ?1 AND project_id = ?2 LIMIT 50"
+            )?;
+            let rows = stmt.query_map(params![pattern, pid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<f64>>(4)?, row.get::<_, Option<String>>(5)?))
+            })?;
+            for r in rows {
+                let (id, seq, text, modified_at, confidence, belief_status) = r?;
+                let excerpt: String = text.chars().take(150).collect();
+                results.push(SearchResult { node_type: "constraint".into(), node_id: id, project_seq: seq, text_excerpt: excerpt, modified_at, score: None, confidence, belief_status });
+            }
+        }
+
+        results.truncate(50);
+        Ok(results)
+    }
+
     fn set_session_experiment(&self, experiment_id: i64) -> Result<()> {
         let rows = self.conn.execute(
             "UPDATE sessions SET active_experiment_id = ?1 WHERE ended_at IS NULL",

@@ -893,6 +893,9 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             import_v2(&store, &path, &name)?;
         }
         Commands::Search { project, query, all } => {
+            // v6 fix: thread project_filter through tool_search so --all actually
+            // produces per-project (not duplicated global) results, AND so the
+            // single-project case respects the project boundary.
             if all {
                 let projects = store.list_projects()?;
                 let active: Vec<_> = projects.iter()
@@ -903,13 +906,40 @@ pub fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     for proj in &active {
                         println!("=== {} ===", proj.name);
-                        let output = pm::mcp::review::tool_search(&store, &query);
+                        let output = pm::mcp::review::tool_search_with_filter(&store, &query, Some(proj.id));
                         println!("{}", output);
                     }
                 }
             } else {
-                let _proj = resolve_project(&store, &project).ok_or("Project not found")?;
-                let output = pm::mcp::review::tool_search(&store, &query);
+                let proj = resolve_project(&store, &project).ok_or("Project not found")?;
+                let output = pm::mcp::review::tool_search_with_filter(&store, &query, Some(proj.id));
+                println!("{}", output);
+            }
+        }
+        Commands::Context { topic, limit, json } => {
+            let output = pm::mcp::review::tool_context(&store, &topic, limit);
+            if json {
+                let v = serde_json::json!({ "topic": topic, "limit": limit, "output": output });
+                println!("{}", serde_json::to_string_pretty(&v).unwrap_or_else(|_| output.clone()));
+            } else {
+                println!("{}", output);
+            }
+        }
+        Commands::Query { text, json } => {
+            let output = pm::mcp::review::tool_query(&store, &text);
+            if json {
+                let v = serde_json::json!({ "query": text, "output": output });
+                println!("{}", serde_json::to_string_pretty(&v).unwrap_or_else(|_| output.clone()));
+            } else {
+                println!("{}", output);
+            }
+        }
+        Commands::SessionInit { json } => {
+            let output = pm::mcp::dashboard::tool_session_init(&store);
+            if json {
+                let v = serde_json::json!({ "briefing": output });
+                println!("{}", serde_json::to_string_pretty(&v).unwrap_or_else(|_| output.clone()));
+            } else {
                 println!("{}", output);
             }
         }

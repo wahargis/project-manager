@@ -1913,3 +1913,102 @@ fn test_web_dashboard_port_in_use_does_not_panic() {
     // The MCP server gracefully handles this -- no panic, no crash
     drop(listener);
 }
+
+
+// === v6 Cognitive Augmentation Layer tests ===
+
+// A. CLI mirror handlers exist and dispatch to the storage layer:
+//    pm context <topic>, pm query <text>, pm session-init.
+// We exercise the underlying tool_* handlers (the CLI dispatch is a thin
+// pass-through verified separately by clap). The contract these tests pin
+// is: handler returns non-empty Markdown-ish output for a known-good input.
+
+#[test]
+fn test_v6_cli_context_dispatches_to_handler() {
+    let store = test_store();
+    let (_p, _ph, exp_id) = setup_project(&store);
+    store.create_finding(Some(exp_id),
+        "v6 context test: KV cache quantization unblocks 27B Dense on V100").unwrap();
+    let out = super::review::tool_context(&store, "KV cache quantization", 5);
+    assert!(!out.is_empty(), "context output should be non-empty");
+    // tool_context returns a topic-centric brief; verify it at least
+    // contains the queried topic in its header or body.
+    assert!(out.to_lowercase().contains("kv cache") || out.contains("Context"),
+        "expected topic-centric brief: {}", out);
+}
+
+#[test]
+fn test_v6_cli_query_dispatches_to_handler() {
+    let store = test_store();
+    let (_p, _ph, exp_id) = setup_project(&store);
+    store.create_finding(Some(exp_id),
+        "v6 query test: distinctive_v6_query_anchor_token marker for retrieval").unwrap();
+    let out = super::review::tool_query(&store, "distinctive_v6_query_anchor_token");
+    assert!(!out.is_empty(), "query output should be non-empty");
+    assert!(out.contains("Query"), "expected query header in: {}", out);
+}
+
+#[test]
+fn test_v6_cli_session_init_returns_briefing() {
+    let store = test_store();
+    let (_p, phase_id, _e) = setup_project(&store);
+    store.update_phase_status(phase_id, PhaseStatus::InProgress).unwrap();
+    let out = super::dashboard::tool_session_init(&store);
+    // The briefing format groups by phase / lists pending experiments / etc.
+    // Pin a stable substring that the handler always emits when there is at
+    // least one active project (matches the existing test_split_session_init).
+    assert!(!out.is_empty(), "session-init briefing should be non-empty");
+    assert!(out.contains("Session Init") || out.contains("Phase") || out.contains("pending"),
+        "expected briefing format: {}", out);
+}
+
+// D. Bug fix: pm search --project X returns project-X-only results, not
+//    duplicated globally. tool_search_with_filter is the new entry point
+//    that threads project_filter through text_search_in_project.
+
+#[test]
+fn test_v6_search_with_filter_scopes_to_project() {
+    let store = test_store();
+    // Project A with a distinctive finding
+    let proj_a = store.create_project("v6-proj-a", Some("v6a"), None).unwrap();
+    let phase_a = store.create_phase(proj_a.id, "PA1", 10, &[]).unwrap();
+    let exp_a = store.create_experiment(Some(phase_a.id), "EA1").unwrap();
+    store.create_finding(Some(exp_a.id),
+        "v6_marker_alpha finding lives only in project A").unwrap();
+    // Project B with its own distinctive finding
+    let proj_b = store.create_project("v6-proj-b", Some("v6b"), None).unwrap();
+    let phase_b = store.create_phase(proj_b.id, "PB1", 10, &[]).unwrap();
+    let exp_b = store.create_experiment(Some(phase_b.id), "EB1").unwrap();
+    store.create_finding(Some(exp_b.id),
+        "v6_marker_beta finding lives only in project B").unwrap();
+
+    // Cross-project: BOTH markers visible.
+    let global = super::review::tool_search_with_filter(&store, "v6_marker", None);
+    assert!(global.contains("v6_marker_alpha"), "cross-project search should include alpha: {}", global);
+    assert!(global.contains("v6_marker_beta"), "cross-project search should include beta: {}", global);
+
+    // Project-A scoped: ONLY alpha visible.
+    let scoped_a = super::review::tool_search_with_filter(&store, "v6_marker", Some(proj_a.id));
+    assert!(scoped_a.contains("v6_marker_alpha"), "scoped-A search should include alpha: {}", scoped_a);
+    assert!(!scoped_a.contains("v6_marker_beta"), "scoped-A search must NOT include beta: {}", scoped_a);
+
+    // Project-B scoped: ONLY beta visible.
+    let scoped_b = super::review::tool_search_with_filter(&store, "v6_marker", Some(proj_b.id));
+    assert!(scoped_b.contains("v6_marker_beta"), "scoped-B search should include beta: {}", scoped_b);
+    assert!(!scoped_b.contains("v6_marker_alpha"), "scoped-B search must NOT include alpha: {}", scoped_b);
+}
+
+#[test]
+fn test_v6_text_search_in_project_default_falls_back_to_global() {
+    // text_search_in_project with project_id=None must behave identically to
+    // text_search (cross-project). This pins the default-impl contract.
+    let store = test_store();
+    let (_p, _ph, exp_id) = setup_project(&store);
+    store.create_finding(Some(exp_id),
+        "v6_default_fallback_marker for cross-project test").unwrap();
+    let global = store.text_search("v6_default_fallback_marker").unwrap();
+    let none_filter = store.text_search_in_project("v6_default_fallback_marker", None).unwrap();
+    assert_eq!(global.len(), none_filter.len(),
+        "text_search_in_project(None) should match text_search");
+    assert!(none_filter.iter().any(|r| r.text_excerpt.contains("v6_default_fallback_marker")));
+}

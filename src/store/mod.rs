@@ -449,6 +449,13 @@ pub trait Store {
 
     // Text search across all KG node types
     fn text_search(&self, query: &str) -> Result<Vec<SearchResult>>;
+
+    /// Text search optionally scoped to a single project. Default impl ignores
+    /// the filter and falls back to the global search (override on SqliteStore
+    /// applies a SQL WHERE project_id = ? on every joined table).
+    fn text_search_in_project(&self, query: &str, _project_id: Option<i64>) -> Result<Vec<SearchResult>> {
+        self.text_search(query)
+    }
 }
 
 #[cfg(test)]

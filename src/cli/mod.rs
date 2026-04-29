@@ -142,6 +142,31 @@ pub enum Commands {
         #[arg(long)]
         all: bool,
     },
+    /// Topic-centric KG context brief (CLI mirror of pm_context MCP tool)
+    Context {
+        /// Topic to search for (free text)
+        topic: String,
+        /// Maximum number of nodes to return per type
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        /// Output as JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Natural-language KG query (CLI mirror of pm_query MCP tool)
+    Query {
+        /// Natural language query text
+        text: String,
+        /// Output as JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Knowledge briefing for active phases (CLI mirror of pm_session_init MCP tool)
+    SessionInit {
+        /// Output as JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]

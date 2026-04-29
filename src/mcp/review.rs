@@ -484,7 +484,13 @@ pub fn tool_stats(store: &SqliteStore, project: &str) -> String {
 }
 
 pub fn tool_search(store: &SqliteStore, query: &str) -> String {
-    match store.text_search(query) {
+    tool_search_with_filter(store, query, None)
+}
+
+/// Project-scoped variant of tool_search. Pass Some(project_id) to scope results
+/// to a single project; pass None for the original cross-project behavior.
+pub fn tool_search_with_filter(store: &SqliteStore, query: &str, project_filter: Option<i64>) -> String {
+    match store.text_search_in_project(query, project_filter) {
         Ok(results) => {
             if results.is_empty() {
                 return format!("=== Search Results for \"{}\" ===\n\nNo results found.\n", query);
