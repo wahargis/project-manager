@@ -1,0 +1,35 @@
+flowchart LR
+    subgraph Clients
+        AGENT["MCP client<br/>(agentic coding / research tools)"]
+        CLI["pm CLI<br/>(clap derive)"]
+    end
+
+    subgraph PM["pm Rust crate"]
+        direction TB
+        MCP["MCP stdio JSON-RPC server<br/>37 tools"]
+        CMDS["CLI command handlers"]
+        WEB["Embedded web dashboard<br/>(warp, port 9090)"]
+        CORE["Domain core"]
+        DAG["DAG engine<br/>topological sort · next phases · stagnation"]
+        KG["Knowledge graph engine<br/>traversal · contradiction detection"]
+        ANALYSIS["Analysis<br/>confidence · contradiction scoring"]
+        VALIDATE["Validation<br/>decision & finding rules"]
+    end
+
+    subgraph STORE["Persistence"]
+        SQLITE["SQLite via rusqlite (bundled)<br/>schema migrations v1-v15"]
+        DB[("pm.db<br/>default: ~/.local/share/pm/pm.db")]
+    end
+
+    AGENT -->|"JSON-RPC over stdio"| MCP
+    CLI --> CMDS
+    CMDS --> CORE
+    MCP --> CORE
+    WEB --> CORE
+    CORE --> DAG
+    CORE --> KG
+    CORE --> ANALYSIS
+    CORE --> VALIDATE
+    CORE --> SQLITE
+    SQLITE --> DB
+    WEB -. "auto-starts with pm --mcp" .-> MCP
