@@ -187,6 +187,15 @@ The `atlas` project above is a complete miniature run:
 - **Truth maintenance keeps the graph honest.** `Supports` and `Contradicts` edges propagate confidence changes and suspend contradicted subtrees instead of leaving conflicting beliefs live.
 - **MCP makes it ambient.** Any MCP-capable agent can call the same tools the CLI uses, so project state is available inside the agent loop rather than in a separate terminal.
 
+## Documentation
+
+- [Architecture](docs/architecture.md) — system structure and data flow.
+- [Knowledge model](docs/knowledge-model.md) — node types, edge types, truth maintenance, DAG, and graph analysis.
+- [Quickstart](docs/quickstart.md) — build, synthetic project, dashboard.
+- [MCP server](docs/mcp.md) — agent integration.
+- [Roadmap](docs/roadmap.md) — shipped, in progress, and planned.
+- [Reference notes](docs/reference/README.md) — historical design and planning documents.
+
 ## Repository layout
 
 | Path | Contents |
@@ -203,3 +212,7 @@ The `atlas` project above is a complete miniature run:
 | `v2-reference/` | Vendored v2 reference data and import material. |
 
 *GitHub: <https://github.com/wahargis/project-manager>*
+
+## License
+
+License selection is pending; the repository is currently published for review without a chosen open-source license.
