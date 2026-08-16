@@ -1,5 +1,7 @@
 # project-manager
 
+**Repository:** <https://github.com/wahargis/project-manager>
+
 `pm` is a research project manager for long-running agentic projects. It gives an agent (or a human) a durable, queryable memory of what has been tried, what is believed, what contradicts what, and what should happen next — across many sessions and many thousands of knowledge-graph nodes.
 
 ## Problem statement
@@ -199,3 +201,5 @@ The `atlas` project above is a complete miniature run:
 | `src/web.rs`, `src/web/index.html` | Embedded warp dashboard. |
 | `docs/` | Design and scope notes. |
 | `v2-reference/` | Vendored v2 reference data and import material. |
+
+*GitHub: <https://github.com/wahargis/project-manager>*
