@@ -215,4 +215,4 @@ The `atlas` project above is a complete miniature run:
 
 ## License
 
-License selection is pending; the repository is currently published for review without a chosen open-source license.
+Licensed under the [MIT License](LICENSE).
