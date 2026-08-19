@@ -1,176 +1,174 @@
 # Project Manager (`pm`)
 
-**A local-first research-control and truth-maintenance system for long-running AI agents, human–agent teams, and experimental R&D.**
+**A local-first research operations system for execution, evidence, decisions, and continuity across long-running human and agent work.**
 
-`pm` preserves the evolving **execution state** and **epistemic state** of a project: what is being attempted, what evidence has been observed, which hypotheses remain live, why decisions were made, where findings conflict, which constraints still apply, and what work is actionable now. It represents that state as a typed causal knowledge graph coupled to an impact-ranked phase DAG, then exposes the same model through a Rust CLI, a 37-tool MCP server, and an interactive web dashboard.
+`pm` manages projects that outlive a single task list, chat session, agent, or original plan. It coordinates the complete working loop: a portfolio of projects and subprojects, dependency-aware phases, experiments, findings, hypotheses, decisions, literature, constraints, principles, review, and handoff.
 
-This is not a task list with notes attached, and it is not a chat-history or vector-memory wrapper. `pm` is the control layer between agent execution and project knowledge. It preserves causal provenance, governs research lifecycles, revises belief state when evidence changes, diagnoses stalled or structurally broken work, and reconstructs the relevant project context when a new session or agent takes over.
+Instead of relying on an agent to remember why work exists or what should happen next, `pm` computes actionable phases, preserves the evidence behind decisions, reconstructs active context at session start, and audits the research record for stalled work, unsupported conclusions, contradictory evidence, orphaned nodes, expired constraints, dangling branches, and cross-project leakage.
 
-> A task tracker records what should be done. A notebook records what was written. `pm` records what the project currently believes, why it believes it, how that belief was tested, and what the evidence says should happen next.
+> **The knowledge graph is central, but it is the substrate—not the whole product.** It gives planning, execution, evidence, belief revision, retrieval, review, and cross-session continuity one coherent state model.
 
-**Status:** `pm` is a working pre-1.0 system under active development. The SQLite store, CLI, MCP server, web dashboard, execution DAG, causal graph, truth-maintenance, retrieval, session, and audit surfaces described below are implemented; command and schema compatibility may still change before 1.0.
+```text
+prioritize -> investigate -> capture evidence -> revise beliefs -> decide
+     ^                                                        |
+     |--------- recover context <- review and redirect <------|
+```
 
-## Why it exists
-
-Long-horizon research and engineering work usually fails through **state drift**, not a lack of task creation. Across many sessions, agents and humans lose track of:
-
-- which observation came from which experiment;
-- which evidence actually justified a decision;
-- whether a new result supports, contradicts, or supersedes an earlier belief;
-- which branches failed, converged, or remain unresolved;
-- whether a constraint is still valid;
-- what is dependency-unblocked and worth doing next;
-- what another agent needs in order to resume without reconstructing the project from chat logs.
-
-`pm` turns that scattered state into evidence-aware institutional memory and an executable research model. Negative results remain part of the search history, decisions retain their rationale, beliefs can be suspended or retracted, and the current work queue is derived from project structure rather than remembered informally.
+**Status:** the current package is pre-1.0 (`0.1.0`). The SQLite store, CLI, MCP server, web dashboard, execution DAG, causal graph, session tooling, retrieval, and integrity surfaces described below are implemented; command, tool, and schema compatibility may still change before 1.0.
 
 ## What `pm` provides
 
-| Capability | What it does |
+| Capability | Implemented behavior |
 |---|---|
-| **Execution control** | Models phases as a dependency DAG, ranks actionable phases by impact, exposes cross-project priorities, scaffolds pending experiments into tasks, and detects consecutive-failure stagnation. |
-| **Causal research ledger** | Connects phases, experiments, findings, decisions, hypotheses, research, literature, principles, and constraints through typed relations so the path from evidence to action remains inspectable. |
-| **Agent-facing provenance enforcement** | MCP workflows require causal upstream evidence for decisions and non-root experiments, require principles to derive from findings or decisions, and automatically create structural and causal edges where the relationship is known. |
-| **Truth maintenance** | Tracks confidence and belief state on evidence-bearing nodes. `Supports` and `Contradicts` edges trigger confidence updates and can suspend contradicted nodes and downstream dependents for review. |
-| **Hypothesis and evidence lifecycles** | Governs hypothesis testing and resolution, literature progression, experiment completion, and phase completion; records predictions, evaluation criteria, results, measured constraints, and expiry. |
-| **Contradiction handling** | Preserves explicit contradiction edges and also performs high-recall candidate detection using negation, antonym, numeric-divergence, and correction signals before optional semantic adjudication. |
-| **Cognitive retrieval** | Combines SQLite text search with graph connectivity, evidence weight, and recency; provides topic briefs, free-text graph queries, one-hop expansion, and phase-neighborhood context rather than returning isolated notes. |
-| **Session continuity** | Tracks sessions and active experiments, reports temporal deltas, generates session-start briefings and handoffs, and reconstructs the active phase’s findings, constraints, hypotheses, decisions, and literature. |
-| **Graph review and repair** | Detects orphans, causal-chain breaks, cross-project bleed, temporal incoherence, sparse evidence graphs, expired constraints, dangling branches, merge points, and underused literature; produces specific repair guidance and a graph-health score. |
-| **Multi-project orchestration** | Supports active, paused, and archived projects; parent/subproject hierarchies; per-project identifiers; and a portfolio-level dashboard of the highest-impact actionable work. |
-| **Three operational surfaces** | Provides a scriptable CLI, a policy-rich MCP tool server for agents, and an interactive knowledge-graph / phase-DAG dashboard over one versioned SQLite store. |
+| **Portfolio control** | Active, paused, and archived projects; aliases; nested subprojects; cross-project priority views. |
+| **Executable planning** | Impact-ranked phases, explicit dependencies, topological ordering, actionable-phase selection, completion timestamps, and phase scaffolding. |
+| **Experimental workflow** | Experiments with pass/fail/inconclusive outcomes, findings, testable hypotheses, result rollups, and consecutive-failure stagnation detection. |
+| **Causal traceability** | Guided MCP workflows require upstream evidence for decisions, follow-on experiments, and principles, then create the corresponding typed relationships automatically. |
+| **Research state** | Literature lifecycles, research notes, principles, constraints, feedback, confidence, and belief status live beside execution state rather than in detached documents. |
+| **Session continuity** | Session start/end records, an active experiment, temporal deltas, session briefings, phase-local context reconstruction, and compact handoff output. |
+| **Retrieval** | Project-scoped text search, composite ranking, topic briefs grouped by node type, one-hop expansion, and phase-centered multi-hop subgraphs. |
+| **Review and recovery** | Project review, structural health scoring, causal-chain audits, orphan repair proposals, branch/merge analysis, stale-work warnings, and expired-constraint checks. |
+| **Human and agent interfaces** | A Rust CLI, a 37-tool MCP stdio server, and an embedded browser dashboard backed by the same versioned SQLite store. |
 
-## The control model
+## Why this is not a conventional project tracker
 
-`pm` separates several concerns that are often collapsed into a single task database or note store:
+A task tracker can say that an item is open or complete. It usually cannot answer:
 
-| Layer | Question answered |
+- What observation caused this experiment to exist?
+- Which findings support or contradict the current hypothesis?
+- Why was a decision made, and which evidence informed it?
+- Which branch of an investigation is unresolved or dangling?
+- Which constraint was valid when an experiment ran, and has it since expired?
+- What changed since the previous session?
+- Which active phase is dependency-unblocked and highest impact now?
+- Is the apparent project history causally coherent, or merely chronological?
+
+`pm` treats those questions as operational state. Planning objects, evidence objects, and their relationships are stored together, so the system can compute next actions and reconstruct context rather than asking the user or agent to narrate the project from memory.
+
+## The operating model
+
+A typical `pm`-managed project moves through seven recurring operations:
+
+1. **Orient.** `pm session-init` or `pm_session_context` assembles active phases, pending experiments, recent findings, hypotheses, decisions, literature, constraints, and stale-work warnings.
+2. **Prioritize.** The DAG engine filters out blocked or resolved phases and ranks the remaining work by impact. Portfolio dashboards apply the same logic across projects and subprojects.
+3. **Investigate.** Work is represented as explicit experiments inside phases. In the guided MCP workflow, every follow-on experiment must identify the finding, decision, or prior experiment that motivated it.
+4. **Capture evidence.** Findings are attached to experiments, related findings are surfaced, potential contradiction candidates are reported, and causal edges are created where the relationship is known.
+5. **Interpret.** Evidence can test hypotheses, inform decisions, establish principles, update literature status, or validate constraints. Decisions retain both `what` and `why`.
+6. **Review and redirect.** Review and audit commands expose stagnation, unsupported decisions, untested hypotheses, unused literature, orphans, expired constraints, broken branches, temporal inconsistencies, and graph-structure weaknesses.
+7. **Hand off.** Sessions record an active experiment and summary; `pm_since`, session context, and handoff output make the next session resume from state rather than from conversational recollection.
+
+This loop is deliberately iterative. Failed and inconclusive experiments remain evidence. The MCP decision workflow includes a cleanup guard that warns when closure or pruning language may discard a useful negative result instead of redirecting the investigation.
+
+## Core capabilities
+
+### Portfolio and dependency-aware execution
+
+Projects can be standalone or nested under parent projects. Each project has a lifecycle (`Active`, `Paused`, `Archived`) and an optional alias. The CLI and browser UI expose the hierarchy; dashboard operations aggregate active work across the portfolio.
+
+Phases are executable containers rather than headings. A phase can carry:
+
+- an impact score;
+- dependencies on other phases;
+- description, goals, and success criteria;
+- pending, in-progress, complete, deprioritized, or paused status;
+- start and completion timestamps.
+
+`DagEngine` provides topological ordering, dependency-satisfied phase selection, impact ranking, and stagnation detection over recent failed or inconclusive experiments. `pm next` reports the highest-value actionable work. `pm scaffold` converts pending experiments in a phase into text or JSON task payloads; the MCP form emits task-oriented output suitable for an agent loop.
+
+The opinionated MCP phase update path also enforces a completion gate: a phase cannot be marked complete while it still contains pending experiments.
+
+### Experiments, findings, and causal decisions
+
+The core execution chain is:
+
+```text
+Project -> Phase -> Experiment -> Finding -> Decision
+                     ^              |
+                     |              +-> Hypothesis
+                     +------------------ Decision / prior Experiment / Finding
+```
+
+The graph permits richer relationships, but this causal backbone is the default discipline encoded by the MCP tools:
+
+- The first experiment in a phase may be a root investigation.
+- Later experiments must identify an upstream finding, decision, or experiment.
+- Findings normally attach to the experiment that produced them; a current session's active experiment can supply the association when an explicit ID is omitted.
+- Decisions are rejected unless they identify an informing experiment or one or more findings.
+- Principles are rejected unless they derive from a finding or decision.
+- Completing an experiment can create its finding in the same operation and reports the phase's remaining experiment state.
+
+When one experiment produces multiple downstream experiments, `pm` identifies the fan-out as a branch point and records `BranchesFrom` relationships. When a decision converges findings from multiple experiments, it records a merge point with `ConvergesInto` relationships. Reviews later report unresolved branches and convergence topology.
+
+The lower-level CLI remains useful for administration and scripting, but the MCP tools are the stricter agent workflow surface: they add validation, causal requirements, lifecycle gates, automatic relationships, and contextual guidance before or after writes.
+
+### Hypothesis and literature lifecycles
+
+Hypotheses carry a proposed/testing/confirmed/refuted lifecycle, plus optional prediction, evaluation criteria, experiment, finding, confidence, and belief state.
+
+The guided lifecycle encodes evidence requirements:
+
+- moving from proposed to testing requires an incoming supporting or informing relationship;
+- testing can attach the experiment that evaluates the hypothesis;
+- confirmation can attach a supporting finding;
+- refutation requires a disproving finding and creates a contradiction relationship through the truth-maintenance path.
+
+Literature entries are not inert bookmarks. They can hold authors, venue, year, arXiv ID, URL, code URL, summary, relevance, and key findings, and move through a guarded lifecycle:
+
+```text
+unread -> read -> cited/tested/promising -> integrated or dead_end
+```
+
+Terminal literature states cannot be advanced arbitrarily. Status changes return suggested relationships to the experiment, finding, or decision that used the source.
+
+### Principles, constraints, research, and feedback
+
+`pm` keeps durable project guidance in the same system as empirical work:
+
+- **Principles** are universal-, project-, or phase-scoped guidance with rationale, enforcement level, confidence, belief status, and supersession/refinement state. The MCP path requires evidence provenance.
+- **Constraints** describe hardware, software, or process boundaries with source, severity, resource, measured value, and optional expiry. Active and expired constraints are surfaced when experiments are created and during review.
+- **Research entries** hold longer investigations or reflection reports associated with phases and findings.
+- **Feedback entries** record corrections and confirmations as first-class project history.
+
+This prevents project intent, external evidence, execution results, and learned operating rules from splitting into unrelated documents that an agent must reconcile manually.
+
+### Session continuity and temporal awareness
+
+Sessions are persistent records with project scope, start/end timestamps, summary, and an active experiment. Temporal operations include:
+
+- `pm_session_start` and `pm_session_end`;
+- `pm_session_set_experiment` for the current focus;
+- `pm_since` to return nodes changed since a timestamp or earlier session;
+- `pm_session_init` for a portfolio-wide briefing;
+- `pm_session_context` for a project-specific active-phase briefing;
+- `pm handoff` for compact terminal-oriented transfer output.
+
+Session context is not a generic dump. The implementation selects the active or highest-impact actionable phase, extracts a bounded phase-centered subgraph, and organizes experiments, findings, hypotheses, decisions, literature, constraints, and next actions around that working set.
+
+### Retrieval and context assembly
+
+`pm` currently uses local SQLite text retrieval rather than an external embedding or vector service. Search results are ranked with a composite of text overlap, graph connectivity, evidence weight, and recency.
+
+The retrieval surfaces serve different purposes:
+
+| Command/tool | Result |
 |---|---|
-| **Phase DAG** | What work is unblocked, and what has the highest expected impact? |
-| **Causal knowledge graph** | What produced this finding, informed this decision, or motivated this experiment? |
-| **Truth-maintenance state** | What does the project currently believe, with what confidence, and what has been suspended or retracted? |
-| **Lifecycle rules** | Is this transition evidentially valid, or is required context missing? |
-| **Context and session surfaces** | What does the current agent need to know now? |
-| **Review and repair** | Where has the research record become structurally weak, inconsistent, or disconnected? |
+| `pm search` / `pm_search` | Ranked matches, optionally scoped to one project or iterated across active projects. |
+| `pm query` / `pm_query` | Top text matches with immediate graph neighbors for quick free-text inspection. |
+| `pm context` / `pm_context` | Topic-centric brief grouped by node type, with one-hop relationships and cross-references. |
+| `pm_session_context` | Active-phase context assembled from a filtered, multi-hop phase subgraph. |
+| `pm_since` | Temporal delta rather than topical retrieval. |
+| `pm_kg_traverse` | Direct inspection of incoming and outgoing relationships for one node. |
 
-![Project Manager architecture](docs/assets/architecture.svg)
+The graph traversal engine supports bidirectional breadth-first traversal, bounded depth, edge-type inclusion/exclusion, proximity metadata, typed neighborhood queries, and phase-subgraph extraction.
 
-The core is a Rust domain and storage layer backed by a single SQLite database with versioned schema migrations. The interfaces serve different operational roles:
+### Review, audit, and repair
 
-| Surface | Role |
-|---|---|
-| **CLI — `pm`** | Operator and automation surface: direct project manipulation, graph inspection, retrieval, review, import, handoff, and dashboard launch. |
-| **MCP — `pm --mcp`** | Agent control surface: 37 JSON-RPC tools with richer causal guidance, lifecycle enforcement, automatic linking, and context-oriented responses. |
-| **Web — `pm serve`** | Read-mostly visual analysis: searchable D3 knowledge graph, phase DAG, hierarchical project tree, typed node shapes, relationship styling, detailed tooltips, and collapsible project/phase subgraphs. |
+The project contains three complementary integrity surfaces rather than one generic “health” command.
 
-Both CLI and MCP operate on the same store. The MCP surface intentionally adds stronger agent-facing policy than the lower-level CLI in several workflows.
+**`pm review` / `pm_review`** is the operational review. It reports experiment outcomes, pending work, stagnation, impact-ranked phases, explicit contradictions, literature and hypothesis state, orphans, branch/merge topology, dangling branches, expired constraints, aged unresolved nodes, and suspended or retracted beliefs. Experiments with enough numeric findings also receive a median-absolute-deviation-based result signal.
 
-## How a project moves through `pm`
+**`pm kg-audit` / `pm_kg_audit`** calculates a structural health score across:
 
-1. **Structure the work.** Create a project or project hierarchy, define phases, assign impact, and express phase dependencies.
-2. **Orient the session.** Ask for the portfolio dashboard, next actionable phases, a session briefing, or a topic-specific context brief.
-3. **Run a bounded investigation.** Create an experiment that traces to the finding, decision, or prior experiment that motivated it.
-4. **Capture evidence.** Complete the experiment, log detailed findings, attach measurements, and connect supporting, contradicting, cited, or derived evidence.
-5. **Update project belief and direction.** Test or resolve hypotheses, record causal decisions with rationale, derive principles, and register constraints.
-6. **Review the research system itself.** Audit causal completeness, graph density, temporal consistency, branch/merge topology, literature use, and orphaned nodes.
-7. **Hand off without context collapse.** End the session with a summary and let the next agent reconstruct changes, active work, and the relevant knowledge neighborhood.
-
-The system computes and explains the next action, but it does not silently execute research or autonomously close phases. Lifecycle transitions remain explicit operator or agent actions.
-
-## Feature detail
-
-### Dependency-aware execution and prioritization
-
-Phases carry status, impact, goals, success criteria, timestamps, and dependencies. The DAG engine:
-
-- returns phases in topological order;
-- excludes completed and deprioritized work;
-- selects only dependency-satisfied phases;
-- ranks actionable phases by impact;
-- reports experiment status within each phase;
-- detects stagnation after repeated failed or inconclusive experiments;
-- surfaces the top action across standalone projects and parent/subproject trees.
-
-`pm next`, `pm dashboard`, `pm scaffold`, and `pm session-init` turn this structure into an actionable work surface. When all experiments in a phase are resolved, the system reports the condition and asks for an explicit phase review rather than assuming completion.
-
-### Causal provenance and research topology
-
-The knowledge graph is not an optional visualization layered over CRUD records. It is the project’s explanatory backbone.
-
-Agent-facing write paths preserve common relationships automatically:
-
-- `Phase --Contains--> Experiment`
-- `Experiment --ProducedBy--> Finding`
-- `Finding / Experiment --Informed--> Decision`
-- `Finding --Supports / Contradicts--> Hypothesis`
-- `Principle --DerivedFrom--> Finding / Decision`
-- `Experiment --TestedBy--> Hypothesis / Constraint`
-
-The MCP experiment workflow permits a root experiment at the beginning of a phase, then requires subsequent experiments to identify an upstream finding, decision, or experiment. Decisions require both a rationale and causal upstream evidence. Principles require evidence provenance.
-
-The graph also represents research topology rather than forcing a linear history. Multiple downstream experiments are marked as branches; decisions informed by findings from multiple experiments are marked as convergence points. Review tools detect unresolved branch fan-out and causal breaks.
-
-### Truth maintenance, belief revision, and confidence
-
-Findings, decisions, hypotheses, principles, and constraints carry:
-
-- a numeric confidence value;
-- a belief status such as believed, suspended, or retracted.
-
-Adding `Supports` or `Contradicts` relationships through the TMS-aware path updates target confidence. Contradiction can suspend a target and downstream dependents instead of leaving invalidated claims silently active. Operators or agents can then inspect the affected subgraph and reinstate, revise, or retract nodes explicitly.
-
-For experiments with at least three findings containing comparable numeric measurements, `pm` also computes a Median Absolute Deviation–based confidence report. This is a lightweight repeatability signal, not a replacement for domain-specific statistical analysis.
-
-### Contradiction detection without pretending heuristics are truth
-
-`pm` distinguishes two mechanisms:
-
-1. **Explicit contradiction state.** Confirmed `Contradicts` edges are part of the graph and participate in truth maintenance.
-2. **Candidate detection.** New findings are compared against existing project findings using high-recall signals such as opposite negation, antonym pairs, materially divergent numbers in shared measurement contexts, and explicit correction language.
-
-Candidate detection flags entries for review and can construct a typed natural-language-inference prompt for a second-stage model. The Rust heuristic does not automatically declare semantic contradiction.
-
-### Governed lifecycles and anti-drift guardrails
-
-The agent-facing workflows encode research discipline rather than accepting arbitrary state changes:
-
-- a proposed hypothesis needs supporting evidence before entering testing;
-- refuting a testing hypothesis requires a disproving finding and creates a contradiction edge;
-- literature moves through an explicit progression from unread to read, cited/tested, and terminal outcomes such as integrated or dead-end;
-- a phase cannot be completed through the guarded MCP path while experiments remain pending;
-- decisions require non-empty rationale at the database layer;
-- constraints can record source, severity, resource, measured value, and expiry;
-- review surfaces expired constraints and unresolved hypotheses;
-- closure or pruning language triggers an anti-cleanup warning so failed experiments and negative branches are not discarded merely because they are old or inconvenient.
-
-The intent is not to prevent redirection. It is to make redirection explicit while preserving the evidence that narrowed the search space.
-
-### Retrieval that returns a knowledge neighborhood
-
-The retrieval layer uses SQLite text search plus graph-derived signals rather than embeddings:
-
-- **`search` / `pm_search`** ranks matches using text overlap, graph connectivity, evidence weight, and recency.
-- **`query` / `pm_query`** expands the highest-ranked results into their connected evidence neighborhood.
-- **`context` / `pm_context`** builds a topic brief grouped across findings, decisions, hypotheses, experiments, literature, principles, constraints, research, and phases, with one-hop cross-references.
-- **`session-init` / `pm_session_init`** assembles actionable phases, pending experiments, untested hypotheses, orphan warnings, recent findings, constraints, and contradictions.
-- **`pm_session_context`** extracts a bounded phase subgraph and summarizes its active evidence and suggested next actions.
-- **`pm_since`** reports nodes changed since a timestamp or prior session.
-
-The result is context selected by project structure and causal proximity, not a flat list of text fragments.
-
-### Structural diagnostics and repair
-
-`pm review`, `pm orphan-repair`, and `pm kg-audit` inspect the quality of the research record itself.
-
-Checks include:
-
-- decisions with no causal upstream;
-- orphaned findings, hypotheses, principles, constraints, experiments, literature, or research;
-- missing project ownership and cross-project causal bleed;
-- branch points, convergence points, and dangling branches;
-- untested hypotheses and unresolved experiments;
-- explicit contradictions and suspended/retracted beliefs;
-- expired constraints and node-age context;
 - causal-chain completeness;
 - hypothesis coverage;
 - literature utilization;
@@ -178,99 +176,161 @@ Checks include:
 - temporal coherence;
 - cross-project references.
 
-The audit produces a 0–100 health score with a metric breakdown. The repair surface returns concrete edge or ownership changes rather than merely reporting that the graph is untidy.
+**`pm orphan-repair` / `pm_orphan_repair`** diagnoses concrete repair cases: decisions without causal upstream, projectless decisions, unconnected hypotheses/principles/constraints, research without phases, true zero-edge orphans, cross-project causal bleed, and dangling branches. It returns targeted repair instructions rather than silently mutating the record.
 
-### Multi-project and session continuity
+### Truth maintenance and contradiction handling
 
-Projects can be standalone or arranged as parent/subproject trees. `pm dashboard` computes the highest-impact available phase across the active portfolio, while the web dashboard can collapse or expand subproject hulls and phase neighborhoods.
+Findings, decisions, hypotheses, principles, and constraints can carry confidence and a belief status. `Supports` and `Contradicts` relationships created through the MCP edge tool use the truth-maintenance path, report confidence changes, and can suspend affected nodes for explicit review. Operators can then set confidence or belief status directly with `pm_set_confidence` and `pm_set_belief`.
 
-Sessions record start and end timestamps, optional project scope, summary, and active experiment. This lets a finding fall back to the session’s active experiment when an explicit experiment ID is omitted, and gives later sessions a temporal anchor for change reports and handoffs.
+Contradiction handling has two distinct layers:
 
-## Quick start
+1. **Authoritative graph state:** an explicit `Contradicts` relationship records a known conflict and participates in truth maintenance and review.
+2. **Candidate detection:** logging a finding runs a high-recall heuristic scan over project findings using negation parity, antonym pairs, context-matched numeric divergence, and correction markers. Candidates are surfaced for review; the code can prepare a typed NLI prompt for a second-stage classifier, but it does not silently convert heuristic candidates into asserted contradictions.
 
-### Build and install
+This distinction is intentional: retrieval can suggest a conflict, while belief-changing graph updates remain explicit and inspectable.
 
-A current Rust toolchain with Rust 2024 edition support is required.
+## Automation boundaries
+
+`pm` combines hard workflow semantics with advisory analysis. They should not be confused.
+
+| Deterministic or enforced | Advisory or heuristic |
+|---|---|
+| Phase dependency checks and impact ordering | Composite search ranking |
+| MCP phase completion gate | Contradiction candidate retrieval |
+| Required decision rationale at the database layer | MAD-based experiment result signal |
+| MCP causal-upstream requirements | Cleanup/pruning language warning |
+| Hypothesis and literature transition checks | Staleness thresholds and next-action wording |
+| Typed edge validation and uniqueness | Structural health score and repair proposals |
+| Versioned SQLite migrations | Suggested relationships based on textual overlap |
+
+The system is designed to make state and provenance inspectable, not to replace scientific or engineering judgment.
+
+## Current boundaries
+
+- `pm` computes priorities, context, warnings, and repair proposals; it does not autonomously execute research or silently close work.
+- Retrieval is lexical and graph-aware rather than embedding-based semantic search.
+- Contradiction detection produces candidates and an optional external-classifier prompt; no semantic classifier is invoked by the Rust process.
+- The SQLite deployment model is local-first and best suited to a single operator or agent runtime, not concurrent multi-user collaboration.
+- MCP transport is stdio-based rather than a network service.
+- The browser dashboard is an embedded operational UI, not a hardened public service; it binds to `0.0.0.0`, has no authentication, and loads D3 from a CDN.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    CLI[CLI<br/>admin, scripting, inspection]
+    MCP[MCP stdio server<br/>agent workflow + guardrails]
+    WEB[Embedded web dashboard<br/>portfolio, graph, phase DAG]
+
+    CLI --> APP
+    MCP --> APP
+    WEB --> APP
+
+    subgraph CORE[Shared Rust core]
+        APP[Application dispatch]
+        PORT[Portfolio + phase planning]
+        EXEC[Experiment and evidence workflow]
+        CONTEXT[Session context + temporal delta]
+        REVIEW[Review, audit, repair]
+        RETRIEVE[Search + graph traversal]
+        TMS[Confidence + belief maintenance]
+
+        APP --> PORT
+        APP --> EXEC
+        APP --> CONTEXT
+        APP --> REVIEW
+        APP --> RETRIEVE
+        APP --> TMS
+    end
+
+    PORT --> STORE[Typed store interface]
+    EXEC --> STORE
+    CONTEXT --> STORE
+    REVIEW --> STORE
+    RETRIEVE --> STORE
+    TMS --> STORE
+    STORE --> SQLITE[(SQLite<br/>versioned migrations)]
+```
+
+The implementation is a Rust binary and library. `main.rs` selects either the clap CLI or the line-delimited JSON-RPC MCP server. The browser UI is served by `warp`; its data comes from the same SQLite-backed store used by the other interfaces.
+
+### Interface responsibilities
+
+| Interface | Best suited for | Important behavior |
+|---|---|---|
+| **CLI** | Direct administration, shell scripting, inspection, imports, handoffs, and local review. | Broad CRUD surface plus DAG, search, context, review, audit, repair, and dashboard commands. Some direct CLI writes are intentionally lower level than MCP writes. |
+| **MCP** | Long-running agent loops and tool-mediated research work. | 37 registered tools, structured validation errors, causal and lifecycle guardrails, automatic relationship creation, session state, and task-oriented responses. |
+| **Web** | Human inspection of a portfolio and its structure. | Hierarchical project tree, node counts, ranked search, D3 knowledge graph, phase-DAG view, node details, project status controls, and cross-project priority summary. |
+
+## Quickstart
+
+### Build
+
+`pm` uses bundled SQLite, so it does not require an external database server.
 
 ```bash
 git clone https://github.com/wahargis/project-manager.git
 cd project-manager
+cargo build --release
+
+# Optional: install `pm` on PATH with Cargo
 cargo install --path .
 ```
 
-The CLI uses `~/.local/share/pm/pm.db` by default. Use `--db <path>` for another database. The MCP server reads `PM_DB`.
+The default database is `~/.local/share/pm/pm.db`. Use the global `--db` option to isolate a project or test run.
 
-### Create a project and execution DAG
-
-```bash
-pm --db /tmp/atlas.db project activate atlas --alias at
-
-pm --db /tmp/atlas.db phase atlas add \
-  "Map retrieval failure modes" --impact 80
-
-pm --db /tmp/atlas.db phase atlas add \
-  "Prototype topic-scoped context" --impact 100 --depends 1
-
-pm --db /tmp/atlas.db phase atlas add \
-  "Evaluate session handoff quality" --impact 70 --depends 2
-
-pm --db /tmp/atlas.db next atlas
-```
-
-### Record an experiment, finding, hypothesis, and decision
+### Create and execute a project
 
 ```bash
-pm --db /tmp/atlas.db exp atlas add \
-  "Survey retrieval evaluation practice" \
-  --phase 1 \
-  --status pass \
-  --result "Recall-oriented context reconstruction is rarely evaluated."
+PM=./target/release/pm
+DB=/tmp/pm-demo.db
 
-pm --db /tmp/atlas.db finding atlas add \
-  "A survey of retrieval evaluation practice found that public benchmarks emphasize isolated-answer precision while rarely measuring whether a long-running agent reconstructs the complete causal context needed for its next action." \
+$PM --db "$DB" project activate retrieval-lab --alias rl
+$PM --db "$DB" phase retrieval-lab add "Establish retrieval baseline" --impact 80
+$PM --db "$DB" phase retrieval-lab add "Evaluate session context" --impact 100 --depends 1
+$PM --db "$DB" phase retrieval-lab update 1 --status in_progress
+
+$PM --db "$DB" exp retrieval-lab add \
+  "Measure baseline retrieval quality" --phase 1
+
+$PM --db "$DB" finding retrieval-lab add \
+  "The baseline retrieves recent observations reliably but loses the causal path from findings to decisions when the session is reconstructed from text alone." \
   --experiment 1
 
-pm --db /tmp/atlas.db hyp atlas add \
-  "Topic-scoped graph briefings improve next-action selection" \
-  --phase 2 \
-  --finding 1
+$PM --db "$DB" hyp retrieval-lab add \
+  "Phase-centered graph context will preserve causal continuity better than a flat transcript summary" \
+  --phase 2 --finding 1
 
-pm --db /tmp/atlas.db dec atlas add \
-  "Use topic-scoped graph briefings as the first retrieval surface" \
-  --why "The survey finding identifies context reconstruction—not isolated text similarity—as the immediate failure mode, and the graph briefing is directly testable in the next phase." \
+$PM --db "$DB" dec retrieval-lab add \
+  "Use phase-centered context as the next retrieval experiment" \
+  --why "The baseline finding isolates causal continuity as the failure mode, and phase-scoped traversal is the smallest testable intervention." \
   --experiment 1
+
+$PM --db "$DB" next retrieval-lab
+$PM --db "$DB" review retrieval-lab
+$PM --db "$DB" context "causal continuity" --limit 5
+$PM --db "$DB" handoff retrieval-lab
 ```
 
-### Orient, inspect, and review
+### Inspect the portfolio in a browser
 
 ```bash
-pm --db /tmp/atlas.db dashboard
-pm --db /tmp/atlas.db session-init
-pm --db /tmp/atlas.db search atlas retrieval
-pm --db /tmp/atlas.db context "retrieval evaluation" --limit 5
-pm --db /tmp/atlas.db query "Why did the project choose topic-scoped briefings?"
-pm --db /tmp/atlas.db review atlas
-pm --db /tmp/atlas.db kg-audit atlas
-pm --db /tmp/atlas.db handoff atlas
+$PM --db "$DB" serve --port 9090
 ```
 
-### Launch the dashboard
+Open `http://localhost:9090`.
 
-```bash
-pm --db /tmp/atlas.db serve --port 9090
-```
-
-The MCP server also attempts to start the dashboard on port `9090`. Set `PM_WEB_PORT` to choose another port.
+> **Network warning:** run the dashboard only on a trusted network or behind appropriate access controls; the current server binds to `0.0.0.0` and has no authentication.
 
 ## MCP integration
 
-Start the stdio server directly:
+Start the MCP server over stdio with a database selected through `PM_DB`:
 
 ```bash
-PM_DB=/tmp/atlas.db PM_WEB_PORT=9090 pm --mcp
+PM_DB=/tmp/pm-demo.db ./target/release/pm --mcp
 ```
 
-A generic MCP client configuration looks like:
+A typical MCP client configuration is:
 
 ```json
 {
@@ -287,89 +347,154 @@ A generic MCP client configuration looks like:
 }
 ```
 
-The 37 tools are organized around complete project workflows rather than raw table access:
+The server implements line-delimited JSON-RPC over stdio and reports MCP protocol version `2024-11-05`. It also attempts to start the web dashboard; if the requested port is occupied, MCP operation continues without the dashboard.
 
-| Tool family | Representative tools |
+The 37 tools are grouped around the actual operating loop:
+
+| Tool group | Representative tools |
 |---|---|
-| **Orientation and execution** | `pm_dashboard`, `pm_next`, `pm_scaffold`, `pm_session_init`, `pm_session_context` |
-| **Experiments and evidence** | `pm_experiment_create`, `pm_exp_complete`, `pm_log_finding`, `pm_decision` |
-| **Hypotheses and research state** | `pm_hyp_add`, `pm_hyp_update`, `pm_lit_add`, `pm_lit_status`, `pm_constraint_add`, `pm_principle_add`, `pm_research_complete` |
-| **Retrieval** | `pm_search`, `pm_query`, `pm_context`, `pm_since` |
-| **Knowledge graph** | `pm_add_edge`, `pm_kg_traverse`, `pm_set_confidence`, `pm_set_belief` |
-| **Integrity and repair** | `pm_review`, `pm_orphan_repair`, `pm_kg_audit`, `pm_stats` |
-| **Portfolio and sessions** | project/phase lifecycle tools, `pm_session_start`, `pm_session_set_experiment`, `pm_session_end` |
+| Orientation and planning | `pm_dashboard`, `pm_next`, `pm_scaffold`, `pm_session_init`, `pm_session_context` |
+| Evidence workflow | `pm_experiment_create`, `pm_exp_complete`, `pm_log_finding`, `pm_decision` |
+| Research state | `pm_hyp_add`, `pm_hyp_update`, `pm_lit_add`, `pm_lit_status`, `pm_constraint_add`, `pm_principle_add`, `pm_research_complete` |
+| Retrieval and graph | `pm_search`, `pm_query`, `pm_context`, `pm_kg_traverse`, `pm_add_edge` |
+| Review and integrity | `pm_review`, `pm_orphan_repair`, `pm_kg_audit`, `pm_stats` |
+| Portfolio and sessions | `pm_project_create`, `pm_project_list`, project status tools, `pm_session_start`, `pm_session_set_experiment`, `pm_since`, `pm_session_end` |
+| Belief maintenance | `pm_set_confidence`, `pm_set_belief` |
 
-Run `pm --help` for the CLI surface or issue MCP `tools/list` for the complete tool schemas.
+`pm_research_step` remains registered as a compatibility path but now refuses implicit finding auto-routing and directs callers to create an explicit experiment and then log the finding. That behavior reflects the current design commitment: preserving causal provenance is more important than saving one tool call.
 
-## Knowledge model reference
+## Browser dashboard
 
-### Node types
+The embedded dashboard provides two coordinated visualizations:
 
-| Node | Purpose and state |
+- **Knowledge Graph:** typed nodes and relationships, subproject hulls, project hierarchy, node detail tooltips, search-result focus, and edge semantics.
+- **Phase DAG:** phase state, dependencies, impact, and project-level execution structure.
+
+The sidebar includes hierarchical project navigation, node counts, archived-project handling, status controls, ranked cross-node search, and a portfolio dashboard of next actionable phases.
+
+The HTTP surface exposes JSON endpoints for projects, graph data, phases, experiments, findings, decisions, research, principles, hypotheses, constraints, literature, feedback, search, and dashboard data. It is presently an embedded operational UI, not a hardened multi-user service.
+
+## Data model
+
+The store separates execution state, evidence, durable guidance, and continuity while allowing typed relationships between them.
+
+| Group | Objects |
 |---|---|
-| `Project` | Active, paused, or archived research effort; optional alias and parent project. |
-| `Phase` | Dependency-aware execution unit with impact, status, description, goals, success criteria, and lifecycle timestamps. |
-| `Experiment` | Bounded investigation with pending/pass/fail/inconclusive status, hypothesis, result, and notes. |
-| `Finding` | Empirical observation with experiment provenance, confidence, and belief state. |
-| `Decision` | Choice with mandatory rationale, project scope, causal upstream, confidence, and belief state. |
-| `Hypothesis` | Proposed/testing/confirmed/refuted claim with prediction, criteria, evidence references, confidence, and belief state. |
-| `Research` | Longer-form research work or report attached to a phase. |
-| `LiteratureEntry` | Citation record with title, authors, venue, year, arXiv/URL/code links, summary, relevance, key findings, and lifecycle status. |
-| `Principle` | Evidence-derived guidance with universal/project/phase scope, rationale, enforcement level, status, confidence, and belief state. |
-| `Constraint` | Hardware/software/process boundary with source, severity, resource, measurement, expiry, confidence, and belief state. |
-| `FeedbackEntry` | Explicit correction or confirmation. |
-| `Session` | Temporal continuity record with project scope, summary, and active experiment. |
+| **Portfolio and execution** | `Project`, `Phase`, `Experiment` |
+| **Evidence and interpretation** | `Finding`, `Hypothesis`, `Decision` |
+| **Research context and policy** | `LiteratureEntry`, `Research`, `Principle`, `Constraint`, `FeedbackEntry` |
+| **Continuity** | `Session`, temporal deltas, staleness reports |
 
-### Edge types
+<details>
+<summary>Node lifecycle and metadata</summary>
+
+- `Project`: active/paused/archived, alias, optional parent.
+- `Phase`: pending/in-progress/complete/deprioritized/paused, impact, dependencies, description, goals, success criteria, timestamps.
+- `Experiment`: pending/pass/fail/inconclusive, phase, hypothesis, result, notes.
+- `Finding`: experiment, text, confidence, belief status.
+- `Decision`: project/experiment, what, required why, confidence, belief status.
+- `Hypothesis`: proposed/testing/confirmed/refuted, prediction, criteria, experiment, finding, confidence, belief status.
+- `Principle`: universal/project/phase scope, active/superseded/refined, rationale, enforcement level, provenance, confidence, belief status.
+- `Constraint`: hardware/software/process scope, source, severity, resource, measured value, expiry, confidence, belief status.
+- `LiteratureEntry`: citation metadata, source and code links, relevance, key findings, summary, lifecycle status.
+- `Research`: phase-scoped investigation/report with pending/in-progress/complete state.
+- `FeedbackEntry`: correction or confirmation.
+- `Session`: project, start/end, summary, active experiment.
+
+Project-scoped records receive compact per-project ordinal references such as `F#12`, `E#7`, and `D#4`, while global SQLite IDs remain available internally.
+
+</details>
+
+<details>
+<summary>Relationship vocabulary</summary>
 
 `ProducedBy`, `Informed`, `Supports`, `Contradicts`, `Supersedes`, `DependsOn`, `RelatedTo`, `CitedIn`, `Contains`, `DerivedFrom`, `TestedBy`, `ViolatedBy`, `BranchesFrom`, and `ConvergesInto`.
 
-Edges are polymorphic: any supported node type can participate where the relation is meaningful. A uniqueness constraint prevents duplicate relationships.
+Relationships are unique by source, target, and relation. Traversal can inspect both directions and can filter by relationship type.
 
-## Storage and deployment model
+</details>
 
-- One local SQLite database, managed through bundled `rusqlite`.
-- Versioned, idempotent schema migrations.
-- Per-project ordinal references alongside global database IDs.
-- No hosted service or remote database dependency.
-- MCP transport is line-delimited JSON-RPC over stdio.
-- The web server is embedded with Warp; the current dashboard loads D3 from a CDN.
-- v2 JSON data can be imported with `pm import <file.json> --name <project>`.
+## Persistence, migration, and import
 
-## Current boundaries
+- One SQLite database is the source of truth.
+- `rusqlite` is built with bundled SQLite.
+- Schema changes are applied through sequential, idempotent, transaction-wrapped migrations.
+- The current migration chain covers phase containers, decision provenance, literature metadata, hypothesis lifecycle, constraint and principle metadata, unique relationships, subprojects, per-project ordinals, temporal sessions, confidence/belief state, active session experiments, and completion timestamps.
+- `pm import <project.json> --name <project>` imports the repository's v2 JSON shape for phases, experiments, findings, and decisions.
 
-`pm` is a working research-control system, not an autonomous project executive.
+Because the state is a normal SQLite file, it is straightforward to back up, inspect, copy, or isolate per environment.
 
-- It computes priorities, detects invalid transitions, and recommends repairs; a human or agent still performs the work and explicitly commits lifecycle changes.
-- Search is lexical and graph-aware, not embedding-based semantic retrieval.
-- Heuristic contradiction detection produces candidates; semantic confirmation remains a separate review step.
-- The SQLite architecture is optimized for local, single-operator or single-agent-runtime use rather than concurrent multi-user collaboration.
-- The dashboard is primarily an analysis and navigation surface, not the full write interface.
-- MCP is currently stdio-based rather than a network service.
+## CLI command map
 
-These constraints keep the system inspectable and portable while leaving room for richer retrieval, orchestration, and collaborative deployment.
+```text
+pm project ...       project lifecycle and hierarchy
+pm phase ...         phase DAG and lifecycle
+pm exp ...           experiment CRUD and outcomes
+pm finding ...       findings and local traversal
+pm dec ...           decisions and rationale
+pm hyp ...           hypothesis lifecycle
+pm lit ...           literature lifecycle
+pm principle ...     durable guidance
+pm con ...           constraints
+pm research ...      research reports
+pm fb ...            corrections and confirmations
+pm kg ...            relationship inspection and mutation
 
-## Documentation
+pm dashboard         cross-project execution view
+pm next <project>    dependency-unblocked, impact-ranked phases
+pm scaffold ...      pending experiments as task payloads
+pm session-init      active portfolio briefing
+pm context ...       topic-centric context brief
+pm query ...         top matches plus neighbors
+pm search ...        ranked text retrieval
+pm review ...        operational integrity review
+pm orphan-repair ... structural diagnosis and repair proposals
+pm kg-audit ...      structural health score
+pm handoff ...       compact session transfer
+pm serve ...         embedded browser dashboard
+pm import ...        v2 JSON import
+```
 
-- [Architecture](docs/architecture.md) — system structure and interface boundaries.
-- [Knowledge model](docs/knowledge-model.md) — node, edge, truth-maintenance, DAG, and graph-analysis concepts.
-- [MCP server](docs/mcp.md) — agent integration.
-- [Reference notes](docs/reference/README.md) — historical design and planning documents, clearly separated from current public documentation.
+Run `pm --help` or `pm <command> --help` for the complete clap-generated interface.
+
+## Development
+
+A Rust toolchain with edition 2024 support is required.
+
+```bash
+cargo build
+cargo test
+cargo clippy -- -D warnings
+cargo fmt -- --check
+
+# Equivalent repository checks
+make check
+```
+
+The test suite covers the SQLite store and migrations, DAG behavior, graph traversal, confidence extraction, contradiction signals, validation, MCP tools, session context, review, and integrity workflows.
 
 ## Repository layout
 
-| Path | Contents |
+| Path | Responsibility |
 |---|---|
-| `src/cli/` | Clap command and subcommand definitions. |
-| `src/cli_runner.rs` | CLI command handlers, import, handoff, and operator-facing analysis. |
-| `src/store/` | SQLite implementation, versioned migrations, sessions, search, and typed node/edge model. |
-| `src/dag/` | Dependency and impact-based phase execution engine. |
-| `src/kg/` | Single- and multi-hop traversal, edge filtering, and subgraph extraction. |
-| `src/analysis/` | Numeric confidence scoring and contradiction-candidate analysis. |
-| `src/mcp/` | MCP server, tool schemas, policy-rich node/edge workflows, session context, review, and repair. |
-| `src/web.rs`, `src/web/index.html` | Embedded web API and D3 dashboard. |
-| `docs/` | Public documentation, architecture assets, roadmap, and historical references. |
-| `v2-reference/` | v2 reference data and import material. |
+| `src/store/` | Typed persistence API, SQLite implementation, migrations, search, temporal state, and truth-maintenance operations. |
+| `src/dag/` | Topological ordering, actionable-phase selection, and stagnation detection. |
+| `src/kg/` | Typed graph traversal, neighborhoods, phase subgraphs, and explicit contradiction traversal. |
+| `src/analysis/` | Numeric result signals and contradiction-candidate analysis. |
+| `src/mcp/` | JSON-RPC server, 37 tool schemas, guided node/edge workflows, dashboards, context, review, audit, and repair. |
+| `src/cli/`, `src/cli_runner.rs` | clap interface and direct command handlers. |
+| `src/web.rs`, `src/web/index.html` | Embedded HTTP API and D3 dashboard. |
+| `docs/` | Architecture, quickstart, MCP, knowledge-model, roadmap, and reference material. |
+| `v2-reference/` | Historical v2 data and import reference. |
+
+## Further documentation
+
+- [Architecture](docs/architecture.md)
+- [Knowledge model](docs/knowledge-model.md)
+- [Quickstart](docs/quickstart.md)
+- [MCP server](docs/mcp.md)
+- [Roadmap](docs/roadmap.md)
+- [Reference notes](docs/reference/README.md)
 
 ## License
 
